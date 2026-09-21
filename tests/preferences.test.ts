@@ -5,6 +5,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import {
   clampSidebarWidth,
   colorSchemes,
+  parseFileView,
   parseColorScheme,
   parseSidebarWidth,
   resizeFromKey,
@@ -43,6 +44,13 @@ test("appearance preferences validate stored values and preserve known schemes",
   assert.equal(parseSidebarWidth("log", "410"), 410);
   assert.equal(parseSidebarWidth("files", "-20"), 120);
   assert.equal(parseSidebarWidth("log", "999999"), 640);
+});
+
+test("file view defaults to one file and validates its stored preference", () => {
+  assert.equal(parseFileView(null), "single");
+  assert.equal(parseFileView("unknown"), "single");
+  assert.equal(parseFileView("single"), "single");
+  assert.equal(parseFileView("all"), "all");
 });
 
 test("sidebar keyboard resizing follows the physical edge in either sidebar", () => {
@@ -116,7 +124,9 @@ test("heading groups change ID, title, commit ID and totals without the author",
   );
   assert.match(
     renderToStaticMarkup(
-      createElement(RevisionHeading, { source: { ...source, description: "" } }),
+      createElement(RevisionHeading, {
+        source: { ...source, description: "" },
+      }),
     ),
     /\(no description\)/,
   );

@@ -51,6 +51,7 @@ The flake exposes a default package/app and development shell for x86_64/aarch64
 - **`u`:** undo the last app squash when the queue is empty and the repository is unchanged.
 - **Escape:** clear the selection. **`r`:** refresh. **`f`:** focus the diff. **`l`:** toggle the graph.
 - The file tree compacts single-child folder chains into one row (for example, `src/components/ui`). It supports collapsible folders, arrow-key navigation, Enter to open a file, change-status indicators, and live **`+ / −` counts**. Folder choices survive refresh and squash/undo updates.
+- **One file / All files** switches between separate file views and all diffs on one scrolling page. In All files, the file tree jumps to each file’s heading; selecting lines in another file replaces the previous selection. The view preference persists in `localStorage`.
 - **Split / Stacked** switches layouts without changing the exact selection. Split drags select aligned rows in both columns. Stacked lets you select an individual addition or deletion.
 - **↑ 10 / ↓ 10** reveals ten context lines at a time.
 - Both sidebars collapse to narrow rails; drag their inner edges to resize them. Sidebar widths, collapsed states, and diff layout persist in browser `localStorage`.

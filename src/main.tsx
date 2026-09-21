@@ -1,6 +1,7 @@
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -93,6 +94,8 @@ function SidebarToggle({
 }
 function App() {
   const {
+    fileView,
+    setFileView,
     colorScheme,
     setColorScheme,
     filesWidth,
@@ -157,6 +160,24 @@ function App() {
   });
   const lock = useRef(false);
   const scroll = useRef<HTMLDivElement>(null);
+  const fileSections = useRef(new Map<string, HTMLElement>());
+  const scrollToFile = useCallback((path: string) => {
+    const viewport = scroll.current;
+    const section = fileSections.current.get(path);
+    if (viewport && section) {
+      viewport.scrollTo(
+        0,
+        viewport.scrollTop +
+          section.getBoundingClientRect().top -
+          viewport.getBoundingClientRect().top,
+      );
+    }
+  }, []);
+  // Only explicit navigation changes scroll, never selection or queue updates.
+  useLayoutEffect(() => {
+    if (fileView === "all") scrollToFile(activePath);
+    else scroll.current?.scrollTo(0, 0);
+  }, [fileView, scrollToFile]);
   const file =
     state?.files.find((file) => file.path === activePath) ?? state?.files[0];
   const selections = useMemo<Selections>(() => {
@@ -291,15 +312,17 @@ function App() {
       clear();
       setActivePath(path);
       // Only explicit navigation resets scroll; squash may remove the active file.
-      scroll.current?.scrollTo(0, 0);
+      if (fileView === "all") scrollToFile(path);
+      else scroll.current?.scrollTo(0, 0);
     },
-    [clear, queue],
+    [clear, queue, fileView, scrollToFile],
   );
   const select = useCallback(
-    (next: SelectedLineRange | null, selected: Selections) => {
+    (path: string, next: SelectedLineRange | null, selected: Selections) => {
       const current = queue.getSnapshot();
       if (lock.current || current.recovering || !current.view) return;
       try {
+        if (next) setActivePath(path);
         setPicked(refsFromSelection(current.view, selected));
         setRange(next);
         setNotice("");
@@ -431,7 +454,10 @@ function App() {
           break;
         case "f":
           event.preventDefault();
-          scroll.current?.querySelector<HTMLElement>(".code-surface")?.focus();
+          fileSections.current
+            .get(file?.path ?? "")
+            ?.querySelector<HTMLElement>(".code-surface")
+            ?.focus();
           break;
         case "escape":
           if (!lock.current && !dragging) {
@@ -444,7 +470,7 @@ function App() {
     };
     document.addEventListener("keydown", key);
     return () => document.removeEventListener("keydown", key);
-  }, [squash, undo, refresh, queue, clear, dragging]);
+  }, [squash, undo, refresh, queue, clear, dragging, file?.path]);
   const additions =
     state?.files.reduce((sum, file) => sum + file.additions, 0) ?? 0;
   const deletions =
@@ -553,11 +579,39 @@ function App() {
         </aside>
         <main className="viewer">
           <div className="file-bar">
-            <span>{file?.path ?? "Reviewed change"}</span>
+            <span>
+              {fileView === "all"
+                ? "All changed files"
+                : (file?.path ?? "Reviewed change")}
+            </span>
             <div className="file-bar-tools">
-              {file && (
+              {file && fileView === "single" && (
                 <Counts additions={file.additions} deletions={file.deletions} />
               )}
+              <div
+                className="layout-toggle"
+                role="group"
+                aria-label="File view"
+              >
+                <button
+                  onClick={() => setFileView("single")}
+                  disabled={dragging}
+                  aria-pressed={fileView === "single"}
+                  className={fileView === "single" ? "active" : ""}
+                  title="Show one file at a time"
+                >
+                  One file
+                </button>
+                <button
+                  onClick={() => setFileView("all")}
+                  disabled={dragging}
+                  aria-pressed={fileView === "all"}
+                  className={fileView === "all" ? "active" : ""}
+                  title="Show all file diffs on the same page"
+                >
+                  All files
+                </button>
+              </div>
               <div className="layout-toggle" aria-label="Diff layout">
                 <button
                   onClick={() => setStyle("unified")}
@@ -647,28 +701,53 @@ function App() {
                   </button>
                 )}
               </div>
-            ) : file.unsupported ? (
-              <div className="unsupported">
-                <p>{file.unsupported}</p>
-                <pre>{file.patch}</pre>
-              </div>
             ) : (
-              <CodeDiff
-                key={`${source?.changeId}:${file.path}`}
-                file={file}
-                version={queued.confirmed?.version ?? state.version}
-                renderKey={`${queued.epoch}`}
-                style={style}
-                colorScheme={colorScheme}
-                selections={selections}
-                range={range}
-                disabled={working || queued.halted}
-                contextDisabled={queued.pending > 0 || queued.recovering}
-                onSelection={select}
-                onDragging={setDragging}
-                onError={setError}
-                loadFile={loadFile}
-              />
+              (fileView === "all" ? state.files : [file]).map((entry) => (
+                <section
+                  key={`${source?.changeId}:${entry.path}`}
+                  className={`file-diff-section ${fileView === "all" ? "all-files-section" : ""}`}
+                  aria-label={`Diff for ${entry.path}`}
+                  data-file-path={entry.path}
+                  ref={(element) => {
+                    if (element) fileSections.current.set(entry.path, element);
+                    else fileSections.current.delete(entry.path);
+                  }}
+                >
+                  {fileView === "all" && (
+                    <div className="file-diff-heading">
+                      <h2>{entry.path}</h2>
+                      <Counts
+                        additions={entry.additions}
+                        deletions={entry.deletions}
+                      />
+                    </div>
+                  )}
+                  {entry.unsupported ? (
+                    <div className="unsupported">
+                      <p>{entry.unsupported}</p>
+                      <pre>{entry.patch}</pre>
+                    </div>
+                  ) : (
+                    <CodeDiff
+                      file={entry}
+                      version={queued.confirmed?.version ?? state.version}
+                      renderKey={`${queued.epoch}`}
+                      style={style}
+                      colorScheme={colorScheme}
+                      selections={entry.path === file.path ? selections : {}}
+                      range={entry.path === file.path ? range : null}
+                      disabled={working || queued.halted}
+                      contextDisabled={queued.pending > 0 || queued.recovering}
+                      onSelection={(next, selected) =>
+                        select(entry.path, next, selected)
+                      }
+                      onDragging={setDragging}
+                      onError={setError}
+                      loadFile={loadFile}
+                    />
+                  )}
+                </section>
+              ))
             )}
           </div>
         </main>

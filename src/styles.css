@@ -460,7 +460,8 @@ kbd {
   flex-direction: column;
 }
 .file-bar {
-  height: 36px;
+  min-height: 36px;
+  flex-wrap: wrap;
   background: var(--panel);
   border-bottom: 1px solid var(--border);
   display: flex;
@@ -475,6 +476,7 @@ kbd {
   text-overflow: ellipsis;
 }
 .file-bar-tools {
+  flex-wrap: wrap;
   margin-left: auto;
   display: flex;
   align-items: center;
@@ -556,6 +558,31 @@ kbd {
   overscroll-behavior: contain;
   scrollbar-color: var(--scrollbar) var(--bg);
 }
+.file-diff-section {
+  min-height: 100%;
+}
+.all-files-section {
+  min-height: 0;
+  padding-bottom: 20px;
+}
+.file-diff-heading {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 10px 15px;
+  background: var(--panel);
+  border-block: 1px solid var(--border);
+}
+.file-diff-heading h2 {
+  margin: 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-size: 12px;
+  font-weight: 500;
+}
+.file-diff-heading .line-counts {
+  margin-left: auto;
+}
 .code-surface {
   min-height: 100%;
   outline: none;
@@ -619,7 +646,7 @@ kbd {
   min-height: 0;
   overflow: auto;
   margin: 0;
-  padding: 14px 12px;
+  padding: 14px 12px 14px 20px;
   line-height: 1.8;
   font-size: 11px;
   white-space: pre;
