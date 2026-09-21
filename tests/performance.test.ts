@@ -34,8 +34,8 @@ test("state, graph and selection have bounded process budgets and batch all hunk
   assert.equal(initial.files.length, 3);
   assert.equal(
     calls.length,
-    9,
-    "initialization + two metadata checks + one diff/listing",
+    8,
+    "initialization batches visibility; two metadata checks + one diff/listing",
   );
   assert.deepEqual(
     calls
@@ -313,3 +313,84 @@ for (const warm of [false, true]) {
     assert.match(refreshed.files[0].patch, /not yet snapshotted/);
   });
 }
+
+test("cold state overlaps pinned diff and operation reads, then validates in order", async (t) => {
+  const options = await fixture(t);
+  let operationPending = false;
+  let overlaps = 0;
+  const calls: string[] = [];
+  const service = new ReviewService({
+    ...options,
+    jjRunner: async (cwd, args) => {
+      calls.push(args[0]);
+      if (args[0] === "op") {
+        operationPending = true;
+        try {
+          return await jj(cwd, args);
+        } finally {
+          operationPending = false;
+        }
+      }
+      if (args[0] === "diff") {
+        assert.equal(
+          operationPending,
+          true,
+          "diff need not wait for operation metadata",
+        );
+        assert.ok(args.includes("--ignore-working-copy"));
+        overlaps++;
+      }
+      return jj(cwd, args);
+    },
+  });
+  const state = await service.getState();
+  assert.equal(overlaps, 1);
+  assert.deepEqual(
+    calls.slice(-2),
+    ["log", "op"],
+    "final metadata validation precedes the operation head check",
+  );
+  assert.equal((await service.getState()).version, state.version);
+});
+
+test("a failed parallel read drains its sibling before releasing the service queue", async (t) => {
+  const options = await fixture(t);
+  let releaseDiff!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    releaseDiff = resolve;
+  });
+  let signalDiff!: () => void;
+  const diffStarted = new Promise<void>((resolve) => {
+    signalDiff = resolve;
+  });
+  const failure = new Error("injected operation read failure");
+  const service = new ReviewService({
+    ...options,
+    jjRunner: async (cwd, args) => {
+      if (args[0] === "op") throw failure;
+      if (args[0] === "diff") {
+        signalDiff();
+        await gate;
+      }
+      return jj(cwd, args);
+    },
+  });
+  const failed = assert.rejects(
+    service.getState(),
+    (error) => error === failure,
+  );
+  await diffStarted;
+  let drained = false;
+  const draining = service.drain().then(() => {
+    drained = true;
+  });
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.equal(
+    drained,
+    false,
+    "shutdown/next requests must not abandon the diff subprocess",
+  );
+  releaseDiff();
+  await Promise.all([failed, draining]);
+  assert.equal(drained, true);
+});

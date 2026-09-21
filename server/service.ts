@@ -25,6 +25,9 @@ export interface Revision {
   changeId: string;
   commitId: string;
   description: string;
+  author: string;
+  /** jj's shortest distinguishing prefix, not an arbitrary fixed truncation. */
+  changeIdPrefix: string;
 }
 export interface LogRow {
   /** The graph prefix or connector line emitted by jj, preserved verbatim. */
@@ -143,7 +146,7 @@ const hash = (value: string) =>
 export const reviewLogRevset =
   "trunk() | ((tracked_remote_bookmarks() & ~::trunk())::) | (mutable() & mine())::";
 const revisionTemplate =
-  'json(change_id) ++ "\\t" ++ json(commit_id) ++ "\\t" ++ json(description.first_line()) ++ "\\n"';
+  'json(change_id) ++ "\\t" ++ json(commit_id) ++ "\\t" ++ json(description.first_line()) ++ "\\t" ++ json(author.name()) ++ "\\t" ++ json(change_id.shortest().prefix()) ++ "\\n"';
 
 async function readJSON<T>(file: string): Promise<T | undefined> {
   try {
@@ -229,7 +232,12 @@ export class ReviewService {
     let requested: Revision[];
     try {
       if (!this.requestedRevision.trim()) throw new Error("Empty revision.");
-      requested = await this.revisions(this.requestedRevision, root, snapshot);
+      requested = await this.revisions(
+        this.requestedRevision,
+        root,
+        snapshot,
+        true,
+      );
     } catch (error) {
       if (!(error instanceof ProcessError) && this.requestedRevision.trim())
         throw error;
@@ -246,19 +254,9 @@ export class ReviewService {
         "The requested revision must resolve to exactly one visible, non-divergent change.",
       );
     const source = requested[0];
-    // Resolve by change identity, not a symbol that a bookmark could shadow.
-    // Also reject a hidden commit or one explicitly selected side of divergence.
-    const visible = await this.revisions(
-      this.changeRevset(source.changeId),
-      root,
-      snapshot,
-    );
-    if (visible.length !== 1 || visible[0].commitId !== source.commitId)
-      throw new ApiError(
-        400,
-        "INVALID_REVISION",
-        "The requested change is hidden, abandoned, divergent, or changed during initialization.",
-      );
+    // Visibility and divergence were checked in the same jj query that resolved
+    // the initial expression. Subsequent reads follow only this change identity
+    // and revalidate it live; never re-evaluate a moving @ or bookmark.
     await mkdir(this.dataDir, { recursive: true });
     const journal =
       (await readJSON<Journal>(
@@ -315,6 +313,7 @@ export class ReviewService {
     revset: string,
     root = this.root,
     snapshot = true,
+    requireVisible = false,
   ): Promise<Revision[]> {
     const output = (
       await this.jjRunner(root, [
@@ -325,18 +324,49 @@ export class ReviewService {
         "-r",
         revset,
         "-T",
-        revisionTemplate,
+        requireVisible
+          ? revisionTemplate.replace(
+              ' ++ "\\n"',
+              ' ++ "\\t" ++ json(hidden) ++ "\\t" ++ json(divergent) ++ "\\n"',
+            )
+          : revisionTemplate,
         ...(snapshot ? [] : ["--ignore-working-copy"]),
       ])
     ).stdout.trim();
     if (!output) return [];
     return output.split("\n").map((line) => {
-      const [changeId, commitId, description] = line
-        .split("\t")
-        .map((value) => JSON.parse(value));
-      if (!/^[k-z]+$/.test(changeId) || !/^[0-9a-f]{40,64}$/.test(commitId))
+      const [
+        changeId,
+        commitId,
+        description,
+        author,
+        changeIdPrefix,
+        ...visibility
+      ] = line.split("\t").map((value) => JSON.parse(value));
+      if (
+        !/^[k-z]+$/.test(changeId) ||
+        !/^[0-9a-f]{40,64}$/.test(commitId) ||
+        typeof description !== "string" ||
+        typeof author !== "string" ||
+        typeof changeIdPrefix !== "string" ||
+        !changeIdPrefix ||
+        !changeId.startsWith(changeIdPrefix)
+      )
         throw new Error("Unrecognized revision identity.");
-      return { changeId, commitId, description };
+      if (requireVisible) {
+        if (
+          visibility.length !== 2 ||
+          visibility.some((value) => typeof value !== "boolean")
+        )
+          throw new Error("Unrecognized revision visibility.");
+        if (visibility.some(Boolean))
+          throw new ApiError(
+            400,
+            "INVALID_REVISION",
+            "The requested change is hidden, abandoned, or divergent. Choose exactly one visible, non-divergent change.",
+          );
+      }
+      return { changeId, commitId, description, author, changeIdPrefix };
     });
   }
   private async files(source: string): Promise<ReviewFile[]> {
@@ -465,18 +495,34 @@ export class ReviewService {
       .split("\n")
       .filter(Boolean)
       .map((line) => {
-        const [changeId, commitId, description, ...flags] = line
-          .split("\t")
-          .map((value) => JSON.parse(value));
+        const [
+          changeId,
+          commitId,
+          description,
+          author,
+          changeIdPrefix,
+          ...flags
+        ] = line.split("\t").map((value) => JSON.parse(value));
         if (
           !/^[k-z]+$/.test(changeId) ||
           !/^[0-9a-f]{40,64}$/.test(commitId) ||
+          typeof description !== "string" ||
+          typeof author !== "string" ||
+          typeof changeIdPrefix !== "string" ||
+          !changeIdPrefix ||
+          !changeId.startsWith(changeIdPrefix) ||
           flags.length !== selections.length * 3 + 2 ||
           flags.some((flag) => typeof flag !== "boolean")
         )
           throw new Error("Unrecognized revision metadata.");
         return {
-          revision: { changeId, commitId, description } as Revision,
+          revision: {
+            changeId,
+            commitId,
+            description,
+            author,
+            changeIdPrefix,
+          } as Revision,
           flags,
         };
       });
@@ -584,8 +630,17 @@ export class ReviewService {
   private async readState(allowConflicts = false): Promise<State> {
     await this.init();
     const views = await this.readViews({ allowConflicts });
-    const operation = await this.operation();
-    const files = await this.files(views[0].source.commitId);
+    // The pinned diff does not depend on the operation query. Overlap these
+    // reads, but drain BOTH even on failure before releasing the serial queue.
+    // Metadata and the operation head are still rechecked in order below.
+    const [operationResult, filesResult] = await Promise.allSettled([
+      this.operation(),
+      this.files(views[0].source.commitId),
+    ]);
+    if (operationResult.status === "rejected") throw operationResult.reason;
+    if (filesResult.status === "rejected") throw filesResult.reason;
+    const operation = operationResult.value;
+    const files = filesResult.value;
     await this.validateViews(views, operation.id, { allowConflicts });
     return this.state(views[0], operation.id, files);
   }
@@ -684,7 +739,15 @@ export class ReviewService {
       const rows = lines.map((line): LogRow => {
         const index = line.indexOf(marker);
         if (index === -1) return { graph: line };
-        const [changeId, commitId, description, mutable, isWorkingCopy] = line
+        const [
+          changeId,
+          commitId,
+          description,
+          author,
+          changeIdPrefix,
+          mutable,
+          isWorkingCopy,
+        ] = line
           .slice(index + marker.length)
           .split("\t")
           .map((value) => JSON.parse(value));
@@ -692,13 +755,17 @@ export class ReviewService {
           !/^[k-z]+$/.test(changeId) ||
           !/^[0-9a-f]{40,64}$/.test(commitId) ||
           typeof description !== "string" ||
+          typeof author !== "string" ||
+          typeof changeIdPrefix !== "string" ||
+          !changeIdPrefix ||
+          !changeId.startsWith(changeIdPrefix) ||
           typeof mutable !== "boolean" ||
           typeof isWorkingCopy !== "boolean"
         )
           throw new Error("Unrecognized revision in jj graph.");
         return {
           graph: line.slice(0, index),
-          revision: { changeId, commitId, description },
+          revision: { changeId, commitId, description, author, changeIdPrefix },
           mutable,
           isWorkingCopy,
         };
@@ -1097,12 +1164,16 @@ export class ReviewService {
       error instanceof ProcessError
         ? error.result.stdout + error.result.stderr
         : String(error);
+    const dependencyHint = /failed to run patch/.test(output)
+      ? "jj-hunk-tool could not start its required patch executable. Install GNU patch or repair the packaged runtime. "
+      : "";
     throw new ApiError(
       500,
       current === beforeOperation ? "TOOL_FAILED" : "PARTIAL_FAILURE",
-      current === beforeOperation
-        ? "The tool failed without a recorded history change. Nothing was automatically retried. Refresh before trying again."
-        : "The tool failed and history may have changed. Inspect jj op log before doing anything else. No retry or rollback was attempted.",
+      dependencyHint +
+        (current === beforeOperation
+          ? "The tool failed without a recorded history change. Nothing was automatically retried. Refresh before trying again."
+          : "The tool failed and history may have changed. Inspect jj op log before doing anything else. No retry or rollback was attempted."),
       { output },
     );
   }

@@ -1436,3 +1436,66 @@ test("revision API validates strict versioned identity input and returns the exp
   );
   assert.deepEqual(await service.getState(), selected);
 });
+
+test("missing patch runtime dependency is actionable over HTTP and never retried by reads or restart", async (t) => {
+  const { dataDir, root, state } = await fixture();
+  // Exact stderr reproduced with the pinned binary and a PATH containing only
+  // jj and jj-hunk-tool: previews work, but _jj-tool cannot launch GNU patch.
+  const stderr =
+    "Error: failed to run patch\n\nCaused by:\n    No such file or directory (os error 2)\nError: Failed to edit diff\nCaused by: Tool exited with exit status: 1 (run with --debug to see the exact invocation)\nError: jj command failed\n";
+  let squashCalls = 0;
+  const service = new ReviewService({
+    dataDir,
+    repoPath: root,
+    toolRunner: async (command, args, cwd) => {
+      if (args[0] === "squash") {
+        squashCalls++;
+        throw new ProcessError(command, args, { stdout: "", stderr }, 1);
+      }
+      return run(command, args, cwd);
+    },
+  });
+  const app = express();
+  app.use("/api", createApi(service));
+  const server = app.listen(0, "127.0.0.1");
+  await new Promise<void>((resolve) => server.once("listening", resolve));
+  t.after(() => {
+    server.closeAllConnections();
+    server.close();
+  });
+  const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}/api`;
+  const hunk = state.files[0].hunks[0];
+  const response = await fetch(`${base}/squash-lines`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      version: state.version,
+      selections: [{ id: hunk.id, lines: [changes(hunk)[0]] }],
+    }),
+  });
+  assert.equal(response.status, 500);
+  assert.equal(response.headers.get("cache-control"), "no-store");
+  const error = await response.json();
+  assert.equal(error.code, "TOOL_FAILED");
+  assert.match(error.error, /required patch executable.*GNU patch/);
+  assert.match(
+    error.error,
+    /without a recorded history change.*Nothing was automatically retried/,
+  );
+  assert.equal(
+    error.output,
+    stderr,
+    "preserve complete actionable subprocess diagnostics",
+  );
+  assert.deepEqual(await service.getState(), state);
+  assert.deepEqual(await (await fetch(`${base}/state`)).json(), state);
+  assert.deepEqual(
+    await new ReviewService({ dataDir, repoPath: root }).getState(),
+    state,
+  );
+  assert.equal(
+    squashCalls,
+    1,
+    "reads and restart never replay the failed selection",
+  );
+});

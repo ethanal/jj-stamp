@@ -779,3 +779,58 @@ test("a mutable sibling can be selected and uses its own immediate parent", asyn
     selected.source.commitId,
   );
 });
+
+test("state and graph batch revision author and jj's distinguishing change prefix", async () => {
+  const options = await fixture();
+  const description = 'Quoted "title" <not-markup>\twith a tab';
+  await jj(options.repoPath, [
+    "config",
+    "set",
+    "--repo",
+    "user.name",
+    "Ada Example",
+  ]);
+  await jj(options.repoPath, [
+    "new",
+    "-m",
+    `${description}\n\nA longer description body.`,
+  ]);
+  await writeFile(
+    path.join(options.repoPath, "author.txt"),
+    "metadata fixture\n",
+  );
+  let toolCalls = 0;
+  const service = new ReviewService({
+    ...options,
+    toolRunner: (command, args, cwd) => {
+      toolCalls++;
+      return run(command, args, cwd);
+    },
+  });
+  const state = await service.getState();
+  assert.equal(state.source.author, "Ada Example");
+  assert.equal(state.source.description, description);
+  assert.equal(state.parent!.author, "Orbit Team");
+  assert.equal(
+    state.source.changeIdPrefix,
+    await revisionId(options.repoPath, "@", "change_id.shortest().prefix()"),
+  );
+  assert.ok(state.source.changeId.startsWith(state.source.changeIdPrefix));
+  toolCalls = 0;
+  const graph = await service.getLog({ includeOutput: false });
+  assert.deepEqual(
+    graph.rows.find((row) => row.revision?.changeId === state.source.changeId)
+      ?.revision,
+    state.source,
+  );
+  assert.equal(graph.version, state.version);
+  assert.equal(
+    toolCalls,
+    0,
+    "revision metadata uses existing jj queries, never the hunk tool",
+  );
+  assert.deepEqual(
+    (await new ReviewService(options).getState()).source,
+    state.source,
+  );
+});
