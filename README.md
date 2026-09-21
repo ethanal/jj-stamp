@@ -51,7 +51,7 @@ The flake exposes a default package/app and development shell for x86_64/aarch64
 - **↑ 10 / ↓ 10** reveals ten context lines at a time.
 - Both sidebars collapse to narrow rails. Sidebar and diff-layout preferences are stored locally in the browser.
 
-The heading and browser tab identify the **full repository path**. The graph is rendered by `jj`, with clickable change IDs and the selected change highlighted. It includes the selected change even when that change falls outside the configured default log view. Graph refreshes wait for queued operations to complete.
+The heading and browser tab identify the **full repository path**. The graph is rendered by `jj`, with clickable change IDs and the selected change highlighted. It uses `trunk() | ((tracked_remote_bookmarks() & ~::trunk())::) | (mutable() & mine())::`, plus the selected change, instead of the default log revset or a 100-entry cap. Graph refreshes wait for queued operations to complete and show recorded history without snapshotting the working copy.
 
 There is no demo creation or reset endpoint. Test fixtures live only in temporary directories.
 

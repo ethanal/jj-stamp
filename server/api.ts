@@ -32,8 +32,17 @@ export function createApi(service: ReviewService): express.Router {
   router.get("/state", async (_req, res) => {
     res.json(await service.getState());
   });
-  router.get("/log", async (_req, res) => {
-    res.json(await service.getLog());
+  router.get("/log", async (req, res) => {
+    const format = z
+      .enum(["full", "rows"])
+      .default("full")
+      .parse(req.query.format);
+    const result = await service.getLog({ includeOutput: format === "full" });
+    res.json(
+      format === "rows"
+        ? { version: result.version, rows: result.rows }
+        : result,
+    );
   });
   router.post("/revision", async (req, res) => {
     const input = z

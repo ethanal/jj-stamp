@@ -7,6 +7,7 @@ import path from "node:path";
 import {
   ApiError,
   ReviewService,
+  reviewLogRevset,
   type ServiceOptions,
   type State,
 } from "../server/service.ts";
@@ -645,18 +646,13 @@ test("structured log preserves actual jj graph prefixes, metadata, connector row
     log.rows.some((row) => row.revision && !row.mutable),
     "immutable nodes are represented as non-selectable",
   );
-  const configured = (
-    await jj(options.repoPath, ["config", "get", "revsets.log"])
-  ).stdout.trim();
   const renderedIds = (
     await jj(options.repoPath, [
       "log",
-      "--limit",
-      "100",
       "--config",
       "ui.log-word-wrap=false",
       "-r",
-      `latest((${configured}), 99) | change_id("${sourceId}")`,
+      `(${reviewLogRevset}) | change_id("${sourceId}")`,
       "-T",
       'json(change_id) ++ "\\n"',
     ])
@@ -673,12 +669,12 @@ test("structured log preserves actual jj graph prefixes, metadata, connector row
   );
   assert.equal(
     log.output,
-    (await jj(options.repoPath, ["log", "--limit", "100"])).stdout,
+    (await jj(options.repoPath, ["log", "-r", reviewLogRevset])).stdout,
   );
   assert.equal(log.version, (await service.getState()).version);
 });
 
-test("structured log includes the selected revision when configured default graph excludes it", async () => {
+test("review graph ignores the default revset and includes selected revisions outside its filter", async () => {
   const options = await fixture();
   const service = new ReviewService(options);
   const initial = await service.getState();
@@ -695,6 +691,17 @@ test("structured log includes the selected revision when configured default grap
     "--repo",
     "ui.log-word-wrap",
     "true",
+  ]);
+  assert.ok(
+    (await service.getLog()).output.includes(initial.source.description),
+    "explicit review revset overrides the configured default log",
+  );
+  await jj(options.repoPath, [
+    "config",
+    "set",
+    "--repo",
+    "user.email",
+    "another-reviewer@example.com",
   ]);
   const log = await service.getLog();
   assert.ok(!log.output.includes(initial.source.description));

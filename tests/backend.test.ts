@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import express from "express";
 import type { AddressInfo } from "node:net";
-import { ReviewService, ApiError } from "../server/service.ts";
+import { ReviewService, ApiError, reviewLogRevset } from "../server/service.ts";
 import type { ReviewHunk, State, Selection } from "../server/service.ts";
 import { jj, run, ProcessError } from "../server/process.ts";
 import { createApi } from "../server/api.ts";
@@ -553,7 +553,10 @@ test("unrelated conflicts allow review, squash, and undo; immutable ancestors ar
     service.selectRevision({ version: clean.version, changeId: conflicted }),
     "CONFLICTED_SOURCE",
   );
-  assert.equal((await service.getState()).source.changeId, clean.source.changeId);
+  assert.equal(
+    (await service.getState()).source.changeId,
+    clean.source.changeId,
+  );
   await rejectsCode(
     service.preview(input(restricted, [{ id: hunk.id, lines: changes(hunk) }])),
     "STALE_STATE",
@@ -569,9 +572,12 @@ test("unrelated conflicts allow review, squash, and undo; immutable ancestors ar
   assert.equal(result.state.canUndo, true);
   const undone = await service.undo(result.state.version);
   assert.deepEqual(undone.state.files, before.files);
+  // Exercise the direct API on another hunk, rather than asking jj to recreate
+  // an identical Git commit immediately after undo (same-second timestamps).
+  const otherHunk = undone.state.files[1].hunks[0];
   const direct = await service.squashLines({
     version: undone.state.version,
-    selections,
+    selections: [{ id: otherHunk.id, lines: changes(otherHunk) }],
   });
   assert.equal(direct.warning, undefined);
   assert.equal(direct.state.canUndo, true);
@@ -600,7 +606,16 @@ test("new descendant conflicts still warn and allow exact undo", async () => {
   const undone = await service.undo(result.state.version);
   assert.deepEqual(undone.state.files, before.files);
   assert.equal(
-    (await jj(root, ["log", "-r", "conflicts()", "--no-graph", "-T", "change_id"])).stdout,
+    (
+      await jj(root, [
+        "log",
+        "-r",
+        "conflicts()",
+        "--no-graph",
+        "-T",
+        "change_id",
+      ])
+    ).stdout,
     "",
   );
 });
@@ -625,7 +640,10 @@ test("a clean source with a conflicted parent is reviewable but cannot squash in
   assert.equal(clean.parent, null);
   assert.match(clean.squashUnavailable!, /parent contains conflicts/);
   assert.ok(!clean.targets.some((target) => target.changeId === parent));
-  assert.ok(clean.targets.length, "clean older ancestors remain legacy targets");
+  assert.ok(
+    clean.targets.length,
+    "clean older ancestors remain legacy targets",
+  );
   await rejectsCode(
     service.squashLines({ version: clean.version, selections: [] }),
     "SQUASH_UNAVAILABLE",
@@ -769,13 +787,13 @@ test("merge parents are unavailable rather than selecting any ancestor; file con
   );
 });
 
-test("log is real default jj graph output, with no custom app template or ANSI", async () => {
+test("log uses the review revset and real jj graph output, with no custom app text template or ANSI", async () => {
   const { service, state, root } = await fixture();
   const result = await service.getLog();
   assert.equal(result.version, state.version);
   assert.equal(
     result.output,
-    (await jj(root, ["log", "--limit", "100"])).stdout,
+    (await jj(root, ["log", "-r", reviewLogRevset])).stdout,
   );
   assert.match(result.output, /@/);
   assert.ok(result.output.includes(state.source.description));
@@ -860,7 +878,7 @@ test("context new/deleted files have null opposite sides and unsupported files a
   );
 });
 
-test("file and graph reads reject repository changes during their final validation", async () => {
+test("file reads reject working-copy races and graph reads reject recorded-history races", async () => {
   const { dataDir, state, root } = await fixture();
   for (const action of ["file", "log"] as const) {
     const service = new ReviewService({
@@ -870,14 +888,21 @@ test("file and graph reads reject repository changes during their final validati
         const result = await jj(cwd, args);
         if (
           (action === "file" && args[0] === "file" && args[1] === "show") ||
-          (action === "log" && args[0] === "log" && args[1] === "--limit")
+          (action === "log" &&
+            args[0] === "log" &&
+            args.includes("--at-operation"))
         ) {
-          // Edit after reading the pinned content/graph, before the final
-          // snapshot. This must fire even when all diff listings are cached.
-          await appendFile(
-            path.join(root, state.files[0].path),
-            `\n// race ${action}\n`,
-          );
+          if (action === "file") {
+            // File-content validation still snapshots external edits.
+            await appendFile(
+              path.join(root, state.files[0].path),
+              "\n// race file\n",
+            );
+          } else {
+            // Graph reads must not snapshot; only a recorded external operation
+            // invalidates the pinned graph, not unsnapshotted worktree bytes.
+            await jj(cwd, ["bookmark", "set", "graph-race", "-r", "@"]);
+          }
         }
         return result;
       },
@@ -1116,7 +1141,7 @@ test("immutable diff cache serves state, log and context without repeating listi
   });
   const state = await service.getState();
   const pristine = structuredClone(state);
-  assert.equal(listings, 3);
+  assert.equal(listings, 1);
   assert.equal(diffs, 1);
   const context = await service.getFile({
     version: state.version,
@@ -1131,7 +1156,7 @@ test("immutable diff cache serves state, log and context without repeating listi
   state.files[0].hunks[0].id = "caller mutation";
   state.files[0].patch = "caller mutation";
   assert.deepEqual(await service.getState(), pristine);
-  assert.equal(listings, 3);
+  assert.equal(listings, 1);
   assert.equal(diffs, 1);
   const hunk = pristine.files[0].hunks[0];
   await rejectsCode(
@@ -1185,7 +1210,7 @@ test("cached source never hides external operation-only changes or unsnapshotted
   assert.notEqual(history.version, initial.version);
   assert.equal(
     listings,
-    3,
+    1,
     "operation-only changes reuse immutable source diff, not the old version",
   );
   await rejectsCode(
@@ -1214,7 +1239,7 @@ test("cached source never hides external operation-only changes or unsnapshotted
   const edited = await service.getState();
   assert.notEqual(edited.source.commitId, history.source.commitId);
   assert.notEqual(edited.version, history.version);
-  assert.equal(listings, 6);
+  assert.equal(listings, 2);
   assert.match(edited.files[0].patch, /external unsnapshotted edit/);
   assert.deepEqual(
     edited,
@@ -1246,7 +1271,7 @@ test("cached source rechecks configuration-only immutability without an operatio
   assert.equal(restricted.source.commitId, state.source.commitId);
   assert.notEqual(restricted.version, state.version);
   assert.equal(restricted.parent, null);
-  assert.equal(listings, 3);
+  assert.equal(listings, 1);
   const selections = [
     { id: state.files[0].hunks[0].id, lines: changes(state.files[0].hunks[0]) },
   ];
@@ -1288,10 +1313,14 @@ test("transient hunk listing failures are not retained in the immutable diff cac
   assert.match(failed.files[0].unsupported!, /temporary listing failure/);
   const recovered = await service.getState();
   assert.ok(recovered.files.every((file) => !file.unsupported));
-  assert.equal(listings, 6);
-  assert.notEqual(recovered.version, failed.version);
+  assert.equal(listings, 2);
+  assert.equal(
+    recovered.version,
+    failed.version,
+    "tool availability does not change repository identity",
+  );
   assert.deepEqual(await service.getState(), recovered);
-  assert.equal(listings, 6);
+  assert.equal(listings, 2);
 });
 
 test("direct squash checks one exact preview and lists only the new committed source", async () => {
@@ -1323,10 +1352,10 @@ test("direct squash checks one exact preview and lists only the new committed so
   });
   assert.equal(patches, 1);
   assert.equal(squashes, 1);
-  assert.equal(listings, 3);
+  assert.equal(listings, 1);
   assert.equal(result.state.canUndo, true);
   assert.deepEqual(await service.getState(), result.state);
-  assert.equal(listings, 3);
+  assert.equal(listings, 1);
 });
 
 test("revision API validates strict versioned identity input and returns the explicitly selected state", async (t) => {
@@ -1390,6 +1419,9 @@ test("revision API validates strict versioned identity input and returns the exp
   assert.equal(immutable.status, 409);
   assert.equal((await immutable.json()).code, "IMMUTABLE_SOURCE");
   const log = await (await fetch(`${base}/log`)).json();
+  const rowLog = await (await fetch(`${base}/log?format=rows`)).json();
+  assert.deepEqual(rowLog, { version: log.version, rows: log.rows });
+  assert.equal((await fetch(`${base}/log?format=invalid`)).status, 400);
   assert.equal(log.version, selected.version);
   assert.equal(typeof log.output, "string");
   assert.ok(

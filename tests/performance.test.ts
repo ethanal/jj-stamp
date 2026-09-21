@@ -1,0 +1,315 @@
+import assert from "node:assert/strict";
+import { appendFile, mkdtemp, rm, writeFile } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import test from "node:test";
+import { ApiError, ReviewService } from "../server/service.ts";
+import { jj, run } from "../server/process.ts";
+import { createDemo } from "./fixtures.ts";
+
+async function fixture(t: test.TestContext) {
+  const dataDir = await mkdtemp(
+    path.join(os.tmpdir(), "jj-stamp-performance-"),
+  );
+  t.after(() => rm(dataDir, { recursive: true, force: true }));
+  return { dataDir, repoPath: await createDemo(dataDir) };
+}
+
+// Count processes instead of asserting wall-clock timings on shared CI hosts.
+test("state, graph and selection have bounded process budgets and batch all hunks", async (t) => {
+  const options = await fixture(t);
+  const calls: Array<{ command: string; args: string[] }> = [];
+  const service = new ReviewService({
+    ...options,
+    jjRunner: (cwd, args) => {
+      calls.push({ command: "jj", args });
+      return jj(cwd, args);
+    },
+    toolRunner: (command, args, cwd) => {
+      calls.push({ command, args });
+      return run(command, args, cwd);
+    },
+  });
+  const initial = await service.getState();
+  assert.equal(initial.files.length, 3);
+  assert.equal(
+    calls.length,
+    9,
+    "initialization + two metadata checks + one diff/listing",
+  );
+  assert.deepEqual(
+    calls
+      .filter((call) => call.command === "jj-hunk-tool")
+      .map((call) => call.args),
+    [["hunks", "-r", initial.source.commitId]],
+  );
+  calls.length = 0;
+  assert.deepEqual(await service.getState(), initial);
+  assert.equal(
+    calls.length,
+    4,
+    "warm state reads only live metadata and operation heads",
+  );
+  calls.length = 0;
+  assert.equal((await service.getLog()).version, initial.version);
+  assert.equal(calls.length, 6);
+  assert.ok(
+    calls.every((call) => call.command === "jj" && call.args[0] !== "diff"),
+  );
+  calls.length = 0;
+  const rows = await service.getLog({ includeOutput: false });
+  assert.equal(rows.version, initial.version);
+  assert.ok(rows.rows.length);
+  assert.equal(rows.output, "");
+  assert.equal(
+    calls.length,
+    5,
+    "the browser does not render an unused second graph",
+  );
+  calls.length = 0;
+  const selected = (
+    await service.selectRevision({
+      version: initial.version,
+      changeId: initial.parent!.changeId,
+    })
+  ).state;
+  assert.equal(calls.length, 6, "both sources share validation snapshots");
+  assert.deepEqual(
+    calls
+      .filter((call) => call.command === "jj-hunk-tool")
+      .map((call) => call.args),
+    [["hunks", "-r", selected.source.commitId]],
+  );
+  assert.deepEqual(await service.getState(), selected);
+});
+
+test("a cold graph read needs neither diffs nor the hunk tool and has the same repository version", async (t) => {
+  const options = await fixture(t);
+  const service = new ReviewService({
+    ...options,
+    jjRunner: (cwd, args) => {
+      assert.notEqual(args[0], "diff");
+      return jj(cwd, args);
+    },
+    toolRunner: async () => {
+      throw new Error("graph must not run jj-hunk-tool");
+    },
+  });
+  const graph = await service.getLog({ includeOutput: false });
+  assert.ok(graph.rows.length);
+  assert.equal(
+    graph.version,
+    (await new ReviewService(options).getState()).version,
+  );
+});
+
+for (const affected of ["source", "candidate"] as const) {
+  test(`selection rechecks configuration-only mutability of ${affected} before publishing`, async (t) => {
+    const options = await fixture(t);
+    const original = (await new ReviewService(options).getState()).source;
+    await jj(options.repoPath, [
+      "new",
+      "root()",
+      "-m",
+      "Independent candidate",
+    ]);
+    await writeFile(
+      path.join(options.repoPath, "candidate.txt"),
+      "candidate\n",
+    );
+    const candidate = (
+      await jj(options.repoPath, [
+        "log",
+        "--no-graph",
+        "-r",
+        "@",
+        "-T",
+        "change_id",
+      ])
+    ).stdout.trim();
+    let changed = false;
+    const service = new ReviewService({
+      ...options,
+      revision: original.changeId,
+      toolRunner: async (command, args, cwd) => {
+        const result = await run(command, args, cwd);
+        if (args[0] === "hunks" && args[2] !== original.commitId && !changed) {
+          changed = true;
+          await jj(cwd, [
+            "config",
+            "set",
+            "--repo",
+            'revset-aliases."immutable_heads()"',
+            affected === "source" ? original.changeId : candidate,
+          ]);
+        }
+        return result;
+      },
+    });
+    const before = await service.getState();
+    await assert.rejects(
+      service.selectRevision({ version: before.version, changeId: candidate }),
+      (error: unknown) =>
+        error instanceof ApiError &&
+        error.code ===
+          (affected === "source" ? "STALE_STATE" : "IMMUTABLE_SOURCE"),
+    );
+    assert.equal(changed, true);
+    const after = await service.getState();
+    assert.equal(
+      after.operation,
+      before.operation,
+      "configuration change has no history operation",
+    );
+    assert.deepEqual(
+      after.source,
+      before.source,
+      "failed selection never changes source",
+    );
+  });
+}
+
+test("graph validation catches configuration changes without loading source hunks", async (t) => {
+  const options = await fixture(t);
+  const before = await new ReviewService(options).getState();
+  let changed = false;
+  const service = new ReviewService({
+    ...options,
+    jjRunner: async (cwd, args) => {
+      const result = await jj(cwd, args);
+      if (args[0] === "log" && args.includes("--at-operation") && !changed) {
+        changed = true;
+        await jj(cwd, [
+          "config",
+          "set",
+          "--repo",
+          'revset-aliases."immutable_heads()"',
+          before.parent!.commitId,
+        ]);
+      }
+      return result;
+    },
+    toolRunner: async () => {
+      throw new Error("graph must not run jj-hunk-tool");
+    },
+  });
+  await assert.rejects(
+    service.getLog({ includeOutput: false }),
+    (error: unknown) =>
+      error instanceof ApiError && error.code === "STALE_STATE",
+  );
+  assert.equal(changed, true);
+  assert.equal(
+    (await new ReviewService(options).getState()).operation,
+    before.operation,
+  );
+});
+
+test("review graph keeps more than 100 matching changes instead of following the default log revset", async (t) => {
+  const options = await fixture(t);
+  const initial = await new ReviewService(options).getState();
+  for (let i = 0; i < 101; i++)
+    await jj(options.repoPath, ["new", "root()", "-m", `Visible branch ${i}`]);
+  // A narrow default demonstrates that the explicit review revset selects
+  // the graph, without applying a latest()/limit cap to its matching changes.
+  await jj(options.repoPath, [
+    "config",
+    "set",
+    "--repo",
+    "revsets.log",
+    "root()",
+  ]);
+  const service = new ReviewService({
+    ...options,
+    revision: initial.source.changeId,
+  });
+  const log = await service.getLog({ includeOutput: false });
+  const revisions = log.rows.flatMap((row) =>
+    row.revision ? [row.revision] : [],
+  );
+  assert.equal(
+    revisions.length,
+    105,
+    "101 branches + 3 fixture changes + root trunk",
+  );
+  assert.ok(
+    revisions.some((revision) => revision.changeId === initial.source.changeId),
+  );
+  assert.ok(
+    revisions.some((revision) => revision.description === "Visible branch 0"),
+  );
+  assert.ok(
+    revisions.some((revision) => revision.description === "Visible branch 100"),
+  );
+});
+
+for (const warm of [false, true]) {
+  test(`${warm ? "warm" : "cold"} graph reads never snapshot working-copy edits`, async (t) => {
+    const options = await fixture(t);
+    const calls: string[][] = [];
+    const service = new ReviewService({
+      ...options,
+      jjRunner: (cwd, args) => {
+        calls.push(args);
+        return jj(cwd, args);
+      },
+    });
+    const initial = warm
+      ? await service.getState()
+      : await new ReviewService(options).getState();
+    calls.length = 0;
+    await appendFile(
+      path.join(options.repoPath, initial.files[0].path),
+      "\n// not yet snapshotted\n",
+    );
+    const graph = await service.getLog();
+    assert.equal(
+      graph.version,
+      initial.version,
+      "graph describes recorded repository state",
+    );
+    assert.ok(calls.length > 0);
+    assert.ok(
+      calls.every(
+        (args) =>
+          args.includes("--ignore-working-copy") ||
+          args.includes("--at-operation"),
+      ),
+      "every graph subprocess, including initialization, is explicitly non-snapshotting",
+    );
+    assert.equal(
+      (
+        await jj(options.repoPath, [
+          "op",
+          "log",
+          "--ignore-working-copy",
+          "--no-graph",
+          "--limit",
+          "1",
+          "-T",
+          "self.id()",
+        ])
+      ).stdout.trim(),
+      initial.operation,
+    );
+    assert.equal(
+      (
+        await jj(options.repoPath, [
+          "log",
+          "--ignore-working-copy",
+          "--no-graph",
+          "-r",
+          "@",
+          "-T",
+          "commit_id",
+        ])
+      ).stdout.trim(),
+      initial.source.commitId,
+    );
+    // Diff reads still snapshot, so later mutation versions see these edits.
+    const refreshed = await service.getState();
+    assert.notEqual(refreshed.version, initial.version);
+    assert.notEqual(refreshed.source.commitId, initial.source.commitId);
+    assert.match(refreshed.files[0].patch, /not yet snapshotted/);
+  });
+}

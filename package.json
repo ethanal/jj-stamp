@@ -7,6 +7,7 @@
     "start": "node dist/cli.cjs",
     "build": "node scripts/build.mjs",
     "test": "tsx --test tests/*.test.ts",
+    "benchmark": "tsx scripts/benchmark.ts",
     "test:browser": "tsx tests/browser.e2e.ts",
     "format": "prettier --write src server scripts tests cli.ts vite.config.ts tsconfig.json package.json README.md",
     "test:cli": "npm run build && tsx --test tests/cli.e2e.ts"

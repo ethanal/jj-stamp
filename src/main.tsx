@@ -124,6 +124,7 @@ function App() {
   const [notice, setNotice] = useState("");
   const [log, setLog] = useState<LogRow[]>([]);
   const [logLoading, setLogLoading] = useState(false);
+  const logOperation = useRef<string | undefined>(undefined);
   const [showFiles, setShowFiles] = useState(() => readExpanded("files"));
   const [showLog, setShowLog] = useState(() => readExpanded("log"));
   const [style, setStyle] = useState<"unified" | "split">(() => {
@@ -211,12 +212,19 @@ function App() {
     if (!showLog || !queued.confirmed || queued.pending || queued.recovering)
       return;
     let cancelled = false;
-    // Don't put graph reads in front of a burst of interactive squash requests.
+    // Load immediately on startup/change selection. Only debounce after history
+    // changes, so graph reads don't get ahead of a burst of queued squashes.
+    const operation = queued.confirmed.operation;
+    const delay =
+      logOperation.current && logOperation.current !== operation ? 120 : 0;
     const timer = setTimeout(() => {
       setLogLoading(true);
-      api<{ version: string; rows: LogRow[] }>("log")
+      api<{ version: string; rows: LogRow[] }>("log?format=rows")
         .then((result) => {
-          if (!cancelled) setLog(result.rows);
+          if (!cancelled) {
+            setLog(result.rows);
+            logOperation.current = operation;
+          }
         })
         .catch((error) => {
           if (!cancelled) setError(error.message);
@@ -224,7 +232,7 @@ function App() {
         .finally(() => {
           if (!cancelled) setLogLoading(false);
         });
-    }, 120);
+    }, delay);
     return () => {
       cancelled = true;
       clearTimeout(timer);

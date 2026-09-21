@@ -140,46 +140,147 @@ export function parseFile(patch: string, path: string): FileDiff {
   return { path, hunks };
 }
 
-/** Parse non-compact listing output, preserving suffixes assigned to duplicate IDs. */
-export function parseListing(output: string, path: string): ToolHunk[] {
-  const hunks: ToolHunk[] = [];
-  let expected: { additions: number; deletions: number } | null = null;
-  const checkCounts = () => {
-    const hunk = hunks.at(-1);
+/** A malformed file is quarantined without hiding valid hunks in other files. */
+export type RevisionListing = Map<string, ToolHunk[] | Error>;
+
+/**
+ * Parse one non-compact, whole-revision listing. Pass ALL diff paths, including
+ * unsupported files: the tool prints an unescaped path followed by optional
+ * function context, so choosing a prefix (or the longest prefix) is unsafe.
+ * Unknown/ambiguous paths and duplicate IDs invalidate the entire listing.
+ * Other malformed entries invalidate their whole file, never just one hunk.
+ */
+export function parseRevisionListing(
+  output: string,
+  paths: Iterable<string>,
+): RevisionListing {
+  const known = new Set<string>();
+  for (const path of paths) {
+    if (!path || known.has(path))
+      throw new Error("Empty or duplicate file path in source diff.");
+    known.add(path);
+  }
+  const listing: RevisionListing = new Map();
+  const ids = new Set<string>();
+  let current:
+    | {
+        path: string;
+        hunk: ToolHunk;
+        additions: number;
+        deletions: number;
+        actualAdditions: number;
+        actualDeletions: number;
+      }
+    | undefined;
+  const fail = (message: string) => {
+    if (!current) throw new Error(message);
+    listing.set(current.path, new Error(message));
+  };
+  const finish = () => {
     if (
-      expected &&
-      hunk &&
-      (hunk.rows.filter((row) => row[0] === "+").length !==
-        expected.additions ||
-        hunk.rows.filter((row) => row[0] === "-").length !== expected.deletions)
+      current &&
+      (!current.hunk.rows.length ||
+        current.actualAdditions !== current.additions ||
+        current.actualDeletions !== current.deletions)
     ) {
-      throw new Error("jj-hunk-tool listing line counts disagree.");
+      fail("jj-hunk-tool listing line counts disagree.");
     }
   };
   for (const line of output.split("\n")) {
     if (line === "") continue;
     const head = /^([0-9a-f]{7}(?:-\d+)?) (.*) \(\+(\d+) -(\d+)\)$/.exec(line);
     if (head) {
-      checkCounts();
-      expected = { additions: Number(head[3]), deletions: Number(head[4]) };
-      if (head[2] !== path && !head[2].startsWith(path + " "))
+      finish();
+      const label = head[2];
+      let path: string | undefined;
+      // Set lookups avoid scanning every file for every hunk. A boundary is
+      // either the entire label or an ASCII space before function context.
+      for (let end = label.indexOf(" "); ; end = label.indexOf(" ", end + 1)) {
+        const candidate = end === -1 ? label : label.slice(0, end);
+        if (known.has(candidate)) {
+          if (path !== undefined)
+            throw new Error("Ambiguous file in jj-hunk-tool output.");
+          path = candidate;
+        }
+        if (end === -1) break;
+      }
+      if (path === undefined)
         throw new Error("Unexpected file in jj-hunk-tool output.");
-      if (hunks.some((hunk) => hunk.id === head[1]))
+      if (ids.has(head[1]))
         throw new Error("Duplicate hunk ID in tool output.");
-      hunks.push({ id: head[1], rows: [] });
+      ids.add(head[1]);
+      current = {
+        path,
+        hunk: { id: head[1], rows: [] },
+        additions: Number(head[3]),
+        deletions: Number(head[4]),
+        actualAdditions: 0,
+        actualDeletions: 0,
+      };
+      const previous = listing.get(path);
+      if (!(previous instanceof Error)) {
+        if (previous) previous.push(current.hunk);
+        else listing.set(path, [current.hunk]);
+      }
+      const suffix = head[1].split("-")[1];
+      if (
+        suffix !== undefined &&
+        (!/^[1-9]\d*$/.test(suffix) ||
+          !Number.isSafeInteger(Number(suffix)) ||
+          Number(suffix) < 2)
+      ) {
+        fail("jj-hunk-tool listing has an invalid hunk ID suffix.");
+      }
+      if (
+        !Number.isSafeInteger(current.additions) ||
+        !Number.isSafeInteger(current.deletions) ||
+        current.additions + current.deletions === 0
+      ) {
+        fail("jj-hunk-tool listing has invalid or unsafe line counts.");
+      }
       continue;
     }
-    const body = /^\s*(\d+):([ +\-].*)$/.exec(line);
-    const hunk = hunks.at(-1);
-    if (!body || !hunk || Number(body[1]) !== hunk.rows.length + 1) {
-      throw new Error(
-        "Unrecognized jj-hunk-tool output; refusing to guess hunk IDs.",
-      );
+    const body = /^ *(\d+):([ +\-].*)$/.exec(line);
+    if (!body || !current || Number(body[1]) !== current.hunk.rows.length + 1) {
+      fail("Unrecognized jj-hunk-tool output; refusing to guess hunk IDs.");
+      continue;
     }
-    hunk.rows.push(body[2]);
+    current.hunk.rows.push(body[2]);
+    if (body[2][0] === "+") current.actualAdditions++;
+    if (body[2][0] === "-") current.actualDeletions++;
   }
-  checkCounts();
+  finish();
+  return listing;
+}
+
+/** Reconcile ordered hunks and every body row; absent or quarantined files fail. */
+export function reconcileListing(
+  file: FileDiff,
+  listing: RevisionListing,
+): ToolHunk[] {
+  const hunks = listing.get(file.path);
+  if (hunks instanceof Error) throw hunks;
+  if (
+    !hunks ||
+    hunks.length !== file.hunks.length ||
+    hunks.some(
+      (hunk, i) =>
+        hunk.rows.length !== file.hunks[i].rows.length ||
+        hunk.rows.some((row, j) => row !== file.hunks[i].rows[j].raw),
+    )
+  ) {
+    throw new Error(
+      "Tool hunks disagree with the source diff. This file cannot be safely selected.",
+    );
+  }
   return hunks;
+}
+
+/** Compatibility wrapper for callers requesting exactly one file. */
+export function parseListing(output: string, path: string): ToolHunk[] {
+  const hunks = parseRevisionListing(output, [path]).get(path);
+  if (hunks instanceof Error) throw hunks;
+  return hunks ?? [];
 }
 
 /** Compress sorted one-based patch-body row numbers into the tool's range syntax. */
