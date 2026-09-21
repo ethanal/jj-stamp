@@ -21,6 +21,8 @@ export interface Revision {
   changeId: string;
   commitId: string;
   description: string;
+  author?: string;
+  changeIdPrefix?: string;
 }
 export interface LogRow {
   graph: string;

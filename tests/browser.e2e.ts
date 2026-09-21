@@ -112,7 +112,7 @@ try {
   await expect(page.getByRole("button", { name: "reset demo" })).toHaveCount(0);
   await expect(codeLine(21)).toBeVisible();
   await expect(page).toHaveTitle(
-    `${initial.repo.path} — ${initial.source.changeId.slice(0, 8)}: ${initial.source.description}`,
+    `${initial.source.changeId}: ${initial.source.description} (${initial.repo.path})`,
   );
   await expect(page.getByLabel("Repository path")).toHaveText(
     initial.repo.path,
@@ -134,6 +134,27 @@ try {
   await expect(page.getByLabel("Current commit ID")).toHaveAttribute(
     "title",
     initial.source.commitId,
+  );
+  await expect(page.getByLabel("Revision author")).toHaveText(
+    initial.source.author!,
+  );
+  await expect(
+    page.getByLabel("Current change ID").locator("strong"),
+  ).toHaveText(initial.source.changeIdPrefix!);
+  assert.deepEqual(
+    await page
+      .getByLabel("Reviewed revision")
+      .evaluate((node) =>
+        Array.from(node.children).map(
+          (child) => child.getAttribute("aria-label") ?? child.className,
+        ),
+      ),
+    [
+      "Current change ID",
+      "Revision author",
+      "source-description",
+      "Current commit ID",
+    ],
   );
   await expect(page.locator(".file-tree [role=tree]")).toBeVisible();
   await expect(treeRow("src/notifications.ts")).toHaveAttribute(
@@ -271,6 +292,81 @@ try {
   console.log(
     "✓ Full repository path, full revision IDs on hover, persistent sidebar rails, selection retained across collapse",
   );
+  // Both rails are resizeable without changing picks, and all preferences persist.
+  const fileResize = page.getByRole("separator", {
+    name: "Resize files sidebar",
+  });
+  const logResize = page.getByRole("separator", { name: "Resize log sidebar" });
+  await codeLine(21).click();
+  const initialFileWidth = Number(
+    await fileResize.getAttribute("aria-valuenow"),
+  );
+  await fileResize.focus();
+  await page.keyboard.press("ArrowRight");
+  await expect(fileResize).toHaveAttribute(
+    "aria-valuenow",
+    String(initialFileWidth + 10),
+  );
+  const initialLogWidth = Number(await logResize.getAttribute("aria-valuenow"));
+  const resizeBox = await logResize.boundingBox();
+  assert(resizeBox);
+  await page.mouse.move(resizeBox.x + resizeBox.width / 2, resizeBox.y + 60);
+  await page.mouse.down();
+  await page.mouse.move(
+    resizeBox.x + resizeBox.width / 2 - 40,
+    resizeBox.y + 60,
+    { steps: 5 },
+  );
+  await page.mouse.up();
+  await expect(logResize).toHaveAttribute(
+    "aria-valuenow",
+    String(initialLogWidth + 40),
+  );
+  await expect(page.getByRole("status")).toContainText(
+    "1 changed line selected",
+  );
+  await page
+    .getByRole("combobox", { name: "Color scheme" })
+    .selectOption("light");
+  await expect(page.locator("html")).toHaveAttribute(
+    "data-color-scheme",
+    "light",
+  );
+  await expect(codeLine(21)).toBeVisible();
+  await expect(page.getByRole("status")).toContainText(
+    "1 changed line selected",
+  );
+  await page.reload();
+  await expect(page.locator(".file-bar")).toContainText("src/notifications.ts");
+  await expect(
+    page.getByRole("combobox", { name: "Color scheme" }),
+  ).toHaveValue("light");
+  await expect(fileResize).toHaveAttribute(
+    "aria-valuenow",
+    String(initialFileWidth + 10),
+  );
+  await expect(logResize).toHaveAttribute(
+    "aria-valuenow",
+    String(initialLogWidth + 40),
+  );
+  await page
+    .getByRole("combobox", { name: "Color scheme" })
+    .selectOption("dim");
+  await expect(page.locator("html")).toHaveAttribute(
+    "data-color-scheme",
+    "dim",
+  );
+  await expect(codeLine(21)).toBeVisible();
+  await page
+    .getByRole("combobox", { name: "Color scheme" })
+    .selectOption("dark");
+  await expect(page.locator("html")).toHaveAttribute(
+    "data-color-scheme",
+    "dark",
+  );
+  console.log(
+    "✓ Resizable sidebars, keyboard resizing, color schemes, persisted preferences, and heading metadata",
+  );
   await drag(codeLine(21, "change-deletion"), codeLine(21));
   await expect(
     page.locator("[data-line][data-fold-selection-start]"),
@@ -372,7 +468,32 @@ try {
   );
   await codeLine(added[0].newLine!).click({ modifiers: ["Shift"] });
   await expect(page.getByRole("status")).toContainText(
-    "2 changed lines selected",
+    "1 changed line selected",
+  );
+  // Shift must leave squash picks unchanged and allow real browser text selection.
+  const copyLine = codeLine(added[0].newLine!);
+  const copyBounds = await copyLine.boundingBox();
+  assert(copyBounds);
+  await page.keyboard.down("Shift");
+  await page.mouse.move(
+    copyBounds.x + 10,
+    copyBounds.y + copyBounds.height / 2,
+  );
+  await page.mouse.down();
+  await page.mouse.move(
+    copyBounds.x + 170,
+    copyBounds.y + copyBounds.height / 2,
+    { steps: 8 },
+  );
+  await page.mouse.up();
+  await page.keyboard.up("Shift");
+  assert(
+    (await page.evaluate(() => window.getSelection()?.toString() ?? ""))
+      .length > 0,
+    "Shift+drag selects native text for copying",
+  );
+  await expect(page.getByRole("status")).toContainText(
+    "1 changed line selected",
   );
   await codeLine(added[1].newLine!).click();
   await expect(page.getByRole("status")).toContainText(
@@ -387,24 +508,23 @@ try {
   ]);
   await pressMutation("u");
   console.log(
-    "✓ Exact single-line squash and Shift-click; no whole-hunk selection",
+    "✓ Exact single-line squash and Shift+drag native text copying; no whole-hunk selection",
   );
 
   await expect(
     page.getByRole("complementary", { name: "Revision graph" }),
   ).toBeVisible();
   const actualLog = await service.getLog();
-  const graphText = actualLog.rows
-    .map(
-      (row) =>
-        row.graph +
-        (row.revision
-          ? `${row.revision.changeId.slice(0, 8)} ${row.revision.description || "(no description)"}`
-          : "") +
-        "\n",
-    )
-    .join("");
-  await expect(page.getByLabel("jj log output")).toHaveText(graphText);
+  const graphText = actualLog.rows.map(
+    (row) =>
+      row.graph +
+      (row.revision
+        ? `${row.revision.changeId.slice(0, 8)} ${row.revision.description || "(no description)"}`
+        : ""),
+  );
+  await expect(page.getByLabel("jj log output").locator(".log-row")).toHaveText(
+    graphText,
+  );
   await expect(page.locator('.log-change[aria-pressed="true"]')).toHaveCount(1);
   const previousMutations = mutations.length;
   await page.keyboard.press("s");
@@ -706,23 +826,23 @@ try {
   ]);
   const described = await refreshState();
   await expect(page).toHaveTitle(
-    `${initial.repo.path} — ${described.source.changeId.slice(0, 8)}: Updated commit title`,
+    `${described.source.changeId}: Updated commit title (${initial.repo.path})`,
   );
   await jj(initial.repo.path, ["new", "-m", "Next change"]);
   const stillReviewed = await refreshState();
   assert.equal(stillReviewed.source.changeId, described.source.changeId);
   await expect(page).toHaveTitle(
-    `${initial.repo.path} — ${described.source.changeId.slice(0, 8)}: Updated commit title`,
+    `${described.source.changeId}: Updated commit title (${initial.repo.path})`,
   );
   await reviewWorkingCopy();
   const next = await refreshState();
   assert.notEqual(next.source.changeId, described.source.changeId);
   await expect(page.locator(".file-tree [role=treeitem]")).toHaveCount(0);
   await expect(page).toHaveTitle(
-    `${initial.repo.path} — ${next.source.changeId.slice(0, 8)}: Next change`,
+    `${next.source.changeId}: Next change (${initial.repo.path})`,
   );
   console.log(
-    "✓ Page title follows the short change ID and commit title on refresh",
+    "✓ Page title follows the full change ID and commit title on refresh",
   );
   // Tree structure follows real repository changes, including duplicate
   // basenames, read-only files, and removal/restoration of a whole file.
