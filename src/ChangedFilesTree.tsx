@@ -69,9 +69,9 @@ export function ChangedFilesTree(props: Props) {
           ? `${file.path} — read-only: ${file.unsupported}`
           : `${file.path} — ${file.additions} additions, ${file.deletions} deletions`,
         parts: [
-          { text: `+${file.additions}`, color: "#72b88a" },
-          { text: `−${file.deletions}`, color: "#d28380" },
-          ...(file.unsupported ? [{ text: " ·", color: "#8b949e" }] : []),
+          { text: `+${file.additions}`, color: "var(--added)" },
+          { text: `−${file.deletions}`, color: "var(--removed)" },
+          ...(file.unsupported ? [{ text: " ·", color: "var(--muted)" }] : []),
         ],
       };
     },
