@@ -1,38 +1,13 @@
 // Run with: npx tsx tests/copy-selection.e2e.ts
 import assert from "node:assert/strict";
-import express from "express";
-import { createServer } from "node:http";
-import { createServer as createVite } from "vite";
-import { chromium, expect } from "@playwright/test";
+import { createBrowserFixture } from "./browser-fixture.ts";
+import { expect } from "@playwright/test";
 
-const app = express();
-const server = createServer(app);
-const vite = await createVite({
-  server: { middlewareMode: true, hmr: false },
-  appType: "custom",
+const fixture = await createBrowserFixture({
+  entry: "/tests/code-diff.fixture.tsx",
+  viewport: { width: 1200, height: 700 },
 });
-app.get("/", async (_req, res) =>
-  res.send(
-    await vite.transformIndexHtml(
-      "/",
-      '<html><body style="margin:0"><div id="root"></div><script type="module" src="/tests/code-diff.fixture.tsx"></script></body></html>',
-    ),
-  ),
-);
-app.use(vite.middlewares);
-await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
-const address = server.address();
-assert(address && typeof address !== "string");
-const browser = await chromium.launch({
-  headless: true,
-  args: ["--no-sandbox"],
-});
-const page = await browser.newPage({ viewport: { width: 1200, height: 700 } });
-// Permission is only used by this test to READ results. Application copy must
-// use the trusted copy event, never navigator.clipboard.writeText().
-await page.context().grantPermissions(["clipboard-read"]);
-const errors: string[] = [];
-page.on("pageerror", (error) => errors.push(error.message));
+const { page, url, errors } = fixture;
 const line = (n: number, deletion = false) =>
   page
     .locator(
@@ -52,8 +27,11 @@ const expected = (start: number, end: number) =>
   }).join("");
 
 try {
+  // Permission is only used by this test to READ results. Application copy must
+  // use the trusted copy event, never navigator.clipboard.writeText().
+  await page.context().grantPermissions(["clipboard-read"]);
   for (const style of ["unified", "split"] as const) {
-    await page.goto(`http://127.0.0.1:${address.port}`);
+    await page.goto(url);
     await expect(line(10)).toBeVisible();
     if (style === "split")
       await page.getByText("Layout", { exact: true }).click();
@@ -207,9 +185,5 @@ try {
     "copy-selection browser checks passed (unified/split, native/editable, expanded context)",
   );
 } finally {
-  await browser.close();
-  await vite.close();
-  await new Promise<void>((resolve, reject) =>
-    server.close((error) => (error ? reject(error) : resolve())),
-  );
+  await fixture.close();
 }

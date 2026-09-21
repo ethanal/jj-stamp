@@ -105,12 +105,17 @@ Do not install a moving branch or rely on `jj-hunk-tool --version` to verify the
 `npm run build` typechecks and produces **`dist/cli.cjs`** plus **`dist/client/`**. The CLI is bundled, so it does not need `node_modules` at runtime. `npm run dev -- -R /path/to/workspace` rebuilds and runs it; restart after source edits.
 
 ```sh
-npm test
+npm run check                  # formatting and strict type checking
+npm test                       # unit and real-jj backend tests
 npx playwright install chromium
-npm run test:browser
-npm run test:cli
-nix flake check
+npm run test:browser            # browser interactions against fixtures
+npm run test:cli                # rebuild and test the bundled executable
+nix flake check                 # installed Nix packages and runtime tools
 ```
+
+`npm run test:all` runs the formatting/type checks and all three npm test suites. Use `npm run format` to apply formatting, or `npm run typecheck` to check types independently. Type checking also rejects unused locals and parameters; it runs as part of every build.
+
+Browser suites share an ephemeral loopback server and Chromium fixture with HMR disabled. Setup failures and test completion close the browser, HTTP server and Vite instance; no fixed development port or running app is required.
 
 Tests use isolated real jj repositories. They cover exact line squashes, optimistic FIFO/recovery, revision selection and rewrite tracking, immutable/merge guards, stale requests, process-local undo and recovery guards, tree and graph interactions, full-path titles, local HTTP protections, browser launching, and graceful terminal-signal shutdown. Nix checks also exercise installed CLI preview, squash, and undo with an empty ambient `PATH`, verify a standalone installed hunk-tool squash under the same restriction, and run the upstream hunk-tool tests.
 
@@ -121,9 +126,12 @@ Tests use isolated real jj repositories. They cover exact line squashes, optimis
 - `cli.ts` — arguments, local startup, browser launch, shutdown
 - `server/http.ts`, `server/api.ts` — loopback HTTP boundary and versioned API
 - `server/service.ts`, `server/diff.ts` — revision tracking, exact patches and process-local mutation safety
-- `src/main.tsx` — review shell, selectable graph, counts and shortcuts
+- `server/revision.ts`, `server/editor.ts` — revision metadata parsing and safe workspace-editor dispatch
+- `src/main.tsx` — review state, queue coordination and shortcuts
+- `src/ReviewWorkspace.tsx`, `src/ReviewToolbar.tsx` — sidebars, revision graph, viewer, status and settings
 - `src/ChangedFilesTree.tsx`, `src/CodeDiff.tsx` — Pierre rendering and selection
 - `src/optimistic.ts`, `src/squash-queue.ts` — speculative UI and sequential dispatch
+- `tests/browser-fixture.ts` — shared browser-test setup and teardown
 - `flake.nix`, `nix/` — reproducible package, runtime tools, installed-package checks
 
 Licensed under Apache-2.0. The diff parser was adapted from the local `hunk-jj-squash` project without modifying its sources.

@@ -1,9 +1,8 @@
 // Run with: npx tsx tests/file-view.e2e.ts
 import assert from "node:assert/strict";
 import express from "express";
-import { createServer } from "node:http";
-import { createServer as createVite } from "vite";
-import { chromium, expect, type Locator } from "@playwright/test";
+import { createBrowserFixture } from "./browser-fixture.ts";
+import { expect, type Locator } from "@playwright/test";
 import { projectSquash, refsFromSelection } from "../src/optimistic";
 import type { DiffFile, RepoState, Selections } from "../src/types";
 
@@ -129,31 +128,10 @@ app.post("/api/squash-lines", (request, response) => {
   response.json({ state: serverState });
 });
 
-const server = createServer(app);
-const vite = await createVite({
-  server: { middlewareMode: true, hmr: false },
-  appType: "custom",
+const fixture = await createBrowserFixture({
+  app,
 });
-app.get("/", async (_request, response) =>
-  response.send(
-    await vite.transformIndexHtml(
-      "/",
-      '<html><head></head><body><div id="root"></div><script type="module" src="/src/main.tsx"></script></body></html>',
-    ),
-  ),
-);
-app.use(vite.middlewares);
-await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
-const address = server.address();
-assert(address && typeof address !== "string");
-const url = `http://127.0.0.1:${address.port}`;
-const browser = await chromium.launch({
-  headless: true,
-  args: ["--no-sandbox"],
-});
-const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
-const errors: string[] = [];
-page.on("pageerror", (error) => errors.push(error.message));
+const { page, url, errors } = fixture;
 
 const section = (path: string) =>
   page.locator(`.file-diff-section[data-file-path="${path}"]`);
@@ -331,7 +309,5 @@ try {
     "File view browser checks passed: mode rendering/persistence, section navigation, file-scoped selection, focus, unsupported/empty states, squash targeting, and log padding.",
   );
 } finally {
-  await browser.close();
-  await vite.close();
-  await new Promise<void>((resolve) => server.close(() => resolve()));
+  await fixture.close();
 }

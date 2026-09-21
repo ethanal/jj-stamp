@@ -1,9 +1,8 @@
 // Run with: npx tsx tests/preferences.e2e.ts
 import assert from "node:assert/strict";
 import express from "express";
-import { createServer } from "node:http";
-import { createServer as createVite } from "vite";
-import { chromium, expect } from "@playwright/test";
+import { createBrowserFixture } from "./browser-fixture.ts";
+import { expect } from "@playwright/test";
 
 const source = {
   changeId: "abcdefghijklmno",
@@ -40,31 +39,10 @@ app.get("/api/graph", (_request, response) =>
     rows: [{ graph: "@  ", revision: source, mutable: true }],
   }),
 );
-const server = createServer(app);
-const vite = await createVite({
-  server: { middlewareMode: true, hmr: false },
-  appType: "custom",
+const fixture = await createBrowserFixture({
+  app,
 });
-app.get("/", async (_request, response) =>
-  response.send(
-    await vite.transformIndexHtml(
-      "/",
-      '<html><head></head><body><div id="root"></div><script type="module" src="/src/main.tsx"></script></body></html>',
-    ),
-  ),
-);
-app.use(vite.middlewares);
-await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
-const address = server.address();
-assert(address && typeof address !== "string");
-const url = `http://127.0.0.1:${address.port}`;
-const browser = await chromium.launch({
-  headless: true,
-  args: ["--no-sandbox"],
-});
-const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
-const errors: string[] = [];
-page.on("pageerror", (error) => errors.push(error.message));
+const { page, url, errors, browser } = fixture;
 try {
   await page.goto(url);
   await expect(page).toHaveTitle(
@@ -85,9 +63,7 @@ try {
   const descriptionBox = await heading
     .locator(".source-description")
     .boundingBox();
-  const commitBox = await heading
-    .getByLabel("Current commit ID")
-    .boundingBox();
+  const commitBox = await heading.getByLabel("Current commit ID").boundingBox();
   assert(descriptionBox && commitBox);
   assert(commitBox.x - (descriptionBox.x + descriptionBox.width) <= 15);
   await expect(page.locator(".log-row.is-current")).toBeVisible();
@@ -102,11 +78,15 @@ try {
   await expect(picker).not.toBeVisible();
   await settings.click();
   await expect(dialog).toBeVisible();
-  await expect(page.getByRole("button", { name: "Close settings" })).toBeFocused();
+  await expect(
+    page.getByRole("button", { name: "Close settings" }),
+  ).toBeFocused();
   await page.keyboard.press("Tab");
   await expect(picker).toBeFocused();
   await page.keyboard.press("Tab");
-  await expect(page.getByRole("button", { name: "Close settings" })).toBeFocused();
+  await expect(
+    page.getByRole("button", { name: "Close settings" }),
+  ).toBeFocused();
   await page.keyboard.press("Shift+Tab");
   await expect(picker).toBeFocused();
   await page.getByRole("button", { name: "Close settings" }).focus();
@@ -247,7 +227,5 @@ try {
     "Preference browser checks passed: drag/keyboard resize, persistence, themes, title/header, graph highlight, accessible settings, mobile, unavailable storage.",
   );
 } finally {
-  await browser.close();
-  await vite.close();
-  await new Promise<void>((resolve) => server.close(() => resolve()));
+  await fixture.close();
 }

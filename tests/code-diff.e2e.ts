@@ -1,44 +1,21 @@
 // Run with: npx tsx tests/code-diff.e2e.ts
 import assert from "node:assert/strict";
-import express from "express";
-import { createServer } from "node:http";
-import { createServer as createVite } from "vite";
-import { chromium, expect } from "@playwright/test";
+import { createBrowserFixture } from "./browser-fixture.ts";
+import { expect } from "@playwright/test";
 
-const app = express();
-const server = createServer(app);
-const vite = await createVite({
-  // Attach HMR to this ephemeral server, avoiding Vite's shared port 24678.
-  server: { middlewareMode: true, hmr: { server } },
-  appType: "custom",
+const fixture = await createBrowserFixture({
+  entry: "/tests/code-diff.fixture.tsx",
+  viewport: { width: 1200, height: 700 },
 });
-app.get("/", async (_req, res) =>
-  res.send(
-    await vite.transformIndexHtml(
-      "/",
-      '<html><body style="margin:0"><div id="root"></div><script type="module" src="/tests/code-diff.fixture.tsx"></script></body></html>',
-    ),
-  ),
-);
-app.use(vite.middlewares);
-await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
-const address = server.address();
-assert(address && typeof address !== "string");
-const browser = await chromium.launch({
-  headless: true,
-  args: ["--no-sandbox"],
-});
-const page = await browser.newPage({ viewport: { width: 1200, height: 700 } });
-await page.context().grantPermissions(["clipboard-read", "clipboard-write"]);
-const errors: string[] = [];
-page.on("pageerror", (error) => errors.push(error.message));
+const { page, url, errors } = fixture;
 const line = (n: number) =>
   page
     .locator(`[data-line="${n}"]:not([data-line-type="change-deletion"])`)
     .last();
 try {
+  await page.context().grantPermissions(["clipboard-read", "clipboard-write"]);
   for (const layout of ["unified", "split"] as const) {
-    await page.goto(`http://127.0.0.1:${address.port}`);
+    await page.goto(url);
     await expect(line(10)).toBeVisible();
     if (layout === "split")
       await page.getByText("Layout", { exact: true }).click();
@@ -272,7 +249,5 @@ try {
   assert.deepEqual(errors, []);
   console.log("CodeDiff browser regressions passed (unified and split).");
 } finally {
-  await browser.close();
-  await vite.close();
-  await new Promise<void>((resolve) => server.close(() => resolve()));
+  await fixture.close();
 }

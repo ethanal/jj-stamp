@@ -3,9 +3,8 @@ import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import express from "express";
-import { createServer } from "node:http";
-import { createServer as createVite } from "vite";
-import { chromium, expect, type Locator } from "@playwright/test";
+import { createBrowserFixture } from "./browser-fixture.ts";
+import { expect, type Locator } from "@playwright/test";
 import { createApi } from "../server/api.ts";
 import { ReviewService } from "../server/service.ts";
 import { jj } from "../server/process.ts";
@@ -24,30 +23,16 @@ async function reviewWorkingCopy() {
 }
 const initial = await service.getState();
 const app = express();
-const server = createServer(app);
 app.use("/api", (req, res, next) => apiRouter(req, res, next));
-const vite = await createVite({
-  server: { middlewareMode: true, hmr: false },
-  appType: "spa",
+const fixture = await createBrowserFixture({
+  app,
+  captureConsoleErrors: true,
 });
-app.use(vite.middlewares);
-await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
-const address = server.address();
-if (!address || typeof address === "string") throw new Error("No test port");
-const browser = await chromium.launch({
-  headless: true,
-  args: ["--no-sandbox"],
-});
-const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+const { page, url, errors } = fixture;
 // Reproduce the reported client-side /api/log filter. The UI must fetch its
 // revision graph without requesting the logging-shaped compatibility URL.
 let blockedLogRequests = 0;
-await page.route("**/api/log*", async (route) => {
-  blockedLogRequests++;
-  await route.abort("blockedbyclient");
-});
-const errors: string[] = [],
-  mutations: string[] = [];
+const mutations: string[] = [];
 const rejectedReads: Array<{ path: string; code: string }> = [];
 page.on("response", async (response) => {
   if (response.status() === 409) {
@@ -57,10 +42,6 @@ page.on("response", async (response) => {
       code: body.code,
     });
   }
-});
-page.on("pageerror", (error) => errors.push(error.message));
-page.on("console", (message) => {
-  if (message.type() === "error") errors.push(message.text());
 });
 page.on("request", (request) => {
   if (
@@ -106,7 +87,11 @@ async function pressMutation(key: "s" | "u") {
   return result.json();
 }
 try {
-  await page.goto(`http://127.0.0.1:${address.port}`);
+  await page.route("**/api/log*", async (route) => {
+    blockedLogRequests++;
+    await route.abort("blockedbyclient");
+  });
+  await page.goto(url);
   await expect(page.locator(".file-bar")).toContainText("src/notifications.ts");
   await expect(page.getByRole("checkbox")).toHaveCount(0);
   await expect(page.getByRole("button", { name: "reset demo" })).toHaveCount(0);
@@ -1023,9 +1008,5 @@ try {
   await page.screenshot({ path: path.join(dataDir, "failure.png") });
   throw error;
 } finally {
-  await browser.close();
-  await vite.close();
-  await new Promise<void>((resolve, reject) =>
-    server.close((error) => (error ? reject(error) : resolve())),
-  );
+  await fixture.close();
 }
