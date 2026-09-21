@@ -408,7 +408,7 @@ export class ReviewService {
         "--config",
         "ui.log-word-wrap=false",
         "-r",
-        `${sourceRevset} | (${targetRevset}) | ${parentRevset} | conflicts()`,
+        `${sourceRevset} | (${targetRevset}) | ${parentRevset}`,
         "-T",
         revisionTemplate.replace(' ++ "\\n"', "") +
           contained(sourceRevset) +
@@ -447,11 +447,14 @@ export class ReviewService {
       .filter((entry) => entry.source)
       .map((entry) => entry.revision);
     const source = this.requireSource(sources);
-    if (!allowConflicts && metadata.some((entry) => entry.conflict))
+    if (
+      !allowConflicts &&
+      metadata.some((entry) => entry.source && entry.conflict)
+    )
       throw new ApiError(
         409,
-        "CONFLICTED_REPO",
-        "This repository contains conflicted revisions. Resolve them with jj before reviewing or squashing.",
+        "CONFLICTED_SOURCE",
+        "The selected revision contains conflicts. Resolve it with jj or select a clean revision before reviewing or squashing.",
       );
     const mutableSource = metadata.filter(
       (entry) => entry.source && entry.mutable,
@@ -463,7 +466,9 @@ export class ReviewService {
         "Choose a mutable change. Immutable revisions cannot be selected for squashing.",
       );
     const targets = mutableSource.length
-      ? metadata.filter((entry) => entry.target).map((entry) => entry.revision)
+      ? metadata
+          .filter((entry) => entry.target && !entry.conflict)
+          .map((entry) => entry.revision)
       : [];
     const parents = metadata
       .filter((entry) => entry.parent)
@@ -477,9 +482,11 @@ export class ReviewService {
       ? "The current revision is immutable."
       : parents.length !== 1
         ? "Squashing requires exactly one immediate parent; merges are not supported."
-        : !parent
-          ? "The immediate parent is immutable; squashing into an older ancestor is not allowed."
-          : undefined;
+        : metadata.some((entry) => entry.parent && entry.conflict)
+          ? "The immediate parent contains conflicts; resolve it with jj before squashing."
+          : !parent
+            ? "The immediate parent is immutable; squashing into an older ancestor is not allowed."
+            : undefined;
     const files = await this.files(source.commitId);
     await this.jjRunner(this.root, ["status"]);
     if (
@@ -746,7 +753,7 @@ export class ReviewService {
       throw new ApiError(
         400,
         "INVALID_TARGET",
-        "Choose a mutable ancestor of the current revision.",
+        "Choose a conflict-free mutable ancestor of the current revision.",
       );
     if (
       !Array.isArray(input.selections) ||
@@ -909,6 +916,14 @@ export class ReviewService {
     plan: Plan,
     before: State,
   ): Promise<{ state: State; output: string; warning?: string }> {
+    // Compare change identities: rebasing an existing conflict changes its
+    // commit ID, but does not mean this squash introduced that conflict.
+    const existingConflicts = new Set(
+      (await this.revisions("conflicts()")).map(
+        (revision) => revision.changeId,
+      ),
+    );
+    if ((await this.operation()).id !== before.operation) stale();
     this.journal = {
       pending: {
         beforeOperation: before.operation,
@@ -972,9 +987,13 @@ export class ReviewService {
     await this.saveJournal();
     after.canUndo = true;
     let warning: string | undefined;
-    if ((await this.revisions("conflicts()")).length)
+    if (
+      (await this.revisions("conflicts()")).some(
+        (revision) => !existingConflicts.has(revision.changeId),
+      )
+    )
       warning =
-        "The squash created a conflict. Undo this operation now, or resolve the conflict with jj before continuing.";
+        "The squash created a conflict. Undo this operation or resolve the affected revision with jj before editing it.";
     return {
       state: after,
       output: (result.stdout + result.stderr).trim(),

@@ -10,7 +10,7 @@ Reads use `change_id("<full-id>")`, not a moving `@`, bookmark, or mutable commi
 
 Explicit `POST /revision` is the only way a running session changes its source. It is serialized and version-checked, rejects immutable changes, preserves the previous source on validation failure, and invalidates old preview tokens on success. The repository-scoped journal remains in place. A pending recovery journal blocks revision switching as well as mutations.
 
-Every state exposes the exact single **mutable immediate parent**, or `parent: null` and `squashUnavailable`. Merges and immutable parents cannot squash; an older ancestor is never substituted. A merge can be selected and displays its reason in the UI.
+Every state exposes the exact single **conflict-free mutable immediate parent**, or `parent: null` and `squashUnavailable`. Merges and immutable parents cannot squash; an older ancestor is never substituted. A merge can be selected and displays its reason in the UI.
 
 ## API
 
@@ -18,7 +18,7 @@ Every state exposes the exact single **mutable immediate parent**, or `parent: n
 - `POST /revision {version,changeId}`: select one visible mutable change; returns `{state}`. The browser supplies a full change ID from the graph. Revision expressions are accepted only as the CLI's initial positional argument, not through this endpoint.
 - `GET /log`: `{version,output,rows}`. `output` preserves configured `jj log --limit 100` text. `rows` uses the actual jj graph renderer and a machine-readable template. Each row has `graph` and optional `revision`, `mutable`, `isWorkingCopy`. Connector rows contain only `graph`. The structured view includes up to 99 changes from the configured log revset plus the selected change. A random delimiter separates graph prefixes from JSON metadata. Descriptions are never interpreted as markup.
 - `POST /file {version,path}`: full pinned immediate-parent/source file contents for a supported file in the current diff. New/deleted sides are null. Invalid paths, unsupported formats, merge context, and stale versions are rejected. Reads use literal root-relative filesets after `--`.
-- `POST /squash-lines {version,selections:[{id,lines}]}`: squash the exact selected changed rows from the selected change into its single mutable immediate parent. No target override or extra properties are accepted. Validates one exact pinned preview, rechecks live state in the same serialized task, and journals the operation before execution. Returns `{state,output,warning?}`.
+- `POST /squash-lines {version,selections:[{id,lines}]}`: squash the exact selected changed rows from the selected change into its single conflict-free mutable immediate parent. No target override or extra properties are accepted. Validates one exact pinned preview, rechecks live state in the same serialized task, and journals the operation before execution. Returns `{state,output,warning?}`.
 - `POST /undo {version}`: revert only the last exactly attributed app squash via `jj op revert <operation>`, while the selected-source state and repository operation still match.
 - Legacy `POST /preview {version,target,selections:[{id,lines}]}` and `POST /squash {token}` remain for internal compatibility/tests. They are not used by the UI. Whole-hunk selections contain only changed rows; tokens are one-shot, expire after ten minutes, and do not survive restart.
 
@@ -32,7 +32,7 @@ On POSIX, child tools run in separate process groups with referenced pipes. Term
 
 Source diffs and reconciled hunk bodies use a bounded 16-entry cache keyed by repository and immutable commit ID. Returned data is cloned. Unsupported interpretations and transient tool failures are not cached. Operation tokens, working-copy snapshots, mutability/configuration, graph output and full states are never cached. Exact preview rows and locations are checked before every mutation.
 
-Binary/combined diffs, renames/copies, mode changes, missing final newlines, ambiguous/header-like rows, and whitespace/quoted paths fail closed. Conflicted repositories cannot be reviewed or squashed.
+Binary/combined diffs, renames/copies, mode changes, missing final newlines, ambiguous/header-like rows, and whitespace/quoted paths fail closed. Conflicts elsewhere in the repository do not block review or squash. The selected source must be conflict-free, and conflicted ancestors are never squash destinations. A conflicted immediate parent disables immediate-parent squash rather than substituting an older ancestor. Post-squash warnings report newly conflicted changes, not pre-existing conflicts.
 
 The mutation journal is written before execution. Successful attribution requires exactly one operation descended from the validated operation, the expected destination description, and tool attributes naming the pinned source/destination. Unexpected intervening history or ambiguous failure disables undo and further mutations. A later repository read never retries the failed operation.
 

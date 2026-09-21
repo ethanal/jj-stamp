@@ -347,9 +347,9 @@ test("initial conflicts do not clear identity or the durable recovery journal", 
   };
   await writeFile(journalPath(options), JSON.stringify(pending));
   const service = new ReviewService(options);
-  await rejectsCode(service.getState(), "CONFLICTED_REPO");
+  await rejectsCode(service.getState(), "CONFLICTED_SOURCE");
   await jj(options.repoPath, ["edit", original]);
-  await rejectsCode(service.getState(), "CONFLICTED_REPO");
+  await rejectsCode(service.getState(), "CONFLICTED_SOURCE");
   await jj(options.repoPath, ["abandon", conflictId]);
   await rejectsCode(service.getState(), "SOURCE_UNAVAILABLE");
   assert.deepEqual(

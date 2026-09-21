@@ -503,8 +503,8 @@ test("an intervening external operation during real squash disables attribution 
   assert.notEqual(after.operation, state.operation);
 });
 
-test("conflicted repositories are refused, and immutable ancestors are never targets", async () => {
-  const { service, state, root } = await fixture();
+test("unrelated conflicts allow review, squash, and undo; immutable ancestors are never targets", async () => {
+  const { service, state, root, dataDir } = await fixture();
   await jj(root, [
     "config",
     "set",
@@ -539,21 +539,100 @@ test("conflicted repositories are refused, and immutable ancestors are never tar
   await writeFile(path.join(root, "src/notifications.ts"), "right version\n");
   await jj(root, ["status"]);
   await jj(root, ["new", left, "@", "-m", "Conflicted merge"]);
-  await rejectsCode(service.getState(), "CONFLICTED_REPO");
+  const conflicted = (
+    await jj(root, ["log", "-r", "@", "--no-graph", "-T", "change_id"])
+  ).stdout.trim();
+  await rejectsCode(
+    new ReviewService({ dataDir, repoPath: root }).getState(),
+    "CONFLICTED_SOURCE",
+  );
+  const clean = await service.getState();
+  assert.deepEqual(clean.files, restricted.files);
+  assert.ok((await service.getLog()).rows.length);
+  await rejectsCode(
+    service.selectRevision({ version: clean.version, changeId: conflicted }),
+    "CONFLICTED_SOURCE",
+  );
+  assert.equal((await service.getState()).source.changeId, clean.source.changeId);
   await rejectsCode(
     service.preview(input(restricted, [{ id: hunk.id, lines: changes(hunk) }])),
-    "CONFLICTED_REPO",
+    "STALE_STATE",
   );
-  // Return to an already cached, non-conflicted source. Conflicts elsewhere in
-  // the repository must still block reads and mutations on a cache hit.
+  // Return to an already cached, clean source while its conflicted descendants
+  // remain visible. Both mutation paths and undo must continue to work.
   await jj(root, ["edit", base]);
-  await rejectsCode(service.getState(), "CONFLICTED_REPO");
+  const before = await service.getState();
+  const selections = [{ id: hunk.id, lines: changes(hunk) }];
+  const preview = await service.preview(input(before, selections));
+  const result = await service.squash(preview.token);
+  assert.equal(result.warning, undefined);
+  assert.equal(result.state.canUndo, true);
+  const undone = await service.undo(result.state.version);
+  assert.deepEqual(undone.state.files, before.files);
+  const direct = await service.squashLines({
+    version: undone.state.version,
+    selections,
+  });
+  assert.equal(direct.warning, undefined);
+  assert.equal(direct.state.canUndo, true);
+  await service.undo(direct.state.version);
+});
+
+test("new descendant conflicts still warn and allow exact undo", async () => {
+  const { service, state, root } = await fixture();
+  const file = state.files[0];
+  const hunk = file.hunks[0];
+  const removed = hunk.rows.find((row) => row.raw.startsWith("-"))!;
+  await jj(root, ["new", state.parent!.commitId, "-m", "Sibling edit"]);
+  const contents = await readFile(path.join(root, file.path), "utf8");
+  await writeFile(
+    path.join(root, file.path),
+    contents.replace(removed.raw.slice(1), "// incompatible sibling edit"),
+  );
+  await jj(root, ["status"]);
+  const before = await service.getState();
+  const result = await service.squashLines({
+    version: before.version,
+    selections: [{ id: hunk.id, lines: changes(hunk) }],
+  });
+  assert.match(result.warning!, /created a conflict/);
+  assert.equal((await service.getState()).canUndo, true);
+  const undone = await service.undo(result.state.version);
+  assert.deepEqual(undone.state.files, before.files);
+  assert.equal(
+    (await jj(root, ["log", "-r", "conflicts()", "--no-graph", "-T", "change_id"])).stdout,
+    "",
+  );
+});
+
+test("a clean source with a conflicted parent is reviewable but cannot squash into it", async () => {
+  const { root, dataDir, state } = await fixture();
+  await jj(root, ["new", state.source.commitId, "-m", "Left"]);
+  await writeFile(path.join(root, "conflict.txt"), "left\n");
+  const left = (
+    await jj(root, ["log", "-r", "@", "--no-graph", "-T", "commit_id"])
+  ).stdout.trim();
+  await jj(root, ["new", state.source.commitId, "-m", "Right"]);
+  await writeFile(path.join(root, "conflict.txt"), "right\n");
+  await jj(root, ["new", left, "@", "-m", "Conflicted parent"]);
+  const parent = (
+    await jj(root, ["log", "-r", "@", "--no-graph", "-T", "change_id"])
+  ).stdout.trim();
+  await jj(root, ["new", "-m", "Resolved child"]);
+  await writeFile(path.join(root, "conflict.txt"), "resolved\n");
+  const service = new ReviewService({ dataDir, repoPath: root });
+  const clean = await service.getState();
+  assert.equal(clean.parent, null);
+  assert.match(clean.squashUnavailable!, /parent contains conflicts/);
+  assert.ok(!clean.targets.some((target) => target.changeId === parent));
+  assert.ok(clean.targets.length, "clean older ancestors remain legacy targets");
   await rejectsCode(
-    service.squashLines({
-      version: restricted.version,
-      selections: [{ id: hunk.id, lines: changes(hunk) }],
-    }),
-    "CONFLICTED_REPO",
+    service.squashLines({ version: clean.version, selections: [] }),
+    "SQUASH_UNAVAILABLE",
+  );
+  await rejectsCode(
+    service.preview(input(clean, [], parent)),
+    "INVALID_TARGET",
   );
 });
 

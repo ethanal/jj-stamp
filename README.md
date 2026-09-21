@@ -62,7 +62,7 @@ This is a **single-user local tool**, not a network service. Host and Origin che
 - Run **one jj-stamp process per repository**. Selection is shared by all tabs connected to that process; do not mutate from multiple tabs simultaneously.
 - **Avoid concurrent file edits or jj operations while squashing or undoing.** The in-process queue cannot lock external processes. A race can be detected after a rewrite rather than prevented.
 - Each operation validates the exact patch, changed-row indices, source and immediate parent, operation version, conflicts, and mutability. Execution pins full commit IDs and preserves the destination description and emptied source change.
-- Conflicted repositories are rejected. Renames/copies, binary or mode changes, missing final newlines, and ambiguous paths/formats are read-only. Merge context is unsupported. Very large diffs are not yet virtualized.
+- Conflicts elsewhere in the repository are allowed; the selected source and squash destination must be conflict-free. A conflicted immediate parent disables squashing. Renames/copies, binary or mode changes, missing final newlines, and ambiguous paths/formats are read-only. Merge context is unsupported. Very large diffs are not yet virtualized.
 - Undo uses **`jj op revert` for the attributed app operation**, never `jj op restore`.
 - If a queued job fails, unsent jobs are canceled and the actual repository is reloaded. Completed jobs are not rolled back. Failed mutations are never automatically retried.
 - Do not close the browser with queued work. An accepted request can finish after a disconnection, but unsent browser-local jobs are lost.
