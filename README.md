@@ -28,13 +28,15 @@ If a job fails, the queue stops, unsent jobs are canceled, and the actual reposi
 
 Backend reads cache immutable source diffs, not mutable state or safety decisions. Measured isolated-demo squash latency improved from a median 1.76s to 0.57s; details are in `server/README.md`.
 
-The running VM demo is served on port **8000** by systemd unit **fold**. **reset demo** creates a new demo repository without deleting the previous one. Tests use independent repositories and never mutate the running demo.
+The running VM demo is served on port **8000** by systemd unit **jj-stamp**. **reset demo** creates a new demo repository without deleting the previous one. Tests use independent repositories and never mutate the running demo.
 
 ## Run
 
 Requires Node.js 22.12+ (tested on 24), `jj`, and `jj-hunk-tool` on `PATH`.
 
 ```sh
+git clone https://github.com/ethanal/jj-stamp.git
+cd jj-stamp
 npm ci
 npm run dev                          # http://localhost:8000
 npm run demo                         # optional: initialize / print existing demo
@@ -57,12 +59,12 @@ npm run build
 NODE_ENV=production npm start
 ```
 
-The VM-specific `fold.service` serves the production build. To deploy changes:
+The VM-specific `jj-stamp.service` serves the production build. To deploy changes:
 
 ```sh
 npm run build
-sudo systemctl restart fold
-journalctl -u fold -n 30 --no-pager
+sudo systemctl restart jj-stamp
+journalctl -u jj-stamp -n 30 --no-pager
 ```
 
 The service drains accepted operations during normal shutdown rather than interrupting a history rewrite. Fonts, syntax grammars, themes, and scripts are served locally.

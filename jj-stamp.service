@@ -5,7 +5,7 @@ After=network.target
 [Service]
 Type=simple
 User=exedev
-WorkingDirectory=/home/exedev/jj-review-web
+WorkingDirectory=/home/exedev/jj-stamp
 Environment=PATH=/home/exedev/.local/bin:/home/exedev/.cargo/bin:/home/exedev/node/bin:/usr/local/bin:/usr/bin:/bin
 Environment=PORT=8000
 Environment=NODE_ENV=production
