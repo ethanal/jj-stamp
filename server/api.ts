@@ -32,6 +32,11 @@ export function createApi(service: ReviewService): express.Router {
   router.get("/state", async (_req, res) => {
     res.json(await service.getState());
   });
+  // This is local revision-graph data, not an event/telemetry logging endpoint.
+  router.get("/graph", async (_req, res) => {
+    const { version, rows } = await service.getLog({ includeOutput: false });
+    res.json({ version, rows });
+  });
   router.get("/log", async (req, res) => {
     const format = z
       .enum(["full", "rows"])

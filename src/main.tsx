@@ -219,7 +219,7 @@ function App() {
       logOperation.current && logOperation.current !== operation ? 120 : 0;
     const timer = setTimeout(() => {
       setLogLoading(true);
-      api<{ version: string; rows: LogRow[] }>("log?format=rows")
+      api<{ version: string; rows: LogRow[] }>("graph")
         .then((result) => {
           if (!cancelled) {
             setLog(result.rows);

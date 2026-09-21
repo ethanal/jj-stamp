@@ -39,6 +39,13 @@ const browser = await chromium.launch({
   args: ["--no-sandbox"],
 });
 const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+// Reproduce the reported client-side /api/log filter. The UI must fetch its
+// revision graph without requesting the logging-shaped compatibility URL.
+let blockedLogRequests = 0;
+await page.route("**/api/log*", async (route) => {
+  blockedLogRequests++;
+  await route.abort("blockedbyclient");
+});
 const errors: string[] = [],
   mutations: string[] = [];
 const rejectedReads: Array<{ path: string; code: string }> = [];
@@ -799,7 +806,7 @@ try {
   // Fixture edits intentionally race an outstanding read-only graph refresh.
   // Any 409 must be that guard, never an unexpected mutation/context failure.
   for (const rejected of rejectedReads)
-    assert.deepEqual(rejected, { path: "/api/log", code: "STALE_STATE" });
+    assert.deepEqual(rejected, { path: "/api/graph", code: "STALE_STATE" });
   if (rejectedReads.length) {
     for (let i = 0; i < rejectedReads.length; i++) {
       const index = errors.findIndex((error) =>
@@ -808,6 +815,7 @@ try {
       if (index >= 0) errors.splice(index, 1);
     }
   }
+  assert.equal(blockedLogRequests, 0, "UI must not use /api/log");
   assert.deepEqual(errors, []);
   console.log(
     "✓ Escape, guarded shortcuts, mobile layout, zero confirmation/preview requests",

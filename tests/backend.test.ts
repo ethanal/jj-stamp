@@ -1421,6 +1421,10 @@ test("revision API validates strict versioned identity input and returns the exp
   const log = await (await fetch(`${base}/log`)).json();
   const rowLog = await (await fetch(`${base}/log?format=rows`)).json();
   assert.deepEqual(rowLog, { version: log.version, rows: log.rows });
+  const graphResponse = await fetch(`${base}/graph`);
+  assert.equal(graphResponse.status, 200);
+  assert.equal(graphResponse.headers.get("cache-control"), "no-store");
+  assert.deepEqual(await graphResponse.json(), rowLog);
   assert.equal((await fetch(`${base}/log?format=invalid`)).status, 400);
   assert.equal(log.version, selected.version);
   assert.equal(typeof log.output, "string");
