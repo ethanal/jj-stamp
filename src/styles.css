@@ -139,46 +139,41 @@ kbd {
   margin-left: 3px;
 }
 .sidebar-content {
-  overflow: auto;
+  overflow: hidden;
+  min-height: 0;
   flex: 1;
   padding-top: 8px;
 }
-.folder {
-  padding: 12px 14px 5px;
-  font-size: 11px;
-  color: #6e7884;
+/* Pierre Trees owns scrolling and row layout inside its shadow root. */
+.changed-files,
+.file-tree {
+  display: block;
+  height: 100%;
+  min-height: 0;
+  min-width: 0;
 }
-.file-item {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  width: 100%;
-  height: 28px;
-  padding: 0 13px;
-  border-left: 2px solid transparent;
-  text-align: left;
-  font-size: 11px;
+.changed-files[aria-disabled="true"] {
+  opacity: 0.5;
 }
-.file-item.active {
-  background: #232a33;
-  border-left-color: #bb914a;
-}
-.file-item:hover:not(:disabled) {
-  background: #20262e;
-}
-.filename {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.file-status {
-  color: #b69a64;
-  font-size: 10px;
-}
-.file-count {
-  margin-left: auto;
-  color: #616d7b;
-  font-size: 10px;
+.file-tree {
+  --trees-font-family-override: "IBM Plex Mono", monospace;
+  --trees-font-size-override: 11px;
+  --trees-bg-override: #161b22;
+  --trees-fg-override: #c9d1d9;
+  --trees-fg-muted-override: #8b949e;
+  --trees-bg-muted-override: #20262e;
+  --trees-selected-bg-override: #232a33;
+  --trees-selected-fg-override: #e6edf3;
+  --trees-selected-focused-border-color-override: #bb914a;
+  --trees-focus-ring-color-override: #79a9d1;
+  --trees-border-radius-override: 0px;
+  --trees-scrollbar-thumb-override: #363e49;
+  --trees-git-modified-color-override: #b69a64;
+  --trees-git-added-color-override: #72b88a;
+  --trees-git-deleted-color-override: #d28380;
+  --trees-item-padding-x-override: 6px;
+  --trees-item-margin-x-override: 4px;
+  --trees-level-gap-override: 12px;
 }
 .sidebar-footer {
   border-top: 1px solid var(--border);
@@ -365,18 +360,6 @@ kbd {
   .view-tabs button {
     font-size: 11px;
   }
-  .file-item {
-    font-size: 10px;
-    padding: 0 8px;
-    gap: 5px;
-  }
-  .folder {
-    padding-left: 10px;
-    font-size: 10px;
-  }
-  .file-count {
-    display: none;
-  }
   .file-bar {
     padding: 0 10px;
     font-size: 11px;
@@ -416,13 +399,6 @@ kbd {
   gap: 7px;
   white-space: nowrap;
   font-size: 10px;
-}
-.file-item > .line-counts {
-  margin-left: auto;
-  flex-shrink: 0;
-}
-.file-item {
-  gap: 6px;
 }
 .commit-totals {
   display: flex;
@@ -572,17 +548,6 @@ kbd {
   }
   .workspace.with-log {
     grid-template-rows: minmax(0, 1fr) 150px;
-  }
-  .file-item > .line-counts {
-    gap: 3px;
-    font-size: 8px;
-  }
-  .file-item {
-    padding-inline: 6px;
-    gap: 4px;
-  }
-  .file-item .file-status {
-    display: none;
   }
   .topbar {
     gap: 7px;

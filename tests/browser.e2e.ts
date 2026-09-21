@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import express from "express";
@@ -53,6 +53,8 @@ page.on("request", (request) => {
   )
     mutations.push(new URL(request.url()).pathname);
 });
+const treeRow = (path: string) =>
+  page.locator(`.file-tree [role="treeitem"][data-item-path="${path}"]`);
 const codeLine = (line: number, type = "change-addition") =>
   page.locator(
     `[data-line="${line}"][data-line-type${type === "context" ? "^" : ""}="${type}"]`,
@@ -109,6 +111,51 @@ try {
   await expect(page.getByLabel("Current commit ID")).toHaveAttribute(
     "title",
     initial.source.commitId,
+  );
+  await expect(page.locator(".file-tree [role=tree]")).toBeVisible();
+  await expect(treeRow("src/notifications.ts")).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  await expect(treeRow("src/notifications.ts")).toContainText("+2−2");
+  const fileCounts = treeRow("tests/notifications.test.ts").locator(
+    '[data-item-section="decoration"]',
+  );
+  assert(
+    await fileCounts.evaluate((node) => node.clientWidth >= node.scrollWidth),
+    "counts must not be clipped by a long filename",
+  );
+  await treeRow("tests/").click();
+  await expect(treeRow("tests/")).toHaveAttribute("aria-expanded", "false");
+  await expect(treeRow("tests/notifications.test.ts")).toHaveCount(0);
+  await expect(page.locator(".file-bar")).toContainText("src/notifications.ts");
+  const treeRefresh = page.waitForResponse((response) =>
+    response.url().endsWith("/api/state"),
+  );
+  await page.keyboard.press("r");
+  await treeRefresh;
+  await expect(page.getByRole("button", { name: "refresh r" })).toBeEnabled();
+  await expect(treeRow("tests/")).toHaveAttribute("aria-expanded", "false");
+  await treeRow("tests/").focus();
+  await page.keyboard.press("ArrowRight");
+  await expect(treeRow("tests/")).toHaveAttribute("aria-expanded", "true");
+  await page.keyboard.press("ArrowRight");
+  await page.keyboard.press("Enter");
+  await expect(page.locator(".file-bar")).toContainText(
+    "tests/notifications.test.ts",
+  );
+  await expect(treeRow("tests/notifications.test.ts")).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  await treeRow("src/notifications.ts").click();
+  await expect(codeLine(21)).toBeVisible();
+  await expect(treeRow("src/notifications.ts")).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  console.log(
+    "✓ Pierre Trees folders, keyboard file navigation, active file, counts, and expansion survives refresh",
   );
   await codeLine(21).click();
   const beforeWidth = (await page.locator(".viewer").boundingBox())!.width;
@@ -207,9 +254,7 @@ try {
   );
 
   await expect(page.getByLabel("Working copy line counts")).toHaveText("+8−5");
-  await expect(
-    page.getByTitle("src/notifications.ts", { exact: true }),
-  ).toContainText("+2−2");
+  await expect(treeRow("src/notifications.ts")).toContainText("+2−2");
   await page.getByRole("button", { name: "Split", exact: true }).click();
   await expect(page.locator('[data-diff-type="split"]')).toHaveCount(1);
   await drag(page.locator('[data-additions] [data-line="20"]'), codeLine(21));
@@ -248,7 +293,7 @@ try {
     "✓ Split/Stacked toggle; drags select both columns from either side, and +/- counts",
   );
 
-  await page.getByTitle("tests/notifications.test.ts", { exact: true }).click();
+  await treeRow("tests/notifications.test.ts").click();
   const hunk = initial.files.find(
     (file) => file.path === "tests/notifications.test.ts",
   )!.hunks[0];
@@ -299,7 +344,7 @@ try {
     "✓ Right-side raw jj log, independent of diff, and guarded empty selection",
   );
 
-  await page.getByTitle("src/notifications.ts", { exact: true }).click();
+  await treeRow("src/notifications.ts").click();
   await expect(codeLine(18, "context")).toBeVisible();
   await page
     .getByRole("button", { name: "Show 10 lines above", exact: true })
@@ -332,8 +377,8 @@ try {
     [...base.slice(0, 70), ...extra, ...base.slice(70)].join("\n") + "\n",
   );
   await page.keyboard.press("r");
-  await expect(page.getByTitle("src/long.ts", { exact: true })).toBeVisible();
-  await page.getByTitle("src/long.ts", { exact: true }).click();
+  await expect(treeRow("src/long.ts")).toBeVisible();
+  await treeRow("src/long.ts").click();
   const longState = await service.getState();
   const longHunk = longState.files.find((file) => file.path === "src/long.ts")!
     .hunks[0];
@@ -407,6 +452,7 @@ try {
   await expect(page.getByRole("status")).toContainText("1 queued");
   await expect(codeLine(queueLines[0].newLine!)).toHaveCount(0);
   await expect(page.getByLabel("Working copy line counts")).toHaveText("+39−0");
+  await expect(treeRow("src/long.ts")).toContainText("+39−0");
   assert.equal(
     (await service.getState()).files.find(
       (file) => file.path === "src/long.ts",
@@ -496,6 +542,7 @@ try {
   );
   await expect(page.getByRole("status")).toContainText("Queue stopped");
   await expect(page.getByLabel("Working copy line counts")).toHaveText("+36−0");
+  await expect(treeRow("src/long.ts")).toContainText("+36−0");
   assert.equal(
     failureRequests,
     2,
@@ -532,6 +579,13 @@ try {
   await page.waitForTimeout(150);
   assert.equal(mutations.length, noSelectionMutations);
   await page.setViewportSize({ width: 390, height: 844 });
+  const mobileCounts = treeRow("src/long.ts").locator(
+    '[data-item-section="decoration"]',
+  );
+  assert(
+    await mobileCounts.evaluate((node) => node.clientWidth >= node.scrollWidth),
+    "counts remain readable on mobile",
+  );
   assert(
     await page.evaluate(
       () => document.documentElement.scrollWidth <= innerWidth,
@@ -565,7 +619,9 @@ try {
     return result.json();
   };
   await jj(initial.repo.path, [
-    "describe", "-m", "Updated commit title\n\nDescription body",
+    "describe",
+    "-m",
+    "Updated commit title\n\nDescription body",
   ]);
   const described = await refreshState();
   await expect(page).toHaveTitle(
@@ -574,10 +630,64 @@ try {
   await jj(initial.repo.path, ["new", "-m", "Next change"]);
   const next = await refreshState();
   assert.notEqual(next.source.changeId, described.source.changeId);
+  await expect(page.locator(".file-tree [role=treeitem]")).toHaveCount(0);
   await expect(page).toHaveTitle(
     `jj-stamp ${next.source.changeId.slice(0, 8)}: Next change`,
   );
-  console.log("✓ Page title follows the short change ID and commit title on refresh");
+  console.log(
+    "✓ Page title follows the short change ID and commit title on refresh",
+  );
+  // Tree structure follows real repository changes, including duplicate
+  // basenames, read-only files, and removal/restoration of a whole file.
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await mkdir(path.join(initial.repo.path, "nested/deep"), { recursive: true });
+  await mkdir(path.join(initial.repo.path, "other"), { recursive: true });
+  await writeFile(
+    path.join(initial.repo.path, "nested/deep/one.txt"),
+    "nested\n",
+  );
+  await writeFile(path.join(initial.repo.path, "other/one.txt"), "other\n");
+  await writeFile(path.join(initial.repo.path, "other/raw.txt"), "no newline");
+  await refreshState();
+  await expect(treeRow("nested/deep/one.txt")).toBeVisible();
+  await expect(treeRow("other/one.txt")).toBeVisible();
+  await expect(treeRow("nested/deep/one.txt")).toHaveAttribute(
+    "data-item-git-status",
+    "added",
+  );
+  await treeRow("other/raw.txt").click();
+  await expect(page.locator(".unsupported")).toBeVisible();
+  await expect(
+    treeRow("other/raw.txt").locator('[title*="read-only"]'),
+  ).toHaveCount(1);
+  await treeRow("other/one.txt").click({ modifiers: ["Control"] });
+  await expect(page.locator('.file-tree [aria-selected="true"]')).toHaveCount(
+    1,
+  );
+  await expect(page.locator(".file-bar")).toContainText("other/one.txt");
+  await treeRow("nested/").click();
+  await expect(treeRow("nested/deep/one.txt")).toHaveCount(0);
+  await codeLine(1).click();
+  await treeRow("other/").click();
+  await expect(page.getByRole("status")).toContainText(
+    "1 changed line selected",
+  );
+  await pressMutation("s");
+  await expect(page.locator(".file-bar")).toContainText("nested/deep/one.txt");
+  await expect(treeRow("nested/deep/one.txt")).toBeVisible();
+  await expect(treeRow("nested/deep/one.txt")).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  await expect(treeRow("other/")).toHaveAttribute("aria-expanded", "false");
+  await treeRow("other/").click();
+  await expect(treeRow("other/one.txt")).toHaveCount(0);
+  await pressMutation("u");
+  await expect(treeRow("other/one.txt")).toBeVisible();
+  await expect(treeRow("other/one.txt")).toContainText("+1−0");
+  console.log(
+    "✓ Nested paths, duplicate names, single active file, read-only rows, whole-file squash/undo, and fallback reveal",
+  );
   assert(mutations.every((endpoint) => endpoint === "/api/squash-lines"));
   // Fixture edits intentionally race an outstanding read-only graph refresh.
   // Any 409 must be that guard, never an unexpected mutation/context failure.

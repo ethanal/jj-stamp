@@ -10,6 +10,7 @@ import { createRoot } from "react-dom/client";
 import type { FileDiffLoadedFiles, SelectedLineRange } from "@pierre/diffs";
 import type { RepoState, Selections } from "./types";
 import { CodeDiff } from "./CodeDiff";
+import { ChangedFilesTree } from "./ChangedFilesTree";
 import { refsFromSelection, specsForRefs, type RowRef } from "./optimistic";
 import { SquashQueue } from "./squash-queue";
 import "@fontsource/ibm-plex-mono/400.css";
@@ -471,50 +472,14 @@ function App() {
             hidden={!showFiles}
           >
             <div className="sidebar-content">
-              <nav aria-label="Changed files" className="file-list">
-                {state?.files.map((item, index, files) => {
-                  const folder = item.path.includes("/")
-                    ? item.path.slice(0, item.path.lastIndexOf("/") + 1)
-                    : "";
-                  const previous = files[index - 1]?.path;
-                  const sameFolder =
-                    previous?.slice(0, previous.lastIndexOf("/") + 1) ===
-                    folder;
-                  return (
-                    <div key={item.path}>
-                      {folder && !sameFolder && (
-                        <div className="folder">{folder}</div>
-                      )}
-                      <button
-                        className={`file-item ${file?.path === item.path ? "active" : ""}`}
-                        aria-current={
-                          file?.path === item.path ? "true" : undefined
-                        }
-                        onClick={() => selectFile(item.path)}
-                        title={item.path}
-                        disabled={working}
-                      >
-                        <span className="file-status">
-                          {item.unsupported
-                            ? "·"
-                            : item.patch.includes("new file mode")
-                              ? "A"
-                              : item.patch.includes("deleted file mode")
-                                ? "D"
-                                : "M"}
-                        </span>
-                        <span className="filename">
-                          {item.path.split("/").at(-1)}
-                        </span>
-                        <Counts
-                          additions={item.additions}
-                          deletions={item.deletions}
-                        />
-                      </button>
-                    </div>
-                  );
-                })}
-              </nav>
+              {state && (
+                <ChangedFilesTree
+                  files={state.files}
+                  activePath={file?.path}
+                  disabled={working}
+                  onSelect={selectFile}
+                />
+              )}
             </div>
             <div className="sidebar-footer">
               <span>@ → @-</span>

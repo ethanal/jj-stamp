@@ -1,6 +1,6 @@
 # jj-stamp
 
-Minimal, keyboard-first review of `@` in a real Jujutsu workspace. Diff rendering uses Pierre Diffs; selected lines move through `jj-hunk-tool`.
+Minimal, keyboard-first review of `@` in a real Jujutsu workspace. Diff rendering uses Pierre Diffs, the file sidebar uses Pierre Trees, and selected lines move through `jj-hunk-tool`.
 
 ## Use
 
@@ -8,7 +8,7 @@ Minimal, keyboard-first review of `@` in a real Jujutsu workspace. Diff renderin
 - **`s`** queues selected changed lines **from `@` into `@-`**. They disappear immediately; real squashes run one at a time in the background. Keep selecting while the queue drains. No confirmation dialog or target picker.
 - **`u`** undoes the last app squash once the queue is empty, provided the repository is unchanged.
 - **Escape** clears the selection. **`r`** refreshes.
-- The left sidebar lists files with **`+ / −` counts**. The header shows working-copy totals, the change ID, and the commit ID; hover an ID to see its full value.
+- The left sidebar uses **Pierre Trees**, with collapsible folders, change-status indicators, and live **`+ / −` counts**. Arrow keys navigate the tree; Enter opens a file. Folder expansion survives refresh and squash/undo updates. The header shows working-copy totals, the change ID, and the commit ID; hover an ID to see its full value.
 - Both sidebars have **collapse / expand buttons**. Collapsed sidebars leave a narrow rail with the expand button; their state is remembered locally.
 - The **right-hand panel** shows actual `jj log` output. **`l`** toggles it; **`f`** focuses the diff.
 - **Split / Stacked** switches between side-by-side and unified diffs. The layout preference is saved locally. In split view, dragging selects the aligned rows in **both columns**, regardless of where the drag starts. Use Stacked view to select an individual addition or deletion. Switching layout preserves the exact selection.
@@ -93,11 +93,14 @@ npm run build
 
 Browser tests exercise real code dragging, single-line and 3-of-40-line squashes, Split/Stacked selection, immediate-parent routing, keyboard undo, graph output, ten-line context expansion, optimistic counts, artificially delayed FIFO jobs, selection preservation across acknowledgements, and injected failures with actual-state recovery. Backend tests cover stale versions, invalid paths, immutable/merge parents, target overrides, pinned file contents, exact patches, persisted undo, and failure/interleaving recovery.
 
+Browser tests also cover tree keyboard navigation, nested paths and duplicate basenames, folder-state preservation, read-only rows, optimistic counts, whole-file removal/restoration, and revealing the next active file. `@pierre/trees` is pinned to a beta version; review its API when upgrading.
+
 Fixtures remain in `/tmp/fold-backend-*` and `/tmp/fold-browser-*` for inspection. App source is Git-managed separately from the demo jj repositories.
 
 ## Source
 
-- `src/main.tsx` — minimal shell, file list, right-side log, counts, shortcuts
+- `src/main.tsx` — minimal shell, right-side log, counts, shortcuts
+- `src/ChangedFilesTree.tsx` — Pierre Trees sidebar, active-file synchronization, change counts
 - `src/CodeDiff.tsx` — code-drag selection and context expansion
 - `src/selection.ts` — exact selected patch rows
 - `src/optimistic.ts`, `src/squash-queue.ts` — speculative diffs, exact remapping, sequential dispatch, failure recovery
