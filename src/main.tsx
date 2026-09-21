@@ -108,6 +108,12 @@ function App() {
   );
   const queued = useSyncExternalStore(queue.subscribe, queue.getSnapshot);
   const state = queued.view;
+  const source = queued.confirmed?.source ?? state?.source;
+  useEffect(() => {
+    document.title = source
+      ? `jj-stamp ${source.changeId.slice(0, 8)}: ${source.description}`
+      : "jj-stamp";
+  }, [source?.changeId, source?.description]);
   const [activePath, setActivePath] = useState("");
   const [range, setRange] = useState<SelectedLineRange | null>(null);
   const [picked, setPicked] = useState<RowRef[]>([]);
@@ -395,7 +401,6 @@ function App() {
   const deletions =
     state?.files.reduce((sum, file) => sum + file.deletions, 0) ?? 0;
   const idleActionDisabled = working || queued.pending > 0;
-  const source = queued.confirmed?.source ?? state?.source;
   return (
     <div className="app">
       <header className="topbar">

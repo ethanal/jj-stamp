@@ -92,7 +92,9 @@ try {
   await expect(page.locator(".file-bar")).toContainText("src/notifications.ts");
   await expect(page.getByRole("checkbox")).toHaveCount(0);
   await expect(codeLine(21)).toBeVisible();
-  await expect(page).toHaveTitle("jj-stamp · jj code review");
+  await expect(page).toHaveTitle(
+    `jj-stamp ${initial.source.changeId.slice(0, 8)}: ${initial.source.description}`,
+  );
   await expect(page.locator(".app-name")).toHaveText("jj-stamp");
   await expect(page.getByLabel("Current change ID")).toHaveText(
     initial.source.changeId.slice(0, 8),
@@ -553,6 +555,29 @@ try {
   await page.getByRole("button", { name: "Expand files sidebar" }).click();
   await page.getByRole("button", { name: "Expand log sidebar" }).click();
   await page.screenshot({ path: path.join(dataDir, "jj-stamp-mobile.png") });
+  const refreshState = async () => {
+    const response = page.waitForResponse((response) =>
+      response.url().endsWith("/api/state"),
+    );
+    await page.keyboard.press("r");
+    const result = await response;
+    assert.equal(result.status(), 200, await result.text());
+    return result.json();
+  };
+  await jj(initial.repo.path, [
+    "describe", "-m", "Updated commit title\n\nDescription body",
+  ]);
+  const described = await refreshState();
+  await expect(page).toHaveTitle(
+    `jj-stamp ${described.source.changeId.slice(0, 8)}: Updated commit title`,
+  );
+  await jj(initial.repo.path, ["new", "-m", "Next change"]);
+  const next = await refreshState();
+  assert.notEqual(next.source.changeId, described.source.changeId);
+  await expect(page).toHaveTitle(
+    `jj-stamp ${next.source.changeId.slice(0, 8)}: Next change`,
+  );
+  console.log("✓ Page title follows the short change ID and commit title on refresh");
   assert(mutations.every((endpoint) => endpoint === "/api/squash-lines"));
   // Fixture edits intentionally race an outstanding read-only graph refresh.
   // Any 409 must be that guard, never an unexpected mutation/context failure.
