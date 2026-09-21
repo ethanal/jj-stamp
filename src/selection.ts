@@ -1,19 +1,23 @@
 import type { GetLineIndexUtility, SelectedLineRange } from "@pierre/diffs";
 import type { Hunk, Selections } from "./types";
 
-/** Use the renderer's unified row coordinates, including expanded context.
+/** Use the renderer's row coordinates, including expanded context and split sides.
  * Only original changed patch rows are translated into jj-hunk-tool indices.
  */
 export function selectionFromRange(
   hunks: Hunk[],
   range: SelectedLineRange,
   getIndex: GetLineIndexUtility,
+  style: "unified" | "split" = "unified",
 ): Selections {
-  const start = getIndex(range.start, range.side ?? "additions")?.[0];
-  const end = getIndex(
-    range.end,
-    range.endSide ?? range.side ?? "additions",
-  )?.[0];
+  const axis = style === "split" ? 1 : 0;
+  const side = range.side ?? "additions";
+  const endSide = range.endSide ?? side;
+  const onlySide = style === "split" && side === endSide ? side : null;
+  const start = getIndex(range.start, side)?.[axis];
+  const end = getIndex(range.end, range.endSide ?? range.side ?? "additions")?.[
+    axis
+  ];
   if (start === undefined || end === undefined) return {};
   const low = Math.min(start, end),
     high = Math.max(start, end);
@@ -23,9 +27,13 @@ export function selectionFromRange(
       .filter((row) => {
         const deletion = row.raw[0] === "-";
         if (!deletion && row.raw[0] !== "+") return false;
+        if (onlySide && onlySide !== (deletion ? "deletions" : "additions"))
+          return false;
         const line = deletion ? row.oldLine : row.newLine;
         if (line === undefined) return false;
-        const index = getIndex(line, deletion ? "deletions" : "additions")?.[0];
+        const index = getIndex(line, deletion ? "deletions" : "additions")?.[
+          axis
+        ];
         return index !== undefined && index >= low && index <= high;
       })
       .map((row) => row.index);

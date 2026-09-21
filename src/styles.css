@@ -409,3 +409,216 @@ kbd {
     padding: 12px;
   }
 }
+/* Counts and layout controls stay in the existing one-line chrome. */
+.line-counts {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  white-space: nowrap;
+  font-size: 10px;
+}
+.file-item > .line-counts {
+  margin-left: auto;
+  flex-shrink: 0;
+}
+.file-item {
+  gap: 6px;
+}
+.commit-totals {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-left: auto;
+  white-space: nowrap;
+}
+.commit-totals > span:first-child {
+  color: #8b949e;
+}
+.commit-totals .line-counts {
+  font-size: 11px;
+}
+.topbar button[aria-pressed="true"] {
+  color: #d2dce5;
+}
+.sidebar-heading {
+  height: 36px;
+  border-bottom: 1px solid var(--border);
+  padding: 0 14px;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  flex-shrink: 0;
+}
+.sidebar-heading > span {
+  color: #6e7884;
+  font-size: 10px;
+}
+.sidebar-footer > span {
+  color: #6e7884;
+}
+.file-bar {
+  gap: 10px;
+}
+.file-bar-tools {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 17px;
+  flex-shrink: 0;
+}
+.layout-toggle {
+  display: flex;
+  gap: 10px;
+  padding-left: 14px;
+  border-left: 1px solid var(--border);
+}
+.layout-toggle button {
+  font-size: 10px;
+  color: #6e7884;
+}
+.layout-toggle button.active {
+  color: #d2dce5;
+}
+.log-panel {
+  width: min(350px, 25vw);
+  min-width: 260px;
+  border-left: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  background: #10151b;
+}
+.log-header {
+  height: 36px;
+  padding: 0 13px;
+  border-bottom: 1px solid var(--border);
+  background: #161b22;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+}
+.log-status {
+  font-size: 10px;
+  color: #6e7884;
+  margin-left: auto;
+}
+.log-panel .jj-log {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 14px 12px;
+  font-size: 11px;
+  line-height: 1.8;
+  color: #aeb8c4;
+  scrollbar-color: #303842 #10151b;
+}
+.queue-count {
+  color: #c7ab70;
+}
+.error .retry {
+  display: block;
+  margin-top: 5px;
+  text-decoration: underline;
+  font-size: 11px;
+}
+@media (max-width: 1100px) {
+  .sidebar {
+    width: 215px;
+  }
+  .log-panel {
+    min-width: 235px;
+    width: 235px;
+  }
+  .file-bar-tools {
+    gap: 10px;
+  }
+  .file-bar-tools > .line-counts {
+    display: none;
+  }
+}
+@media (max-width: 850px) {
+  .workspace {
+    display: grid;
+    grid-template-columns: 190px minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr);
+  }
+  .workspace.with-log {
+    grid-template-rows: minmax(0, 1fr) 175px;
+  }
+  .sidebar {
+    grid-column: 1;
+    grid-row: 1 / -1;
+    width: auto;
+  }
+  .viewer {
+    grid-column: 2;
+    grid-row: 1;
+    min-height: 0;
+  }
+  .log-panel {
+    grid-column: 2;
+    grid-row: 2;
+    min-width: 0;
+    width: auto;
+    border-left: 0;
+    border-top: 1px solid var(--border);
+  }
+  .source-description {
+    display: none;
+  }
+}
+@media (max-width: 600px) {
+  .workspace {
+    grid-template-columns: 155px minmax(0, 1fr);
+  }
+  .workspace.with-log {
+    grid-template-rows: minmax(0, 1fr) 150px;
+  }
+  .file-item > .line-counts {
+    gap: 3px;
+    font-size: 8px;
+  }
+  .file-item {
+    padding-inline: 6px;
+    gap: 4px;
+  }
+  .file-item .file-status {
+    display: none;
+  }
+  .topbar {
+    gap: 7px;
+  }
+  .topbar button {
+    margin-left: 3px;
+    font-size: 10px;
+  }
+  .topbar kbd {
+    display: none;
+  }
+  .commit-totals {
+    gap: 6px;
+  }
+  .commit-totals .line-counts {
+    font-size: 10px;
+    gap: 4px;
+  }
+  .file-bar {
+    height: auto;
+    min-height: 51px;
+    align-items: flex-start;
+    justify-content: center;
+    flex-direction: column;
+    gap: 5px;
+    padding-block: 5px;
+  }
+  .file-bar-tools {
+    margin-left: 0;
+  }
+  .layout-toggle {
+    padding-left: 0;
+    border-left: 0;
+    gap: 13px;
+  }
+  .log-panel .jj-log {
+    font-size: 10px;
+  }
+}

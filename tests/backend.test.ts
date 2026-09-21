@@ -560,6 +560,17 @@ test("conflicted repositories are refused, and immutable ancestors are never tar
     service.preview(input(restricted, [{ id: hunk.id, lines: changes(hunk) }])),
     "CONFLICTED_REPO",
   );
+  // Return to an already cached, non-conflicted source. Conflicts elsewhere in
+  // the repository must still block reads and mutations on a cache hit.
+  await jj(root, ["edit", base]);
+  await rejectsCode(service.getState(), "CONFLICTED_REPO");
+  await rejectsCode(
+    service.squashLines({
+      version: restricted.version,
+      selections: [{ id: hunk.id, lines: changes(hunk) }],
+    }),
+    "CONFLICTED_REPO",
+  );
 });
 
 test("immediate squash chooses only the exact parent, retains partial rows, and undoes", async () => {
@@ -788,22 +799,25 @@ test("context new/deleted files have null opposite sides and unsupported files a
 test("file and graph reads reject repository changes during their final validation", async () => {
   const { dataDir, state, root } = await fixture();
   for (const action of ["file", "log"] as const) {
-    let calls = 0;
     const service = new ReviewService({
       dataDir,
-      toolRunner: async (command, args, cwd) => {
-        if (args[0] === "hunks" && ++calls === 4) {
-          // The first read calls hunks once per diff file. Change during the
-          // second read to exercise the endpoint's post-read stale guard.
+      jjRunner: async (cwd, args) => {
+        const result = await jj(cwd, args);
+        if (
+          (action === "file" && args[0] === "file" && args[1] === "show") ||
+          (action === "log" && args[0] === "log" && args[1] === "--limit")
+        ) {
+          // Edit after reading the pinned content/graph, before the final
+          // snapshot. This must fire even when all diff listings are cached.
           await appendFile(
             path.join(root, state.files[0].path),
             `\n// race ${action}\n`,
           );
         }
-        return run(command, args, cwd);
+        return result;
       },
     });
-    const version = (await new ReviewService({ dataDir }).getState()).version;
+    const version = (await service.getState()).version;
     await rejectsCode(
       action === "file"
         ? service.getFile({ version, path: state.files[0].path })
@@ -1012,4 +1026,229 @@ test("immediate squash preserves durable recovery guard after a post-write tool 
     "RECOVERY_REQUIRED",
   );
   assert.equal(squashCalls, 1);
+});
+
+test("immutable diff cache serves state, log and context without repeating listings or sharing mutable objects", async () => {
+  const { dataDir, root } = await fixture();
+  let listings = 0,
+    diffs = 0,
+    patches = 0;
+  const service = new ReviewService({
+    dataDir,
+    toolRunner: async (command, args, cwd) => {
+      if (args[0] === "hunks") listings++;
+      if (args[0] === "patch") patches++;
+      return run(command, args, cwd);
+    },
+    jjRunner: async (cwd, args) => {
+      if (args[0] === "diff") diffs++;
+      return jj(cwd, args);
+    },
+  });
+  const state = await service.getState();
+  const pristine = structuredClone(state);
+  assert.equal(listings, 3);
+  assert.equal(diffs, 1);
+  const context = await service.getFile({
+    version: state.version,
+    path: state.files[0].path,
+  });
+  assert.equal(
+    context.newFile!.contents,
+    await fileAt(root, state.source.commitId, state.files[0].path),
+  );
+  assert.equal((await service.getLog()).version, state.version);
+  state.files[0].hunks[0].rows[0].raw = "+caller mutation";
+  state.files[0].hunks[0].id = "caller mutation";
+  state.files[0].patch = "caller mutation";
+  assert.deepEqual(await service.getState(), pristine);
+  assert.equal(listings, 3);
+  assert.equal(diffs, 1);
+  const hunk = pristine.files[0].hunks[0];
+  await rejectsCode(
+    service.squashLines({
+      version: pristine.version,
+      selections: [
+        {
+          id: hunk.id,
+          lines: [hunk.rows.find((row) => row.raw.startsWith(" "))!.index],
+        },
+      ],
+    }),
+    "INVALID_SELECTION",
+  );
+  await rejectsCode(
+    service.getFile({
+      version: pristine.version,
+      path: ".jj/repo/config.toml",
+    }),
+    "INVALID_PATH",
+  );
+  assert.equal(
+    patches,
+    0,
+    "invalid cached selections do not invoke patch or squash",
+  );
+});
+
+test("cached source never hides external operation-only changes or unsnapshotted workspace edits", async () => {
+  const { dataDir, root } = await fixture();
+  let listings = 0;
+  const service = new ReviewService({
+    dataDir,
+    toolRunner: async (command, args, cwd) => {
+      if (args[0] === "hunks") listings++;
+      return run(command, args, cwd);
+    },
+  });
+  const initial = await service.getState();
+  const selection = [
+    {
+      id: initial.files[0].hunks[0].id,
+      lines: changes(initial.files[0].hunks[0]),
+    },
+  ];
+  await jj(root, ["bookmark", "create", "external-cache-test", "-r", "@"]);
+  const history = await service.getState();
+  assert.equal(history.source.commitId, initial.source.commitId);
+  assert.notEqual(history.operation, initial.operation);
+  assert.notEqual(history.version, initial.version);
+  assert.equal(
+    listings,
+    3,
+    "operation-only changes reuse immutable source diff, not the old version",
+  );
+  await rejectsCode(
+    service.squashLines({ version: initial.version, selections: selection }),
+    "STALE_STATE",
+  );
+  await rejectsCode(
+    service.getFile({ version: initial.version, path: initial.files[0].path }),
+    "STALE_STATE",
+  );
+  const graph = await service.getLog();
+  assert.equal(graph.version, history.version);
+  assert.match(graph.output, /external-cache-test/);
+  await appendFile(
+    path.join(root, initial.files[0].path),
+    "\n// external unsnapshotted edit\n",
+  );
+  await rejectsCode(
+    service.getFile({ version: history.version, path: history.files[0].path }),
+    "STALE_STATE",
+  );
+  await rejectsCode(
+    service.squashLines({ version: history.version, selections: selection }),
+    "STALE_STATE",
+  );
+  const edited = await service.getState();
+  assert.notEqual(edited.source.commitId, history.source.commitId);
+  assert.notEqual(edited.version, history.version);
+  assert.equal(listings, 6);
+  assert.match(edited.files[0].patch, /external unsnapshotted edit/);
+  assert.deepEqual(edited, await new ReviewService({ dataDir }).getState());
+});
+
+test("cached source rechecks configuration-only immutability without an operation change", async () => {
+  const { dataDir, root } = await fixture();
+  let listings = 0;
+  const service = new ReviewService({
+    dataDir,
+    toolRunner: async (command, args, cwd) => {
+      if (args[0] === "hunks") listings++;
+      return run(command, args, cwd);
+    },
+  });
+  const state = await service.getState();
+  await jj(root, [
+    "config",
+    "set",
+    "--repo",
+    'revset-aliases."immutable_heads()"',
+    state.parent!.commitId,
+  ]);
+  const restricted = await service.getState();
+  assert.equal(restricted.operation, state.operation);
+  assert.equal(restricted.source.commitId, state.source.commitId);
+  assert.notEqual(restricted.version, state.version);
+  assert.equal(restricted.parent, null);
+  assert.equal(listings, 3);
+  const selections = [
+    { id: state.files[0].hunks[0].id, lines: changes(state.files[0].hunks[0]) },
+  ];
+  await rejectsCode(
+    service.squashLines({ version: state.version, selections }),
+    "STALE_STATE",
+  );
+  await rejectsCode(
+    service.squashLines({ version: restricted.version, selections }),
+    "SQUASH_UNAVAILABLE",
+  );
+  await rejectsCode(
+    service.getFile({ version: state.version, path: state.files[0].path }),
+    "STALE_STATE",
+  );
+  const context = await service.getFile({
+    version: restricted.version,
+    path: restricted.files[0].path,
+  });
+  assert.equal(
+    context.oldFile!.contents,
+    await fileAt(root, state.parent!.commitId, state.files[0].path),
+  );
+});
+
+test("transient hunk listing failures are not retained in the immutable diff cache", async () => {
+  const { dataDir } = await fixture();
+  let listings = 0;
+  const service = new ReviewService({
+    dataDir,
+    toolRunner: async (command, args, cwd) => {
+      if (args[0] === "hunks" && ++listings === 1)
+        throw new Error("temporary listing failure");
+      return run(command, args, cwd);
+    },
+  });
+  const failed = await service.getState();
+  assert.match(failed.files[0].unsupported!, /temporary listing failure/);
+  const recovered = await service.getState();
+  assert.ok(recovered.files.every((file) => !file.unsupported));
+  assert.equal(listings, 6);
+  assert.notEqual(recovered.version, failed.version);
+  assert.deepEqual(await service.getState(), recovered);
+  assert.equal(listings, 6);
+});
+
+test("direct squash checks one exact preview and lists only the new committed source", async () => {
+  const { dataDir } = await fixture();
+  let listings = 0,
+    patches = 0,
+    squashes = 0;
+  const service = new ReviewService({
+    dataDir,
+    toolRunner: async (command, args, cwd) => {
+      if (args[0] === "hunks") listings++;
+      if (args[0] === "patch") patches++;
+      if (args[0] === "squash") squashes++;
+      return run(command, args, cwd);
+    },
+  });
+  const before = await service.getState();
+  listings = 0;
+  const hunk = before.files[2].hunks[1];
+  const result = await service.squashLines({
+    version: before.version,
+    selections: [
+      {
+        id: hunk.id,
+        lines: [hunk.rows.find((row) => row.raw.startsWith("+"))!.index],
+      },
+    ],
+  });
+  assert.equal(patches, 1);
+  assert.equal(squashes, 1);
+  assert.equal(listings, 3);
+  assert.equal(result.state.canUndo, true);
+  assert.deepEqual(await service.getState(), result.state);
+  assert.equal(listings, 3);
 });

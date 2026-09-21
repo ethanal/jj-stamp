@@ -5,15 +5,27 @@ Minimal, keyboard-first review of `@` in a real Jujutsu workspace. Diff renderin
 ## Use
 
 - **Drag directly on code** (or line numbers) to select a range. Shift-click extends it.
-- **`s`** immediately squashes the selected changed lines **from `@` into `@-`**. No confirmation dialog or target picker.
-- **`u`** undoes the last app squash, provided the repository is unchanged.
+- **`s`** queues selected changed lines **from `@` into `@-`**. They disappear immediately; real squashes run one at a time in the background. Keep selecting while the queue drains. No confirmation dialog or target picker.
+- **`u`** undoes the last app squash once the queue is empty, provided the repository is unchanged.
 - **Escape** clears the selection. **`r`** refreshes.
-- **Files / Log** in the sidebar switch between the diff and actual `jj log` graph output. Shortcuts: **`f` / `l`**.
+- The left sidebar lists files with **`+ / −` counts**; the header shows totals for the whole working-copy change.
+- The **right-hand panel** shows actual `jj log` output. **`l`** toggles it; **`f`** focuses the diff.
+- **Split / Stacked** switches between side-by-side and unified diffs. The layout preference is saved locally. In split view, dragging within a column selects only that side; crossing columns selects the aligned rows. Switching layout preserves the exact selection.
 - **↑ 10 / ↓ 10** reveal ten more context lines above or below the hunk (or the remaining lines at a file boundary).
 
-Only changed rows are squashed, even when a range includes context or spans multiple hunks. Selections can include just one addition or deletion inside a long hunk. A new drag replaces the range; switching files/views clears it. Working-file contents are preserved.
+Only changed rows are squashed, even when a range includes context or spans multiple hunks. Selections can include just one addition or deletion inside a long hunk. A new drag replaces the range; switching files clears it. Working-file contents are preserved.
 
 An immutable immediate parent or merge is rejected, never silently redirected to an older ancestor.
+
+### Optimistic queue
+
+Each selection captures exact file/side/line/text identities. Before dispatching the next queued job, the client remaps those identities onto the newly acknowledged tool hunk IDs and patch indices. It compares the complete predicted changed-row set with the actual result; it never guesses by text alone or reuses a stale version.
+
+Rows and counts update speculatively; the footer shows the queue length. The graph remains confirmed history and refreshes after the queue drains. Context expansion, refresh, reset, and undo wait for an empty queue; code selection, file navigation, and layout switching remain available.
+
+If a job fails, the queue stops, unsent jobs are canceled, and the actual repository is reloaded. Completed jobs are not rolled back automatically, and failed mutations are never retried. Refresh or undo explicitly to resume. The queue lives in browser memory, not durable storage; leaving with work pending triggers a browser warning. An in-flight operation can finish after disconnection, but unsent jobs are not submitted after leaving.
+
+Backend reads cache immutable source diffs, not mutable state or safety decisions. Measured isolated-demo squash latency improved from a median 1.76s to 0.57s; details are in `server/README.md`.
 
 The running VM demo is served on port **8000** by systemd unit **fold**. **reset demo** creates a new demo repository without deleting the previous one. Tests use independent repositories and never mutate the running demo.
 
@@ -76,15 +88,16 @@ npm run test:browser
 npm run build
 ```
 
-Browser tests exercise real code dragging, exact single-line and 3-of-40-line squashes, immediate-parent routing, keyboard undo, Shift-click, graph output, ten-line context expansion, selections from expanded context, shortcut guards, and mobile layout. Backend tests cover stale versions, invalid paths, immutable/merge parents, target overrides, pinned file contents, exact patches, persisted undo, and failure/interleaving recovery.
+Browser tests exercise real code dragging, single-line and 3-of-40-line squashes, Split/Stacked selection, immediate-parent routing, keyboard undo, graph output, ten-line context expansion, optimistic counts, artificially delayed FIFO jobs, selection preservation across acknowledgements, and injected failures with actual-state recovery. Backend tests cover stale versions, invalid paths, immutable/merge parents, target overrides, pinned file contents, exact patches, persisted undo, and failure/interleaving recovery.
 
 Fixtures remain in `/tmp/fold-backend-*` and `/tmp/fold-browser-*` for inspection. App source is Git-managed separately from the demo jj repositories.
 
 ## Source
 
-- `src/main.tsx` — minimal shell, Files / Log, shortcuts
+- `src/main.tsx` — minimal shell, file list, right-side log, counts, shortcuts
 - `src/CodeDiff.tsx` — code-drag selection and context expansion
 - `src/selection.ts` — exact selected patch rows
+- `src/optimistic.ts`, `src/squash-queue.ts` — speculative diffs, exact remapping, sequential dispatch, failure recovery
 - `server/api.ts`, `server/service.ts` — versioned reads and safe mutations
 - `server/diff.ts` — fail-closed parsing and patch reconciliation
 - `server/demo.ts` — non-destructive demo creation

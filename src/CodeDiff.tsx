@@ -1,6 +1,7 @@
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   type PointerEvent as ReactPointerEvent,
@@ -29,7 +30,10 @@ function pointFromElement(element: Element | null): Point | null {
   return {
     line,
     side:
-      row.dataset.lineType === "change-deletion" ? "deletions" : "additions",
+      row.dataset.lineType === "change-deletion" ||
+      row.closest("[data-deletions]")
+        ? "deletions"
+        : "additions",
   };
 }
 function deepElementAt(x: number, y: number): Element | null {
@@ -44,7 +48,7 @@ function deepElementAt(x: number, y: number): Element | null {
 const separatorCSS = `
 [data-code] { padding-top: 0; padding-bottom: 0; }
 [data-line], [data-column-number] { cursor: default; user-select: none; touch-action: none; }
-[data-line][data-selected-line], [data-column-number][data-selected-line] { background: #29415a; }
+[data-line][data-fold-selected], [data-column-number][data-fold-selected] { background: #29415a; }
 [data-separator="line-info-basic"] { height: 25px; background: #20262e; }
 [data-separator-wrapper] { font-size: 11px; }
 [data-gutter] [data-separator-wrapper] { display: flex !important; flex-direction: row; width: max-content; align-items: center; background: #20262e; }
@@ -62,6 +66,10 @@ const separatorCSS = `
 export function CodeDiff({
   file,
   version,
+  renderKey,
+  style,
+  selections,
+  contextDisabled,
   range,
   disabled,
   onSelection,
@@ -71,6 +79,10 @@ export function CodeDiff({
 }: {
   file: DiffFile;
   version: string;
+  renderKey: string;
+  style: "unified" | "split";
+  selections: Selections;
+  contextDisabled: boolean;
   range: SelectedLineRange | null;
   disabled: boolean;
   onSelection: (range: SelectedLineRange, selections: Selections) => void;
@@ -81,12 +93,60 @@ export function CodeDiff({
   const root = useRef<HTMLDivElement>(null);
   const instance = useRef<DiffInstance | null>(null);
   const stop = useRef<(() => void) | null>(null);
-  const current = useRef({ file, range, disabled, onSelection, onDragging });
-  current.current = { file, range, disabled, onSelection, onDragging };
+  const container = useRef<HTMLElement | null>(null);
+  const current = useRef({
+    file,
+    range,
+    disabled,
+    onSelection,
+    onDragging,
+    selections,
+    style,
+    contextDisabled,
+  });
+  current.current = {
+    file,
+    range,
+    disabled,
+    onSelection,
+    onDragging,
+    selections,
+    style,
+    contextDisabled,
+  };
+  const paint = useCallback(() => {
+    const shadow = container.current?.shadowRoot;
+    if (!shadow) return;
+    const keys = new Set<string>();
+    for (const hunk of current.current.file.hunks)
+      for (const row of hunk.rows) {
+        if (current.current.selections[hunk.id]?.includes(row.index))
+          keys.add(
+            `${row.raw[0]}:${row.raw[0] === "-" ? row.oldLine : row.newLine}`,
+          );
+      }
+    shadow
+      .querySelectorAll<HTMLElement>("[data-line], [data-column-number]")
+      .forEach((row) => {
+        const kind =
+          row.dataset.lineType === "change-deletion"
+            ? "-"
+            : row.dataset.lineType === "change-addition"
+              ? "+"
+              : "";
+        row.toggleAttribute(
+          "data-fold-selected",
+          !!kind &&
+            keys.has(`${kind}:${row.dataset.line ?? row.dataset.columnNumber}`),
+        );
+      });
+  }, []);
+  useLayoutEffect(paint, [paint, selections, file, style]);
   const fileDiff = useMemo(
     () =>
-      parsePatchFiles(file.patch, `${version}:${file.path}`, true)[0]?.files[0],
-    [file.patch, file.path, version],
+      parsePatchFiles(file.patch, `${renderKey}:${file.path}`, true)[0]
+        ?.files[0],
+    [file.patch, file.path, renderKey],
   );
   useEffect(() => () => stop.current?.(), []);
 
@@ -104,6 +164,7 @@ export function CodeDiff({
         current.current.file.hunks,
         next,
         instance.current.getLineIndex,
+        current.current.style,
       ),
     );
   }, []);
@@ -187,7 +248,7 @@ export function CodeDiff({
     () => ({
       theme: "github-dark",
       themeType: "dark" as const,
-      diffStyle: "unified" as const,
+      diffStyle: style,
       diffIndicators: "classic" as const,
       disableFileHeader: true,
       enableLineSelection: false,
@@ -195,7 +256,11 @@ export function CodeDiff({
       expansionLineCount: 10,
       collapsedContextThreshold: 0,
       lineHoverHighlight: "line" as const,
-      unsafeCSS: separatorCSS,
+      unsafeCSS:
+        separatorCSS +
+        (contextDisabled
+          ? "[data-expand-button], [data-unmodified-lines] { opacity: .35; cursor: wait; }"
+          : ""),
       loadDiffFiles: async () => {
         try {
           return await loadFile(file.path, version);
@@ -214,9 +279,15 @@ export function CodeDiff({
           return;
         }
         instance.current = rendered;
+        container.current = node;
+        paint();
         node.shadowRoot
           ?.querySelectorAll<HTMLElement>("[data-expand-button]")
           .forEach((button) => {
+            button.setAttribute(
+              "aria-disabled",
+              String(current.current.contextDisabled),
+            );
             if (button.hasAttribute("data-fold-control")) return;
             button.setAttribute("data-fold-control", "");
             const direction = button.hasAttribute("data-expand-down")
@@ -230,13 +301,13 @@ export function CodeDiff({
             button.addEventListener("keydown", (event) => {
               if (event.key === "Enter" || event.key === " ") {
                 event.preventDefault();
-                button.click();
+                if (!current.current.contextDisabled) button.click();
               }
             });
           });
       },
     }),
-    [file.path, version, loadFile, onError],
+    [file.path, version, loadFile, onError, style, contextDisabled, paint],
   );
   return (
     <div
@@ -245,9 +316,25 @@ export function CodeDiff({
       tabIndex={0}
       aria-label={`Diff for ${file.path}. Drag code to select lines; press s to squash.`}
       onPointerDown={pointerDown}
+      onClickCapture={(event) => {
+        if (
+          current.current.contextDisabled &&
+          event.nativeEvent
+            .composedPath()
+            .some(
+              (item) =>
+                item instanceof Element &&
+                (item.hasAttribute("data-expand-button") ||
+                  item.hasAttribute("data-unmodified-lines")),
+            )
+        ) {
+          event.preventDefault();
+          event.stopPropagation();
+        }
+      }}
     >
       {fileDiff && (
-        <FileDiff fileDiff={fileDiff} options={options} selectedLines={range} />
+        <FileDiff fileDiff={fileDiff} options={options} selectedLines={null} />
       )}
     </div>
   );

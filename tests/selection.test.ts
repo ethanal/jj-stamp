@@ -114,3 +114,48 @@ test("a short range within a hundred-line hunk never selects the rest", () => {
     long: [45, 46, 47],
   });
 });
+
+test("split selection stays on one side; crossing columns selects aligned rows", () => {
+  const index: GetLineIndexUtility = (line, side = "additions") => {
+    if (line === 11 && side === "deletions") return [10, 10];
+    if (line === 11) return [11, 10];
+    if (line === 12) return [12, 11];
+    return getIndex(line, side);
+  };
+  assert.deepEqual(
+    selectionFromRange(
+      hunks,
+      { start: 11, end: 11, side: "additions" },
+      index,
+      "split",
+    ),
+    { first: [3] },
+  );
+  assert.deepEqual(
+    selectionFromRange(
+      hunks,
+      { start: 11, end: 12, side: "additions" },
+      index,
+      "split",
+    ),
+    { first: [3, 4] },
+  );
+  assert.deepEqual(
+    selectionFromRange(
+      hunks,
+      { start: 11, end: 11, side: "deletions" },
+      index,
+      "split",
+    ),
+    { first: [2] },
+  );
+  assert.deepEqual(
+    selectionFromRange(
+      hunks,
+      { start: 11, end: 11, side: "deletions", endSide: "additions" },
+      index,
+      "split",
+    ),
+    { first: [2, 3] },
+  );
+});

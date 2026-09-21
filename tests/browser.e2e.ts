@@ -32,6 +32,16 @@ const browser = await chromium.launch({
 const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
 const errors: string[] = [],
   mutations: string[] = [];
+const rejectedReads: Array<{ path: string; code: string }> = [];
+page.on("response", async (response) => {
+  if (response.status() === 409) {
+    const body = await response.json().catch(() => ({}));
+    rejectedReads.push({
+      path: new URL(response.url()).pathname,
+      code: body.code,
+    });
+  }
+});
 page.on("pageerror", (error) => errors.push(error.message));
 page.on("console", (message) => {
   if (message.type() === "error") errors.push(message.text());
@@ -67,6 +77,7 @@ async function pressMutation(key: "s" | "u") {
   await page.keyboard.press(key);
   const result = await response;
   assert.equal(result.status(), 200, await result.text());
+  await expect(page.locator(".queue-count")).toHaveCount(0);
   await expect(page.locator('[role="alert"]')).toHaveCount(0);
   return result.json();
 }
@@ -100,6 +111,45 @@ try {
     "✓ Drag actual code (not gutter) → s → immediate @ to @- squash → u undo",
   );
 
+  await expect(page.getByLabel("Working copy line counts")).toHaveText("+8−5");
+  await expect(
+    page.getByTitle("src/notifications.ts", { exact: true }),
+  ).toContainText("+2−2");
+  await page.getByRole("button", { name: "Split", exact: true }).click();
+  await expect(page.locator('[data-diff-type="split"]')).toHaveCount(1);
+  await codeLine(21).click();
+  await expect(page.getByRole("status")).toContainText(
+    "1 changed line selected",
+  );
+  await expect(
+    page.locator(
+      '[data-line][data-line-type="change-addition"][data-fold-selected]',
+    ),
+  ).toHaveCount(1);
+  await expect(
+    page.locator(
+      '[data-line][data-line-type="change-deletion"][data-fold-selected]',
+    ),
+  ).toHaveCount(0);
+  await pressMutation("s");
+  await pressMutation("u");
+  await codeLine(21, "change-deletion").click();
+  await expect(page.getByRole("status")).toContainText(
+    "1 changed line selected",
+  );
+  await pressMutation("s");
+  await pressMutation("u");
+  await drag(codeLine(21, "change-deletion"), codeLine(21));
+  await expect(page.getByRole("status")).toContainText(
+    "2 changed lines selected",
+  );
+  await page.keyboard.press("Escape");
+  await page.getByRole("button", { name: "Stacked", exact: true }).click();
+  await expect(page.locator('[data-diff-type="split"]')).toHaveCount(0);
+  console.log(
+    "✓ Split/Stacked toggle; exact one-side selections, cross-column ranges, and +/- counts",
+  );
+
   await page.getByTitle("tests/notifications.test.ts", { exact: true }).click();
   const hunk = initial.files.find(
     (file) => file.path === "tests/notifications.test.ts",
@@ -129,7 +179,9 @@ try {
     "✓ Exact single-line squash and Shift-click; no whole-hunk selection",
   );
 
-  await page.getByRole("button", { name: "Log", exact: true }).click();
+  await expect(
+    page.getByRole("complementary", { name: "Revision graph" }),
+  ).toBeVisible();
   const actualLog = (await jj(initial.repo.path, ["log", "--limit", "100"]))
     .stdout;
   await expect(page.getByLabel("jj log output")).toHaveText(actualLog);
@@ -137,10 +189,13 @@ try {
   await page.keyboard.press("s");
   await page.waitForTimeout(150);
   assert.equal(mutations.length, previousMutations);
-  await page.keyboard.press("f");
+  await page.getByRole("button", { name: "Toggle log panel" }).click();
+  await expect(page.locator(".log-panel")).toHaveCount(0);
+  await page.keyboard.press("l");
+  await expect(page.locator(".log-panel")).toBeVisible();
   await expect(page.locator(".code-surface")).toBeVisible();
   console.log(
-    "✓ Log tab displays actual jj log graph; hidden selections cannot squash",
+    "✓ Right-side raw jj log, independent of diff, and guarded empty selection",
   );
 
   await page.getByTitle("src/notifications.ts", { exact: true }).click();
@@ -234,7 +289,139 @@ try {
     "✓ Exact 10-line expansion both directions; 3/40 lines squashed from one long hunk",
   );
 
-  await codeLine(longAdditions[0].newLine!).click();
+  // Hold the first POST at the browser edge: UI must move before ANY jj mutation.
+  let releaseFirst!: () => void;
+  const held = new Promise<void>((resolve) => {
+    releaseFirst = resolve;
+  });
+  const queuedRequests: Array<{ version: string; selections: unknown }> = [];
+  await page.route("**/api/squash-lines", async (route) => {
+    queuedRequests.push(route.request().postDataJSON());
+    if (queuedRequests.length === 1) await held;
+    await route.continue();
+  });
+  const queueLines = longAdditions.slice(4, 7);
+  await codeLine(queueLines[0].newLine!).click();
+  await page.keyboard.press("s");
+  await expect(page.getByRole("status")).toContainText("1 queued");
+  await expect(codeLine(queueLines[0].newLine!)).toHaveCount(0);
+  await expect(page.getByLabel("Working copy line counts")).toHaveText("+39−0");
+  assert.equal(
+    (await service.getState()).files.find(
+      (file) => file.path === "src/long.ts",
+    )!.additions,
+    40,
+  );
+  await codeLine(queueLines[1].newLine!).click();
+  await page.keyboard.press("s");
+  await expect(page.getByRole("status")).toContainText("2 queued");
+  await expect(codeLine(queueLines[1].newLine!)).toHaveCount(0);
+  await expect(page.getByLabel("Working copy line counts")).toHaveText("+38−0");
+  assert.equal(queuedRequests.length, 1, "only one mutation may be in flight");
+  await expect(
+    page
+      .getByRole("button", { name: "Show 10 lines above", exact: true })
+      .first(),
+  ).toHaveAttribute("aria-disabled", "true");
+  // A new selection must survive earlier operations being acknowledged.
+  await codeLine(queueLines[2].newLine!).click();
+  await page.getByRole("button", { name: "Split", exact: true }).click();
+  await expect(page.getByRole("status")).toContainText(
+    "1 changed line selected",
+  );
+  await expect(page.locator("[data-line][data-fold-selected]")).toHaveCount(1);
+  releaseFirst();
+  await expect(page.locator(".queue-count")).toHaveCount(0, { timeout: 15000 });
+  await expect(page.getByRole("status")).toContainText(
+    "1 changed line selected",
+  );
+  assert.equal(queuedRequests.length, 2);
+  assert.notEqual(
+    queuedRequests[0].version,
+    queuedRequests[1].version,
+    "second job uses newly acknowledged version",
+  );
+  await page.getByRole("button", { name: "Stacked", exact: true }).click();
+  await expect(page.getByRole("status")).toContainText(
+    "1 changed line selected",
+  );
+  await pressMutation("s");
+  assert.equal(
+    (await service.getState()).files.find(
+      (file) => file.path === "src/long.ts",
+    )!.additions,
+    37,
+  );
+  await page.unroute("**/api/squash-lines");
+  console.log(
+    "✓ Instant speculative rows/counts, FIFO, fresh-version remapping, and selection survives ACKs/layout changes",
+  );
+
+  // First queued operation succeeds, second fails, third must never be dispatched.
+  const failState = await service.getState();
+  const failLines = failState.files
+    .find((file) => file.path === "src/long.ts")!
+    .hunks.flatMap((h) => h.rows)
+    .filter((row) => row.raw[0] === "+")
+    .slice(0, 3);
+  let releaseFailure!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    releaseFailure = resolve;
+  });
+  let failureRequests = 0;
+  await page.route("**/api/squash-lines", async (route) => {
+    failureRequests++;
+    if (failureRequests === 1) {
+      await gate;
+      await route.continue();
+    } else {
+      await route.fulfill({
+        status: 503,
+        contentType: "application/json",
+        body: JSON.stringify({ error: "Injected queue failure" }),
+      });
+    }
+  });
+  for (const row of failLines) {
+    await codeLine(row.newLine!).click();
+    await page.keyboard.press("s");
+  }
+  await expect(page.getByRole("status")).toContainText("3 queued");
+  await expect(page.getByLabel("Working copy line counts")).toHaveText("+34−0");
+  releaseFailure();
+  await expect(page.getByRole("alert")).toContainText(
+    "Injected queue failure",
+    { timeout: 15000 },
+  );
+  await expect(page.getByRole("status")).toContainText("Queue stopped");
+  await expect(page.getByLabel("Working copy line counts")).toHaveText("+36−0");
+  assert.equal(
+    failureRequests,
+    2,
+    "failed second job is not retried; third is canceled",
+  );
+  await expect(codeLine(failLines[1].newLine!)).toBeVisible();
+  await expect(codeLine(failLines[2].newLine!)).toBeVisible();
+  assert.equal(
+    (await service.getState()).files.find(
+      (file) => file.path === "src/long.ts",
+    )!.additions,
+    36,
+  );
+  await page.unroute("**/api/squash-lines");
+  // The deliberate HTTP failure is the only permitted console resource error.
+  const expectedError = errors.findIndex((error) => error.includes("503"));
+  if (expectedError >= 0) errors.splice(expectedError, 1);
+  await page.keyboard.press("r");
+  await expect(page.getByRole("alert")).toHaveCount(0);
+  await expect(page.getByRole("status")).toContainText(
+    "Drag code to select lines",
+  );
+  console.log(
+    "✓ Failure stops FIFO, cancels unsent jobs, and reloads actual diff/counts without replay",
+  );
+
+  await codeLine(failLines[1].newLine!).click();
   await page.keyboard.press("Escape");
   await expect(page.getByRole("status")).toContainText(
     "Drag code to select lines",
@@ -251,6 +438,18 @@ try {
   );
   await page.screenshot({ path: path.join(dataDir, "minimal-mobile.png") });
   assert(mutations.every((endpoint) => endpoint === "/api/squash-lines"));
+  // Fixture edits intentionally race an outstanding read-only graph refresh.
+  // Any 409 must be that guard, never an unexpected mutation/context failure.
+  for (const rejected of rejectedReads)
+    assert.deepEqual(rejected, { path: "/api/log", code: "STALE_STATE" });
+  if (rejectedReads.length) {
+    for (let i = 0; i < rejectedReads.length; i++) {
+      const index = errors.findIndex((error) =>
+        error.includes("409 (Conflict)"),
+      );
+      if (index >= 0) errors.splice(index, 1);
+    }
+  }
   assert.deepEqual(errors, []);
   console.log(
     "✓ Escape, guarded shortcuts, mobile layout, zero confirmation/preview requests",

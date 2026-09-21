@@ -106,6 +106,7 @@ export interface ServiceOptions {
   dataDir?: string;
   repoPath?: string;
   toolRunner?: typeof run;
+  jjRunner?: typeof jj;
 }
 const hash = (value: string) =>
   createHash("sha256").update(value).digest("hex");
@@ -146,11 +147,16 @@ export class ReviewService {
   private active?: Active;
   private journal: Journal = {};
   private plans = new Map<string, Plan>();
+  // Commit IDs pin both the tree and its parent(s). Never cache mutable revsets,
+  // workspace snapshots, operation heads, conflicts, or configuration decisions.
+  private fileCache = new Map<string, ReviewFile[]>();
+  private jjRunner: typeof jj;
   readonly dataDir: string;
   private repoPath?: string;
   private toolRunner: typeof run;
   constructor(options: ServiceOptions = {}) {
     this.toolRunner = options.toolRunner ?? run;
+    this.jjRunner = options.jjRunner ?? jj;
     this.dataDir = options.dataDir ?? path.join(projectRoot, ".data");
     this.repoPath = options.repoPath ?? process.env.JJ_REPO;
   }
@@ -182,7 +188,7 @@ export class ReviewService {
       : (manifest ?? { path: await createDemo(this.dataDir), demo: true });
     if (typeof active.path !== "string" || typeof active.demo !== "boolean")
       throw new Error("Invalid active repository manifest.");
-    const root = (await jj(active.path, ["root"])).stdout.trim();
+    const root = (await this.jjRunner(active.path, ["root"])).stdout.trim();
     active.path = await realpath(root);
     // A demo claim must be within our dedicated data directory, never a user repo.
     if (
@@ -200,7 +206,7 @@ export class ReviewService {
   }
   private async operation(): Promise<Operation> {
     const output = (
-      await jj(this.root, [
+      await this.jjRunner(this.root, [
         "op",
         "log",
         "--no-graph",
@@ -223,7 +229,7 @@ export class ReviewService {
   }
   private async revisions(revset: string): Promise<Revision[]> {
     const output = (
-      await jj(this.root, [
+      await this.jjRunner(this.root, [
         "log",
         "--no-graph",
         "-r",
@@ -242,16 +248,13 @@ export class ReviewService {
       return { changeId, commitId, description };
     });
   }
-  private async assertNoConflicts(): Promise<void> {
-    if ((await this.revisions("conflicts()")).length)
-      throw new ApiError(
-        409,
-        "CONFLICTED_REPO",
-        "This repository contains conflicted revisions. Resolve them with jj before reviewing or squashing.",
-      );
-  }
   private async files(source: string): Promise<ReviewFile[]> {
-    const diff = (await jj(this.root, ["diff", "--git", "-r", source])).stdout;
+    const key = `${this.root}:${source}`;
+    const cached = this.fileCache.get(key);
+    if (cached) return structuredClone(cached);
+    const diff = (
+      await this.jjRunner(this.root, ["diff", "--git", "-r", source])
+    ).stdout;
     const sections = diff.split(/(?=^diff --git )/m).filter(Boolean);
     const files: ReviewFile[] = [];
     for (const patch of sections) {
@@ -314,26 +317,82 @@ export class ReviewService {
       throw new Error(
         "Duplicate hunk IDs across files; refusing ambiguous selections.",
       );
+    // Do not retain transient tool failures or unsupported interpretations.
+    if (files.every((file) => !file.unsupported)) {
+      if (this.fileCache.size >= 16)
+        this.fileCache.delete(this.fileCache.keys().next().value!);
+      this.fileCache.set(key, structuredClone(files));
+    }
     return files;
   }
   private async readState(allowConflicts = false): Promise<State> {
     await this.init();
-    await jj(this.root, ["status"]); // Snapshot BEFORE acquiring the operation token.
+    await this.jjRunner(this.root, ["status"]); // Snapshot BEFORE acquiring the operation token.
     const operation = await this.operation();
-    if (!allowConflicts) await this.assertNoConflicts();
-    const sources = await this.revisions("@");
+    // One live revset evaluation replaces five separate jj processes. Evaluate
+    // these even on a diff-cache hit: config-only immutable-head changes do not
+    // necessarily create a repository operation.
+    const metadata = (
+      await this.jjRunner(this.root, [
+        "log",
+        "--no-graph",
+        "-r",
+        "@ | (mutable() & ::@) | @- | conflicts()",
+        "-T",
+        revisionTemplate.replace(' ++ "\\n"', "") +
+          ' ++ "\\t" ++ json(self.contained_in("@"))' +
+          ' ++ "\\t" ++ json(self.contained_in("mutable() & ::@ ~ @"))' +
+          ' ++ "\\t" ++ json(self.contained_in("@-"))' +
+          ' ++ "\\t" ++ json(self.contained_in("conflicts()"))' +
+          ' ++ "\\t" ++ json(self.contained_in("mutable()")) ++ "\\n"',
+      ])
+    ).stdout
+      .trim()
+      .split("\n")
+      .filter(Boolean)
+      .map((line) => {
+        const [
+          changeId,
+          commitId,
+          description,
+          source,
+          target,
+          parent,
+          conflict,
+          mutable,
+        ] = line.split("\t").map((value) => JSON.parse(value));
+        if (!/^[k-z]+$/.test(changeId) || !/^[0-9a-f]{40,64}$/.test(commitId))
+          throw new Error("Unrecognized revision identity.");
+        return {
+          revision: { changeId, commitId, description } as Revision,
+          source,
+          target,
+          parent,
+          conflict,
+          mutable,
+        };
+      });
+    if (!allowConflicts && metadata.some((entry) => entry.conflict))
+      throw new ApiError(
+        409,
+        "CONFLICTED_REPO",
+        "This repository contains conflicted revisions. Resolve them with jj before reviewing or squashing.",
+      );
+    const sources = metadata
+      .filter((entry) => entry.source)
+      .map((entry) => entry.revision);
     if (sources.length !== 1)
       throw new Error("Current workspace must resolve to one source revision.");
     const source = sources[0];
-    const mutableSource = await this.revisions(
-      `mutable() & ${source.commitId}`,
+    const mutableSource = metadata.filter(
+      (entry) => entry.source && entry.mutable,
     );
     const targets = mutableSource.length
-      ? await this.revisions(
-          `mutable() & ::${source.commitId} ~ ${source.commitId}`,
-        )
+      ? metadata.filter((entry) => entry.target).map((entry) => entry.revision)
       : [];
-    const parents = await this.revisions(`${source.commitId}-`);
+    const parents = metadata
+      .filter((entry) => entry.parent)
+      .map((entry) => entry.revision);
     const parent =
       parents.length === 1
         ? (targets.find((target) => target.commitId === parents[0].commitId) ??
@@ -347,7 +406,7 @@ export class ReviewService {
           ? "The immediate parent is immutable; squashing into an older ancestor is not allowed."
           : undefined;
     const files = await this.files(source.commitId);
-    await jj(this.root, ["status"]);
+    await this.jjRunner(this.root, ["status"]);
     if (
       (await this.operation()).id !== operation.id ||
       !same(await this.revisions("@"), sources)
@@ -395,7 +454,8 @@ export class ReviewService {
     return this.serial(async () => {
       const before = await this.readState();
       // Deliberately use jj's configured, real graph output, not an app template.
-      const output = (await jj(this.root, ["log", "--limit", "100"])).stdout;
+      const output = (await this.jjRunner(this.root, ["log", "--limit", "100"]))
+        .stdout;
       this.requireVersion(await this.readState(), before.version);
       return { version: before.version, output };
     });
@@ -425,7 +485,7 @@ export class ReviewService {
       const read = async (revision: string) => ({
         name: file.path,
         contents: (
-          await jj(this.root, [
+          await this.jjRunner(this.root, [
             "file",
             "show",
             "-r",
@@ -469,11 +529,25 @@ export class ReviewService {
           "SQUASH_UNAVAILABLE",
           state.squashUnavailable ?? "No mutable immediate parent.",
         );
-      const preview = await this.previewInternal(
-        { ...input, target: state.parent.changeId },
+      const preview = await this.prepare(state, {
+        ...input,
+        target: state.parent.changeId,
+      });
+      // Direct requests never expose a token or yield the serial queue. Validate
+      // the exact pinned preview once, then snapshot/recheck before journaling.
+      this.requireVersion(await this.readState(), state.version);
+      return this.executeSquash(
+        {
+          ...preview,
+          token: "",
+          version: state.version,
+          source: state.source,
+          target: state.parent,
+          selections: structuredClone(input.selections),
+          expires: Date.now(),
+        },
         state,
       );
-      return this.squashInternal(preview.token);
     });
   }
   private requireVersion(state: State, version: string) {
@@ -655,6 +729,12 @@ export class ReviewService {
     )
       stale();
     this.requireVersion(await this.readState(), before.version);
+    return this.executeSquash(plan, before);
+  }
+  private async executeSquash(
+    plan: Plan,
+    before: State,
+  ): Promise<{ state: State; output: string; warning?: string }> {
     this.journal = {
       pending: {
         beforeOperation: before.operation,
@@ -790,7 +870,7 @@ export class ReviewService {
         )
       )
         stale();
-      await jj(this.root, ["status"]);
+      await this.jjRunner(this.root, ["status"]);
       if ((await this.operation()).id !== undo.operation) stale();
       this.journal = {
         pending: {
@@ -803,7 +883,11 @@ export class ReviewService {
       this.plans.clear();
       let result;
       try {
-        result = await jj(this.root, ["op", "revert", undo.operation]);
+        result = await this.jjRunner(this.root, [
+          "op",
+          "revert",
+          undo.operation,
+        ]);
       } catch (error) {
         return this.failedMutation(error, undo.operation);
       }

@@ -1,8 +1,17 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import { createRoot } from "react-dom/client";
 import type { FileDiffLoadedFiles, SelectedLineRange } from "@pierre/diffs";
 import type { RepoState, Selections } from "./types";
 import { CodeDiff } from "./CodeDiff";
+import { refsFromSelection, specsForRefs, type RowRef } from "./optimistic";
+import { SquashQueue } from "./squash-queue";
 import "@fontsource/ibm-plex-mono/400.css";
 import "@fontsource/ibm-plex-mono/500.css";
 import "./styles.css";
@@ -28,153 +37,221 @@ async function api<T>(route: string, body?: unknown): Promise<T> {
 }
 const loadFile = (path: string, version: string) =>
   api<FileDiffLoadedFiles>("file", { path, version });
-const short = (id?: string) => id?.slice(0, 8) ?? "—";
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
-
+function Counts({
+  additions,
+  deletions,
+  label,
+}: {
+  additions: number;
+  deletions: number;
+  label?: string;
+}) {
+  return (
+    <span className="line-counts" aria-label={label}>
+      <span className="added">+{additions}</span>
+      <span className="removed">−{deletions}</span>
+    </span>
+  );
+}
 function App() {
-  const [state, setState] = useState<RepoState | null>(null);
-  const [view, setView] = useState<"files" | "log">("files");
+  const [queue] = useState(
+    () =>
+      new SquashQueue({
+        squash: (input) => api("squash-lines", input),
+        readState: () => api<RepoState>("state"),
+      }),
+  );
+  const queued = useSyncExternalStore(queue.subscribe, queue.getSnapshot);
+  const state = queued.view;
   const [activePath, setActivePath] = useState("");
   const [range, setRange] = useState<SelectedLineRange | null>(null);
-  const [selections, setSelections] = useState<Selections>({});
+  const [picked, setPicked] = useState<RowRef[]>([]);
   const [dragging, setDragging] = useState(false);
   const [busy, setBusy] = useState("");
-  const [error, setError] = useState("");
+  const [localError, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [log, setLog] = useState("");
   const [logLoading, setLogLoading] = useState(false);
+  const [showLog, setShowLog] = useState(true);
+  const [style, setStyle] = useState<"unified" | "split">(() => {
+    try {
+      return localStorage.getItem("fold.diff-style") === "split"
+        ? "split"
+        : "unified";
+    } catch {
+      return "unified";
+    }
+  });
   const lock = useRef(false);
   const scroll = useRef<HTMLDivElement>(null);
   const file =
     state?.files.find((file) => file.path === activePath) ?? state?.files[0];
+  const selections = useMemo<Selections>(() => {
+    if (!state || !picked.length) return {};
+    try {
+      return Object.fromEntries(
+        specsForRefs(state, picked).map((spec) => [spec.id, spec.lines]),
+      );
+    } catch {
+      return {};
+    }
+  }, [state, picked]);
   const count = Object.values(selections).reduce(
     (sum, lines) => sum + lines.length,
     0,
   );
+  const working = !!busy || queued.recovering;
+  const error = localError || queued.error;
   const clear = useCallback(() => {
     setRange(null);
-    setSelections({});
+    setPicked([]);
     setNotice("");
   }, []);
-  const accept = useCallback((next: RepoState) => {
-    setState(next);
-    setRange(null);
-    setSelections({});
-    setActivePath((current) =>
-      next.files.some((file) => file.path === current)
-        ? current
-        : (next.files[0]?.path ?? ""),
-    );
-  }, []);
+  const replace = useCallback(
+    (next: RepoState) => {
+      queue.replace(next);
+      clear();
+      setActivePath((current) =>
+        next.files.some((file) => file.path === current)
+          ? current
+          : (next.files[0]?.path ?? ""),
+      );
+    },
+    [queue, clear],
+  );
   const refresh = useCallback(async () => {
-    if (lock.current) return;
+    const current = queue.getSnapshot();
+    if (lock.current || current.pending || current.recovering) return;
     lock.current = true;
     setBusy("refreshing");
     setError("");
     setNotice("");
     try {
-      accept(await api<RepoState>("state"));
+      replace(await api<RepoState>("state"));
     } catch (error) {
       setError((error as Error).message);
     } finally {
       lock.current = false;
       setBusy("");
     }
-  }, [accept]);
+  }, [queue, replace]);
   useEffect(() => {
     void refresh();
   }, [refresh]);
   useEffect(() => {
-    if (view !== "log" || !state) return;
+    try {
+      localStorage.setItem("fold.diff-style", style);
+    } catch {
+      /* Preference storage is optional. */
+    }
+  }, [style]);
+  useEffect(() => {
+    if (!showLog || !queued.confirmed || queued.pending || queued.recovering)
+      return;
     let cancelled = false;
-    setLogLoading(true);
-    api<{ version: string; output: string }>("log")
-      .then((result) => {
-        if (!cancelled) setLog(result.output);
-      })
-      .catch((error) => {
-        if (!cancelled) setError(error.message);
-      })
-      .finally(() => {
-        if (!cancelled) setLogLoading(false);
-      });
+    // Don't put graph reads in front of a burst of interactive squash requests.
+    const timer = setTimeout(() => {
+      setLogLoading(true);
+      api<{ version: string; output: string }>("log")
+        .then((result) => {
+          if (!cancelled) setLog(result.output);
+        })
+        .catch((error) => {
+          if (!cancelled) setError(error.message);
+        })
+        .finally(() => {
+          if (!cancelled) setLogLoading(false);
+        });
+    }, 120);
     return () => {
       cancelled = true;
+      clearTimeout(timer);
     };
-  }, [view, state?.version]);
+  }, [queued.confirmed?.version, queued.pending, queued.recovering, showLog]);
   useEffect(() => {
     scroll.current?.scrollTo(0, 0);
-  }, [activePath, view]);
-  const switchView = useCallback(
-    (next: "files" | "log") => {
-      if (lock.current) return;
-      clear();
-      setView(next);
-    },
-    [clear],
-  );
+  }, [file?.path]);
+  useEffect(() => {
+    if (queued.halted) clear();
+  }, [queued.halted, clear]);
+  useEffect(() => {
+    if (!queued.pending && !queued.recovering) return;
+    const warn = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = "";
+    };
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, [queued.pending, queued.recovering]);
   const selectFile = useCallback(
     (path: string) => {
-      if (lock.current) return;
+      if (lock.current || queue.getSnapshot().recovering) return;
       clear();
-      setView("files");
       setActivePath(path);
     },
-    [clear],
+    [clear, queue],
   );
   const select = useCallback(
     (next: SelectedLineRange, selected: Selections) => {
-      if (lock.current) return;
-      setRange(next);
-      setSelections(selected);
-      setNotice("");
+      const current = queue.getSnapshot();
+      if (lock.current || current.recovering || !current.view) return;
+      try {
+        setPicked(refsFromSelection(current.view, selected));
+        setRange(next);
+        setNotice("");
+      } catch (error) {
+        setError((error as Error).message);
+        clear();
+      }
     },
-    [],
+    [queue, clear],
   );
-  const squash = useCallback(async () => {
-    if (lock.current || dragging || !count || !state || view !== "files")
+  const squash = useCallback(() => {
+    const current = queue.getSnapshot();
+    if (
+      lock.current ||
+      dragging ||
+      !count ||
+      !current.view ||
+      current.recovering ||
+      current.halted
+    )
       return;
-    if (!state.parent) {
+    if (!current.view.parent) {
       setError(
-        state.squashUnavailable || "The working copy needs one mutable parent.",
+        current.view.squashUnavailable ||
+          "The working copy needs one mutable parent.",
       );
       return;
     }
-    lock.current = true;
-    setBusy("squashing");
     setError("");
     setNotice("");
     try {
-      const result = await api<{ state: RepoState; warning?: string }>(
-        "squash-lines",
-        {
-          version: state.version,
-          selections: Object.entries(selections).map(([id, lines]) => ({
-            id,
-            lines,
-          })),
-        },
-      );
-      accept(result.state);
-      setNotice(`${plural(count, "line")} squashed into @-`);
-      if (result.warning) setError(result.warning);
+      queue.enqueue(picked);
+      clear();
     } catch (error) {
       setError((error as Error).message);
-    } finally {
-      lock.current = false;
-      setBusy("");
     }
-  }, [state, selections, count, dragging, view, accept]);
+  }, [queue, picked, count, dragging, clear]);
   const undo = useCallback(async () => {
-    if (lock.current || dragging || !state?.canUndo) return;
+    const current = queue.getSnapshot();
+    if (
+      lock.current ||
+      dragging ||
+      current.pending ||
+      current.recovering ||
+      !current.confirmed?.canUndo
+    )
+      return;
     lock.current = true;
     setBusy("undoing");
     setError("");
     try {
       const result = await api<{ state: RepoState }>("undo", {
-        version: state.version,
+        version: current.confirmed.version,
       });
-      accept(result.state);
+      replace(result.state);
       setNotice("Squash undone");
     } catch (error) {
       setError((error as Error).message);
@@ -182,18 +259,24 @@ function App() {
       lock.current = false;
       setBusy("");
     }
-  }, [state, dragging, accept]);
+  }, [queue, dragging, replace]);
   const reset = useCallback(async () => {
-    if (lock.current || !state?.repo.demo) return;
+    const current = queue.getSnapshot();
+    if (
+      lock.current ||
+      current.pending ||
+      current.recovering ||
+      !current.confirmed?.repo.demo
+    )
+      return;
     lock.current = true;
     setBusy("resetting");
     setError("");
     try {
       const result = await api<{ state: RepoState }>("reset", {
-        version: state.version,
+        version: current.confirmed.version,
       });
-      accept(result.state);
-      setView("files");
+      replace(result.state);
       setNotice("Fresh demo");
     } catch (error) {
       setError((error as Error).message);
@@ -201,7 +284,7 @@ function App() {
       lock.current = false;
       setBusy("");
     }
-  }, [state, accept]);
+  }, [queue, replace]);
   useEffect(() => {
     const key = (event: KeyboardEvent) => {
       if (
@@ -223,7 +306,7 @@ function App() {
       switch (event.key.toLowerCase()) {
         case "s":
           event.preventDefault();
-          void squash();
+          squash();
           break;
         case "u":
           event.preventDefault();
@@ -235,27 +318,29 @@ function App() {
           break;
         case "l":
           event.preventDefault();
-          switchView("log");
+          setShowLog((value) => !value);
           break;
         case "f":
           event.preventDefault();
-          switchView("files");
+          scroll.current?.querySelector<HTMLElement>(".code-surface")?.focus();
           break;
         case "escape":
           if (!lock.current && !dragging) {
             clear();
             setError("");
+            queue.clearError();
           }
           break;
       }
     };
     document.addEventListener("keydown", key);
     return () => document.removeEventListener("keydown", key);
-  }, [squash, undo, refresh, switchView, clear, dragging]);
+  }, [squash, undo, refresh, queue, clear, dragging]);
   const additions =
     state?.files.reduce((sum, file) => sum + file.additions, 0) ?? 0;
   const deletions =
     state?.files.reduce((sum, file) => sum + file.deletions, 0) ?? 0;
+  const idleActionDisabled = working || queued.pending > 0;
   return (
     <div className="app">
       <header className="topbar">
@@ -263,87 +348,86 @@ function App() {
         <span className="divider">/</span>
         <span>{state?.repo.name ?? "…"}</span>
         <span className="source-description">{state?.source.description}</span>
-        <span className="revision">
-          @ <span>→</span> @-
+        <span className="commit-totals">
+          <span>@</span>
+          <Counts
+            additions={additions}
+            deletions={deletions}
+            label="Working copy line counts"
+          />
         </span>
-        <button onClick={refresh} disabled={!!busy} title="Refresh (r)">
+        <button
+          onClick={() => setShowLog((value) => !value)}
+          aria-label="Toggle log panel"
+          aria-pressed={showLog}
+          title="Toggle log panel (l)"
+        >
+          Log
+        </button>
+        <button
+          onClick={refresh}
+          disabled={idleActionDisabled}
+          title="Refresh (r)"
+        >
           refresh <kbd>r</kbd>
         </button>
       </header>
-      <div className="workspace">
+      <div className={`workspace ${showLog ? "with-log" : ""}`}>
         <aside className="sidebar">
-          <nav className="view-tabs" aria-label="View">
-            <button
-              className={view === "files" ? "active" : ""}
-              aria-pressed={view === "files"}
-              onClick={() => switchView("files")}
-            >
-              Files <span>{state?.files.length ?? 0}</span>
-            </button>
-            <button
-              className={view === "log" ? "active" : ""}
-              aria-pressed={view === "log"}
-              onClick={() => switchView("log")}
-            >
-              Log
-            </button>
-          </nav>
+          <div className="sidebar-heading">
+            Files <span>{state?.files.length ?? 0}</span>
+          </div>
           <div className="sidebar-content">
-            {view === "files" ? (
-              <nav aria-label="Changed files" className="file-list">
-                {state?.files.map((item, index, files) => {
-                  const folder = item.path.includes("/")
-                    ? item.path.slice(0, item.path.lastIndexOf("/") + 1)
-                    : "";
-                  const previous = files[index - 1]?.path;
-                  const sameFolder =
-                    previous?.slice(0, previous.lastIndexOf("/") + 1) ===
-                    folder;
-                  return (
-                    <div key={item.path}>
-                      {folder && !sameFolder && (
-                        <div className="folder">{folder}</div>
-                      )}
-                      <button
-                        className={`file-item ${file?.path === item.path ? "active" : ""}`}
-                        aria-current={
-                          file?.path === item.path ? "true" : undefined
-                        }
-                        onClick={() => selectFile(item.path)}
-                        title={item.path}
-                        disabled={!!busy}
-                      >
-                        <span className="file-status">
-                          {item.unsupported
-                            ? "·"
-                            : item.patch.includes("new file mode")
-                              ? "A"
-                              : item.patch.includes("deleted file mode")
-                                ? "D"
-                                : "M"}
-                        </span>
-                        <span className="filename">
-                          {item.path.split("/").at(-1)}
-                        </span>
-                        <span className="file-count">
-                          {item.additions + item.deletions}
-                        </span>
-                      </button>
-                    </div>
-                  );
-                })}
-              </nav>
-            ) : (
-              <div className="log-label">$ jj log</div>
-            )}
+            <nav aria-label="Changed files" className="file-list">
+              {state?.files.map((item, index, files) => {
+                const folder = item.path.includes("/")
+                  ? item.path.slice(0, item.path.lastIndexOf("/") + 1)
+                  : "";
+                const previous = files[index - 1]?.path;
+                const sameFolder =
+                  previous?.slice(0, previous.lastIndexOf("/") + 1) === folder;
+                return (
+                  <div key={item.path}>
+                    {folder && !sameFolder && (
+                      <div className="folder">{folder}</div>
+                    )}
+                    <button
+                      className={`file-item ${file?.path === item.path ? "active" : ""}`}
+                      aria-current={
+                        file?.path === item.path ? "true" : undefined
+                      }
+                      onClick={() => selectFile(item.path)}
+                      title={item.path}
+                      disabled={working}
+                    >
+                      <span className="file-status">
+                        {item.unsupported
+                          ? "·"
+                          : item.patch.includes("new file mode")
+                            ? "A"
+                            : item.patch.includes("deleted file mode")
+                              ? "D"
+                              : "M"}
+                      </span>
+                      <span className="filename">
+                        {item.path.split("/").at(-1)}
+                      </span>
+                      <Counts
+                        additions={item.additions}
+                        deletions={item.deletions}
+                      />
+                    </button>
+                  </div>
+                );
+              })}
+            </nav>
           </div>
           <div className="sidebar-footer">
-            <span className="added">+{additions}</span>
-            <span className="removed">−{deletions}</span>
+            <span>@ → @-</span>
             {state?.repo.demo && (
               <button
                 onClick={reset}
-                disabled={!!busy}
+                disabled={idleActionDisabled}
                 title="Create a fresh demo repository; keep the old one on disk"
               >
                 reset demo
@@ -353,24 +437,52 @@ function App() {
         </aside>
         <main className="viewer">
           <div className="file-bar">
-            <span>
-              {view === "log" ? "jj log" : (file?.path ?? "Working copy")}
-            </span>
-            <span className="file-bar-meta">
-              {view === "files" && file ? (
-                <>
-                  <span className="added">+{file.additions}</span>
-                  <span className="removed">−{file.deletions}</span>
-                </>
-              ) : (
-                short(state?.source.changeId)
+            <span>{file?.path ?? "Working copy"}</span>
+            <div className="file-bar-tools">
+              {file && (
+                <Counts additions={file.additions} deletions={file.deletions} />
               )}
-            </span>
+              <div className="layout-toggle" aria-label="Diff layout">
+                <button
+                  onClick={() => setStyle("unified")}
+                  disabled={dragging}
+                  aria-pressed={style === "unified"}
+                  className={style === "unified" ? "active" : ""}
+                >
+                  Stacked
+                </button>
+                <button
+                  onClick={() => setStyle("split")}
+                  disabled={dragging}
+                  aria-pressed={style === "split"}
+                  className={style === "split" ? "active" : ""}
+                >
+                  Split
+                </button>
+              </div>
+            </div>
           </div>
           {error && (
             <div className="error" role="alert">
-              <span>{error}</span>
-              <button onClick={() => setError("")} aria-label="Dismiss error">
+              <span>
+                {error}
+                {queued.halted && (
+                  <button
+                    className="retry"
+                    onClick={refresh}
+                    disabled={idleActionDisabled}
+                  >
+                    refresh to continue
+                  </button>
+                )}
+              </span>
+              <button
+                onClick={() => {
+                  setError("");
+                  queue.clearError();
+                }}
+                aria-label="Dismiss error"
+              >
                 ×
               </button>
             </div>
@@ -382,15 +494,11 @@ function App() {
                   ? "Opening repository…"
                   : "Unable to open repository. Press r to retry."}
               </div>
-            ) : view === "log" ? (
-              <pre className="jj-log" aria-label="jj log output">
-                {logLoading ? "Loading…" : log}
-              </pre>
             ) : !file ? (
               <div className="empty">
-                No changes in @.
-                {state.canUndo && (
-                  <button onClick={undo} disabled={!!busy}>
+                {queued.pending ? "All changes queued." : "No changes in @."}
+                {state.canUndo && !queued.pending && (
+                  <button onClick={undo} disabled={working}>
                     undo <kbd>u</kbd>
                   </button>
                 )}
@@ -402,11 +510,15 @@ function App() {
               </div>
             ) : (
               <CodeDiff
-                key={`${state.version}:${file.path}`}
+                key={`${queued.epoch}:${file.path}`}
                 file={file}
-                version={state.version}
+                version={queued.confirmed?.version ?? state.version}
+                renderKey={`${queued.epoch}`}
+                style={style}
+                selections={selections}
                 range={range}
-                disabled={!!busy}
+                disabled={working || queued.halted}
+                contextDisabled={queued.pending > 0 || queued.recovering}
                 onSelection={select}
                 onDragging={setDragging}
                 onError={setError}
@@ -415,40 +527,72 @@ function App() {
             )}
           </div>
         </main>
+        {showLog && (
+          <aside className="log-panel" aria-label="Revision graph">
+            <div className="log-header">
+              <span>jj log</span>
+              <span className="log-status">
+                {queued.pending
+                  ? `${queued.pending} queued`
+                  : logLoading
+                    ? "updating…"
+                    : ""}
+              </span>
+            </div>
+            <pre className="jj-log" aria-label="jj log output">
+              {log || (logLoading ? "Loading…" : "")}
+            </pre>
+          </aside>
+        )}
       </div>
       <footer className="statusbar">
-        <span className={count ? "selection-status" : ""} role="status">
+        <span
+          className={count || queued.pending ? "selection-status" : ""}
+          role="status"
+        >
+          {queued.pending > 0 && (
+            <span className="queue-count">{queued.pending} queued · </span>
+          )}
           {busy
             ? `${busy}…`
-            : count
-              ? `${plural(count, "changed line")} selected`
-              : range
-                ? "Context only — no changed lines"
-                : notice ||
-                  (view === "log"
-                    ? "$ jj log --no-pager"
-                    : "Drag code to select lines")}
+            : queued.recovering
+              ? "Reloading actual repository…"
+              : queued.halted
+                ? "Queue stopped. Refresh to continue."
+                : count
+                  ? `${plural(count, "changed line")} selected`
+                  : range
+                    ? "Context only — no changed lines"
+                    : notice ||
+                      (queued.pending ? "keep selecting" : queued.notice) ||
+                      "Drag code to select lines"}
         </span>
         <div className="shortcuts">
           <button
             onClick={squash}
             disabled={
-              !count || !state?.parent || !!busy || dragging || view !== "files"
+              !count || !state?.parent || working || dragging || queued.halted
             }
             title={
-              state?.squashUnavailable ??
-              "Squash selected lines from @ into @- immediately"
+              state?.squashUnavailable ?? "Queue selected lines from @ into @-"
             }
           >
             <kbd>s</kbd> squash → @-
           </button>
           <button
             onClick={undo}
-            disabled={!state?.canUndo || !!busy || dragging}
+            disabled={
+              !queued.confirmed?.canUndo || idleActionDisabled || dragging
+            }
+            title={
+              queued.pending
+                ? "Wait for queued squashes before undoing"
+                : "Undo last squash"
+            }
           >
             <kbd>u</kbd> undo
           </button>
-          <button onClick={clear} disabled={!range || !!busy || dragging}>
+          <button onClick={clear} disabled={!range || working || dragging}>
             <kbd>esc</kbd> clear
           </button>
         </div>

@@ -1,0 +1,225 @@
+import type { DiffFile, Hunk, RepoState, Row, Selections } from "./types";
+
+/** Coordinates are in the version of the diff in which the selection was made. */
+export type RowRef = {
+  path: string;
+  kind: "+" | "-";
+  line: number;
+  text: string;
+};
+export type SquashSpec = { id: string; lines: number[] };
+
+const key = (ref: RowRef): string =>
+  JSON.stringify([ref.path, ref.kind, ref.line, ref.text]);
+
+function rowRef(path: string, row: Row): RowRef {
+  const kind = row.raw[0];
+  const line = kind === "+" ? row.newLine : row.oldLine;
+  if (
+    (kind !== "+" && kind !== "-") ||
+    !Number.isSafeInteger(line) ||
+    line! < 1
+  )
+    throw new Error(
+      "Selection must identify a changed row with valid source coordinates.",
+    );
+  return { path, kind, line: line!, text: row.raw.slice(1) };
+}
+
+function checkedKeys(refs: RowRef[]): Set<string> {
+  const keys = new Set<string>();
+  for (const ref of refs) {
+    if (
+      !ref ||
+      typeof ref.path !== "string" ||
+      typeof ref.text !== "string" ||
+      (ref.kind !== "+" && ref.kind !== "-") ||
+      !Number.isSafeInteger(ref.line) ||
+      ref.line < 1
+    )
+      throw new Error("Invalid changed-row reference.");
+    const value = key(ref);
+    if (keys.has(value)) throw new Error("Duplicate changed-row reference.");
+    keys.add(value);
+  }
+  return keys;
+}
+
+/** Never silently ignore context, stale IDs, duplicate indices, or unsupported files. */
+export function refsFromSelection(
+  state: RepoState,
+  selections: Selections,
+): RowRef[] {
+  const hunks = new Map<string, { file: DiffFile; hunk: Hunk }>();
+  for (const file of state.files)
+    for (const hunk of file.hunks) {
+      if (hunks.has(hunk.id)) throw new Error("Ambiguous hunk ID.");
+      hunks.set(hunk.id, { file, hunk });
+    }
+  const refs: RowRef[] = [];
+  for (const [id, lines] of Object.entries(selections)) {
+    const entry = hunks.get(id);
+    if (!entry) throw new Error("Selected hunk no longer exists.");
+    if (entry.file.unsupported)
+      throw new Error("Selected file is unsupported.");
+    const seen = new Set<number>();
+    const rowsByIndex = new Map<number, Row>();
+    const ambiguous = new Set<number>();
+    for (const row of entry.hunk.rows) {
+      if (rowsByIndex.has(row.index)) ambiguous.add(row.index);
+      rowsByIndex.set(row.index, row);
+    }
+    for (const index of lines) {
+      if (!Number.isSafeInteger(index) || index < 1 || seen.has(index))
+        throw new Error("Invalid or duplicate selected row index.");
+      seen.add(index);
+      const row = rowsByIndex.get(index);
+      if (!row || ambiguous.has(index))
+        throw new Error("Selected row no longer exists or is ambiguous.");
+      refs.push(rowRef(entry.file.path, row));
+    }
+  }
+  // Also verifies uniqueness across hunks and the exact remapping used at dispatch.
+  specsForRefs(state, refs);
+  return refs;
+}
+
+/** Remap only by the full path/side/source-line/body tuple; never by text alone. */
+export function specsForRefs(state: RepoState, refs: RowRef[]): SquashSpec[] {
+  const wanted = checkedKeys(refs);
+  const matches = new Set<string>();
+  const specs: SquashSpec[] = [];
+  const ids = new Set<string>();
+  for (const file of state.files)
+    for (const hunk of file.hunks) {
+      if (ids.has(hunk.id)) throw new Error("Ambiguous hunk ID.");
+      ids.add(hunk.id);
+      const lines: number[] = [];
+      const indexCounts = new Map<number, number>();
+      for (const row of hunk.rows)
+        indexCounts.set(row.index, (indexCounts.get(row.index) ?? 0) + 1);
+      for (const row of hunk.rows) {
+        if (row.raw[0] !== "+" && row.raw[0] !== "-") continue;
+        const value = key(rowRef(file.path, row));
+        if (!wanted.has(value)) continue;
+        if (file.unsupported) throw new Error("Selected file is unsupported.");
+        if (matches.has(value))
+          throw new Error("Changed-row reference is ambiguous.");
+        if (
+          !Number.isSafeInteger(row.index) ||
+          row.index < 1 ||
+          indexCounts.get(row.index) !== 1
+        )
+          throw new Error(
+            "Changed row has an invalid or ambiguous tool index.",
+          );
+        matches.add(value);
+        lines.push(row.index);
+      }
+      if (lines.length) specs.push({ id: hunk.id, lines });
+    }
+  if (matches.size !== wanted.size)
+    throw new Error(
+      "Selected changes no longer match the repository; refresh before squashing.",
+    );
+  return specs;
+}
+
+/** Context, hunk boundaries, IDs, and metadata deliberately do not participate. */
+export function changeSignature(state: RepoState): string {
+  const keys: string[] = [];
+  for (const file of state.files)
+    for (const hunk of file.hunks)
+      for (const row of hunk.rows)
+        if (row.raw[0] === "+" || row.raw[0] === "-")
+          keys.push(key(rowRef(file.path, row)));
+  return JSON.stringify(keys.sort());
+}
+
+function projectFile(file: DiffFile, selected: Set<string>): DiffFile | null {
+  let delta = 0;
+  let movedAdditions = 0;
+  const hunks: Hunk[] = [];
+  for (const hunk of file.hunks) {
+    const match = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@(.*)$/.exec(
+      hunk.header,
+    );
+    if (!match) throw new Error("Cannot project a malformed hunk header.");
+    const oldCount = Number(match[2] ?? 1),
+      newCount = Number(match[4] ?? 1);
+    const oldFirst = Number(match[1]) + (oldCount === 0 ? 1 : 0) + delta;
+    const newFirst = Number(match[3]) + (newCount === 0 ? 1 : 0);
+    let oldLine = oldFirst,
+      newLine = newFirst;
+    const rows: Row[] = [];
+    for (const row of hunk.rows) {
+      const kind = row.raw[0];
+      if (kind !== " " && kind !== "+" && kind !== "-")
+        throw new Error("Cannot project unsupported patch rows.");
+      const move = kind !== " " && selected.has(key(rowRef(file.path, row)));
+      if (move && kind === "-") {
+        delta--;
+        continue;
+      }
+      let raw = row.raw;
+      if (move && kind === "+") {
+        raw = " " + raw.slice(1);
+        delta++;
+        movedAdditions++;
+      }
+      const next: Row = { index: rows.length + 1, raw };
+      if (raw[0] !== "+") next.oldLine = oldLine++;
+      if (raw[0] !== "-") next.newLine = newLine++;
+      rows.push(next);
+    }
+    if (!rows.some((row) => row.raw[0] === "+" || row.raw[0] === "-")) continue;
+    const oldLength = oldLine - oldFirst,
+      newLength = newLine - newFirst;
+    const header = `@@ -${oldLength ? oldFirst : oldFirst - 1},${oldLength} +${newLength ? newFirst : newFirst - 1},${newLength} @@${match[5]}`;
+    hunks.push({ ...hunk, header, rows });
+  }
+  if (!hunks.length) return null;
+  const isNew = /^--- \/dev\/null$/m.test(file.patch) && movedAdditions === 0;
+  const isDeleted = /^\+\+\+ \/dev\/null$/m.test(file.patch);
+  const prefix = [
+    `diff --git a/${file.path} b/${file.path}`,
+    ...(isNew ? ["new file mode 100644"] : []),
+    ...(isDeleted ? ["deleted file mode 100644"] : []),
+    `--- ${isNew ? "/dev/null" : `a/${file.path}`}`,
+    `+++ ${isDeleted ? "/dev/null" : `b/${file.path}`}`,
+  ];
+  let additions = 0,
+    deletions = 0;
+  for (const hunk of hunks)
+    for (const row of hunk.rows) {
+      if (row.raw[0] === "+") additions++;
+      if (row.raw[0] === "-") deletions++;
+    }
+  return {
+    ...file,
+    hunks,
+    additions,
+    deletions,
+    patch:
+      [
+        ...prefix,
+        ...hunks.flatMap((hunk) => [
+          hunk.header,
+          ...hunk.rows.map((row) => row.raw),
+        ]),
+      ].join("\n") + "\n",
+  };
+}
+
+/** Move selected changes into the parent without modifying the working/new side. */
+export function projectSquash(state: RepoState, refs: RowRef[]): RepoState {
+  specsForRefs(state, refs);
+  const selected = checkedKeys(refs);
+  const affected = new Set(refs.map((ref) => ref.path));
+  const files = state.files.flatMap((file) => {
+    if (!affected.has(file.path)) return [file];
+    const projected = projectFile(file, selected);
+    return projected ? [projected] : [];
+  });
+  return { ...state, files };
+}
