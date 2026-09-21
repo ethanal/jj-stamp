@@ -5,6 +5,7 @@ import {
   useRef,
   useState,
   useSyncExternalStore,
+  type CSSProperties,
 } from "react";
 import { createRoot } from "react-dom/client";
 import type { FileDiffLoadedFiles, SelectedLineRange } from "@pierre/diffs";
@@ -13,8 +14,17 @@ import { CodeDiff } from "./CodeDiff";
 import { ChangedFilesTree } from "./ChangedFilesTree";
 import { refsFromSelection, specsForRefs, type RowRef } from "./optimistic";
 import { SquashQueue } from "./squash-queue";
+import { useAppearancePreferences } from "./preferences";
+import { SidebarResize } from "./SidebarResize";
+import {
+  ChangeId,
+  ColorSchemePicker,
+  RevisionHeading,
+  revisionPageTitle,
+} from "./ReviewToolbar";
 import "@fontsource/ibm-plex-mono/400.css";
 import "@fontsource/ibm-plex-mono/500.css";
+import "@fontsource/ibm-plex-mono/700.css";
 import "./styles.css";
 
 async function api<T>(route: string, body?: unknown): Promise<T> {
@@ -100,6 +110,14 @@ function SidebarToggle({
   );
 }
 function App() {
+  const {
+    colorScheme,
+    setColorScheme,
+    filesWidth,
+    setFilesWidth,
+    logWidth,
+    setLogWidth,
+  } = useAppearancePreferences();
   const [queue] = useState(
     () =>
       new SquashQueue({
@@ -111,9 +129,7 @@ function App() {
   const state = queued.view;
   const source = queued.confirmed?.source ?? state?.source;
   useEffect(() => {
-    document.title = source
-      ? `${state?.repo.path ?? "jj-stamp"} — ${source.changeId.slice(0, 8)}: ${source.description}`
-      : "jj-stamp";
+    document.title = revisionPageTitle(source, state?.repo.path);
   }, [source?.changeId, source?.description, state?.repo.path]);
   const [activePath, setActivePath] = useState("");
   const [range, setRange] = useState<SelectedLineRange | null>(null);
@@ -239,9 +255,6 @@ function App() {
     };
   }, [queued.confirmed?.version, queued.pending, queued.recovering, showLog]);
   useEffect(() => {
-    scroll.current?.scrollTo(0, 0);
-  }, [file?.path]);
-  useEffect(() => {
     if (queued.halted) clear();
   }, [queued.halted, clear]);
   useEffect(() => {
@@ -258,6 +271,8 @@ function App() {
       if (lock.current || queue.getSnapshot().recovering) return;
       clear();
       setActivePath(path);
+      // Only explicit navigation resets scroll; squash may remove the active file.
+      scroll.current?.scrollTo(0, 0);
     },
     [clear, queue],
   );
@@ -351,6 +366,7 @@ function App() {
         });
         replace(result.state);
         setActivePath(result.state.files[0]?.path ?? "");
+        scroll.current?.scrollTo(0, 0);
       } catch (error) {
         setError((error as Error).message);
       } finally {
@@ -426,23 +442,7 @@ function App() {
         >
           {state?.repo.path ?? "Opening repository…"}
         </span>
-        <span className="source-description" title={source?.description}>
-          {source?.description}
-        </span>
-        <div className="revision-info" aria-label="Reviewed revision">
-          <span>
-            <span className="revision-label">change</span>
-            <code aria-label="Current change ID" title={source?.changeId}>
-              {source?.changeId.slice(0, 8) ?? "—"}
-            </code>
-          </span>
-          <span>
-            <span className="revision-label">commit</span>
-            <code aria-label="Current commit ID" title={source?.commitId}>
-              {source?.commitId.slice(0, 12) ?? "—"}
-            </code>
-          </span>
-        </div>
+        <RevisionHeading source={source} />
         <span className="commit-totals">
           <span>change</span>
           <Counts
@@ -461,11 +461,25 @@ function App() {
       </header>
       <div
         className={`workspace ${showLog ? "with-log" : "log-collapsed"} ${showFiles ? "" : "files-collapsed"}`}
+        style={
+          {
+            "--files-preferred-width": `${filesWidth}px`,
+            "--log-preferred-width": `${logWidth}px`,
+          } as CSSProperties
+        }
       >
         <aside
           className={`sidebar ${showFiles ? "" : "is-collapsed"}`}
           aria-label="Files sidebar"
         >
+          {showFiles && (
+            <SidebarResize
+              side="files"
+              width={filesWidth}
+              onResize={setFilesWidth}
+              disabled={dragging}
+            />
+          )}
           <div className="sidebar-heading">
             {showFiles && (
               <>
@@ -517,6 +531,11 @@ function App() {
           <div className="file-bar">
             <span>{file?.path ?? "Reviewed change"}</span>
             <div className="file-bar-tools">
+              <ColorSchemePicker
+                value={colorScheme}
+                onChange={setColorScheme}
+                disabled={dragging}
+              />
               {file && (
                 <Counts additions={file.additions} deletions={file.deletions} />
               )}
@@ -595,11 +614,12 @@ function App() {
               </div>
             ) : (
               <CodeDiff
-                key={`${queued.epoch}:${file.path}`}
+                key={`${source?.changeId}:${file.path}`}
                 file={file}
                 version={queued.confirmed?.version ?? state.version}
                 renderKey={`${queued.epoch}`}
                 style={style}
+                colorScheme={colorScheme}
                 selections={selections}
                 range={range}
                 disabled={working || queued.halted}
@@ -616,6 +636,14 @@ function App() {
           className={`log-panel ${showLog ? "" : "is-collapsed"}`}
           aria-label="Revision graph"
         >
+          {showLog && (
+            <SidebarResize
+              side="log"
+              width={logWidth}
+              onResize={setLogWidth}
+              disabled={dragging}
+            />
+          )}
           <div className="log-header">
             {showLog && (
               <>
@@ -650,7 +678,7 @@ function App() {
             {log.length
               ? log.map((row, index) => (
                   <span
-                    className="log-row"
+                    className={`log-row${row.revision?.changeId === source?.changeId ? " is-current" : ""}`}
                     key={row.revision?.commitId ?? `graph-${index}`}
                   >
                     <span aria-hidden="true">{row.graph}</span>
@@ -670,14 +698,13 @@ function App() {
                             void selectRevision(row.revision!.changeId)
                           }
                         >
-                          {row.revision.changeId.slice(0, 8)}
+                          <ChangeId revision={row.revision} />
                         </button>{" "}
                         <span title={row.revision.description}>
                           {row.revision.description || "(no description)"}
                         </span>
                       </>
                     )}
-                    {"\n"}
                   </span>
                 ))
               : logLoading
@@ -707,6 +734,12 @@ function App() {
                     : notice ||
                       (queued.pending ? "keep selecting" : queued.notice) ||
                       "Drag code to select lines"}
+        </span>
+        <span
+          className="text-selection-hint"
+          title="Hold Shift and drag code to select text for copying"
+        >
+          Shift+drag to copy text
         </span>
         <div className="shortcuts">
           <button
