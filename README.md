@@ -32,7 +32,9 @@ Or run without installing, from this checkout:
 nix run . -- --repository /path/to/workspace
 ```
 
-The flake bundles the browser assets, Node.js, `jj`, and a pinned `jj-hunk-tool`. No npm installation, global tools, or network access is needed at runtime. Linux browser launch uses `xdg-open`; macOS uses `open`.
+The flake bundles the browser assets, Node.js, `jj`, and `jj-hunk-tool`. The hunk tool is pinned to **`817a3d19cab8ed9bf04ebf64f2f3073fe195d641`** in `nix/jj-hunk-tool.nix`, with fixed source and Cargo dependency hashes; `flake.lock` pins the Nix inputs. The installed wrapper puts its packaged tools ahead of ambient `PATH`, so a different globally installed hunk tool does not replace the tested one.
+
+No npm installation or runtime download of assets or bundled tools is needed. Builds may need network access. Your browser and any external helpers configured in jj (for example, signing tools) are not bundled. Linux browser launch uses bundled `xdg-open`; macOS uses system `open`.
 
 The server binds **only to `127.0.0.1`**, chooses a free port by default, and opens the URL in your browser. Keep the terminal running. **Ctrl-C** stops accepting requests and waits for accepted operations to finish. A failed browser launch leaves the server running and prints the URL.
 
@@ -42,16 +44,17 @@ The flake exposes a default package/app and development shell for x86_64/aarch64
 
 - **Choose a change:** click its ID in the right-hand graph. Immutable changes are disabled. The chosen change is followed by its full change ID through rewrites; moving the working copy or a bookmark does not silently select something else.
 - **See the destination:** the file-sidebar footer shows `source → parent`; hover either ID for its full value. A change with two parents, or an immutable parent, shows an error and cannot be squashed. No older ancestor is substituted.
-- **Select lines:** drag on code or line numbers; Shift-click extends the range. Included context is highlighted but never squashed. Switching changes or files clears the selection.
+- **Select lines:** drag on code or line numbers to select changed lines for squash. **Shift+drag** on code selects native browser text for copying instead; Shift-click does not extend the squash selection. Included context is highlighted but never squashed. Switching changes or files clears the selection.
 - **`s`:** selected changed lines disappear immediately and queue for squash. Real operations run one at a time. Continue selecting while they drain; changing revisions, refreshing, expanding context, and undo wait for an empty queue.
 - **`u`:** undo the last app squash when the queue is empty and the repository is unchanged.
 - **Escape:** clear the selection. **`r`:** refresh. **`f`:** focus the diff. **`l`:** toggle the graph.
 - The file tree supports collapsible folders, arrow-key navigation, Enter to open a file, change-status indicators, and live **`+ / −` counts**. Folder choices survive refresh and squash/undo updates.
 - **Split / Stacked** switches layouts without changing the exact selection. Split drags select aligned rows in both columns. Stacked lets you select an individual addition or deletion.
 - **↑ 10 / ↓ 10** reveals ten context lines at a time.
-- Both sidebars collapse to narrow rails. Sidebar and diff-layout preferences are stored locally in the browser.
+- Both sidebars collapse to narrow rails; drag their inner edges to resize them. Sidebar widths, collapsed states, and diff layout persist in browser `localStorage`.
+- Choose a **color scheme** in the toolbar. The scheme preference also persists in `localStorage` for this browser origin.
 
-The heading and browser tab identify the **full repository path**. The graph is rendered by `jj`, with clickable change IDs and the selected change highlighted. It uses `trunk() | ((tracked_remote_bookmarks() & ~::trunk())::) | (mutable() & mine())::`, plus the selected change, instead of the default log revset or a 100-entry cap. Graph refreshes wait for queued operations to complete and show recorded history without snapshotting the working copy.
+The heading lists the **change ID** (short prefix bolded), **author**, **title**, then **commit ID**. The browser tab reads **`<changeid>: <title> (<full repo path>)`**. The graph is rendered by `jj`, with clickable change IDs and a high-contrast selected-change highlight. It uses `trunk() | ((tracked_remote_bookmarks() & ~::trunk())::) | (mutable() & mine())::`, plus the selected change, instead of the default log revset or a 100-entry cap. Graph refreshes wait for queued operations to complete and show recorded history without snapshotting the working copy.
 
 There is no demo creation or reset endpoint. Test fixtures live only in temporary directories.
 
@@ -85,7 +88,17 @@ npm run build
 npm start -- --repository /path/to/workspace --no-open
 ```
 
-Without Nix, provide Node.js 24+, `jj`, and `jj-hunk-tool` on `PATH`. `npm run build` typechecks and produces **`dist/cli.cjs`** plus **`dist/client/`**. The CLI is bundled, so it does not need `node_modules` at runtime. `npm run dev -- -R /path/to/workspace` rebuilds and runs it; restart after source edits.
+Without Nix, provide Node.js 24+, `jj`, and the **same tested hunk-tool revision** on `PATH`. Install it with Rust/Cargo:
+
+```sh
+cargo install --git https://github.com/mvzink/jj-hunk-tool \
+  --rev 817a3d19cab8ed9bf04ebf64f2f3073fe195d641 --locked jj-hunk-tool
+# Ensure Cargo's bin directory (normally ~/.cargo/bin) is on PATH.
+```
+
+Do not install a moving branch or rely on `jj-hunk-tool --version` to verify the pin: multiple revisions report `0.1.0`. `cargo install --list` records the git source/revision for this installation. Unlike the Nix wrapper, non-Nix runs use the first `jj` and `jj-hunk-tool` on `PATH`; keeping them compatible is your responsibility. The revision and Cargo lockfile pin source dependencies, not your host Rust compiler or `jj` version.
+
+`npm run build` typechecks and produces **`dist/cli.cjs`** plus **`dist/client/`**. The CLI is bundled, so it does not need `node_modules` at runtime. `npm run dev -- -R /path/to/workspace` rebuilds and runs it; restart after source edits.
 
 ```sh
 npm test

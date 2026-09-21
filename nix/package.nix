@@ -43,6 +43,7 @@ buildNpmPackage {
     mkdir -p "$out/lib/jj-stamp" "$out/bin"
     cp dist/cli.cjs "$out/lib/jj-stamp/cli.cjs"
     cp -R dist/client "$out/lib/jj-stamp/client"
+    # Prefer the packaged, tested tools over any user-installed versions on PATH.
     makeWrapper ${lib.getExe nodejs_24} "$out/bin/jj-stamp" \
       --add-flags "$out/lib/jj-stamp/cli.cjs" \
       --prefix PATH : ${

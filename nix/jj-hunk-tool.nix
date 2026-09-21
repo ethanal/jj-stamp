@@ -9,6 +9,8 @@ rustPlatform.buildRustPackage {
   pname = "jj-hunk-tool";
   version = "0.1.0-unstable-2026-09-18";
 
+  # Tested protocol revision; keep the non-Nix install command in README.md in sync.
+  # Upstream's --version is only 0.1.0, not a unique revision identifier.
   src = fetchFromGitHub {
     owner = "mvzink";
     repo = "jj-hunk-tool";
