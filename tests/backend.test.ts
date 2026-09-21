@@ -1,0 +1,563 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import {
+  mkdtemp,
+  readFile,
+  writeFile,
+  appendFile,
+  stat,
+} from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import express from "express";
+import type { AddressInfo } from "node:net";
+import { ReviewService, ApiError } from "../server/service.ts";
+import type { ReviewHunk, State, Selection } from "../server/service.ts";
+import { jj, run, ProcessError } from "../server/process.ts";
+import { createApi } from "../server/api.ts";
+import { assertExactPreview, parseFile } from "../server/diff.ts";
+
+async function fixture() {
+  const dataDir = await mkdtemp(path.join(os.tmpdir(), "fold-backend-"));
+  const service = new ReviewService({ dataDir });
+  const state = await service.getState();
+  return { service, state, dataDir, root: state.repo.path };
+}
+const changes = (hunk: ReviewHunk) =>
+  hunk.rows.filter((row) => /^[+-]/.test(row.raw)).map((row) => row.index);
+const input = (
+  state: State,
+  selections: Selection[],
+  target = state.targets[0].changeId,
+) => ({ version: state.version, target, selections });
+function rejectsCode(promise: Promise<unknown>, code: string) {
+  return assert.rejects(
+    promise,
+    (error: unknown) => error instanceof ApiError && error.code === code,
+  );
+}
+const fileAt = async (root: string, revision: string, file: string) =>
+  (await jj(root, ["file", "show", "-r", revision, file])).stdout;
+
+test("demo setup persists real jj repository with three files, six hunks, and two mutable targets", async () => {
+  const { service, state, dataDir } = await fixture();
+  assert.equal(state.repo.name, "orbit");
+  assert.equal(state.repo.demo, true);
+  assert.equal(state.source.description, "Polish notification delivery");
+  assert.deepEqual(
+    state.targets.map((t) => t.description),
+    ["Add notification preferences", "Build notification delivery service"],
+  );
+  assert.deepEqual(
+    state.files.map((f) => f.path),
+    [
+      "src/notifications.ts",
+      "src/preferences.ts",
+      "tests/notifications.test.ts",
+    ],
+  );
+  assert.equal(state.files.flatMap((f) => f.hunks).length, 6);
+  assert.ok(state.files.every((f) => !f.unsupported));
+  assert.equal(state.canUndo, false);
+  assert.deepEqual(await service.getState(), state);
+  assert.deepEqual(await new ReviewService({ dataDir }).getState(), state);
+});
+
+test("full hunk squash rewrites pinned parent, retains other changes, and exact undo survives restart", async () => {
+  const { service, state, root, dataDir } = await fixture();
+  const hunk = state.files[0].hunks[0];
+  const worktree = await readFile(path.join(root, state.files[0].path), "utf8");
+  const preview = await service.preview(
+    input(state, [{ id: hunk.id, lines: changes(hunk) }]),
+  );
+  assert.deepEqual(preview.specs, [hunk.id]);
+  assert.equal(preview.selectedLines, 2);
+  assert.ok(
+    preview.command.includes(
+      `--from ${state.source.commitId} --into ${state.targets[0].commitId}`,
+    ),
+  );
+  assert.ok(
+    preview.command.endsWith("--use-destination-message --keep-emptied"),
+  );
+  assert.equal(
+    (await service.getState()).operation,
+    state.operation,
+    "preview does not mutate history",
+  );
+  const result = await service.squash(preview.token);
+  assert.equal(result.state.canUndo, true);
+  assert.equal(result.state.source.changeId, state.source.changeId);
+  assert.notEqual(result.state.source.commitId, state.source.commitId);
+  assert.equal(result.state.files.flatMap((f) => f.hunks).length, 5);
+  assert.ok(
+    (await fileAt(root, "@-", state.files[0].path)).includes(
+      "return `[orbit] ${notification.subject.trim()}`;",
+    ),
+  );
+  assert.ok(
+    !(await fileAt(root, "@-", state.files[0].path)).includes(
+      "RETRY_DELAY_MS * attempt",
+    ),
+  );
+  assert.equal(
+    await readFile(path.join(root, state.files[0].path), "utf8"),
+    worktree,
+  );
+  await rejectsCode(service.squash(preview.token), "STALE_PREVIEW");
+  const restarted = new ReviewService({ dataDir });
+  assert.equal((await restarted.getState()).canUndo, true);
+  const undone = await restarted.undo(result.state.version);
+  assert.equal(undone.state.canUndo, false);
+  assert.equal(undone.state.source.commitId, state.source.commitId);
+  assert.deepEqual(undone.state.files, state.files);
+  assert.deepEqual(undone.state.targets, state.targets);
+  const op = (
+    await jj(root, [
+      "op",
+      "log",
+      "--no-graph",
+      "-n",
+      "1",
+      "-T",
+      "self.description()",
+    ])
+  ).stdout;
+  assert.match(op, /revert operation/);
+  await rejectsCode(restarted.undo(undone.state.version), "UNDO_UNAVAILABLE");
+});
+
+test("partial selection moves exactly one added row, not its neighboring addition", async () => {
+  const { service, state, root } = await fixture();
+  const file = state.files[2],
+    hunk = file.hunks[1];
+  const added = hunk.rows.filter((r) => r.raw.startsWith("+"));
+  assert.equal(added.length, 2);
+  const preview = await service.preview(
+    input(state, [{ id: hunk.id, lines: [added[0].index] }]),
+  );
+  assert.deepEqual(preview.specs, [`${hunk.id}:${added[0].index}`]);
+  assert.equal(preview.selectedLines, 1);
+  const patchChanges = preview.patch
+    .split("\n")
+    .filter((line) => /^[+-]/.test(line) && !/^(---|\+\+\+) /.test(line));
+  assert.deepEqual(patchChanges, [added[0].raw]);
+  const result = await service.squash(preview.token);
+  const parent = await fileAt(root, "@-", file.path);
+  assert.ok(parent.includes(added[0].raw.slice(1)));
+  assert.ok(!parent.includes(added[1].raw.slice(1)));
+  const remaining = result.state.files
+    .find((f) => f.path === file.path)!
+    .hunks.flatMap((h) => h.rows)
+    .filter((r) => r.raw.startsWith("+"))
+    .map((r) => r.raw);
+  assert.ok(!remaining.includes(added[0].raw));
+  assert.ok(remaining.includes(added[1].raw));
+  assert.equal(result.state.canUndo, true);
+});
+
+test("partial deletion stays exact rather than widening to the replacement", async () => {
+  const { service, state, root } = await fixture();
+  const file = state.files[0],
+    hunk = file.hunks[0];
+  const removed = hunk.rows.find((row) => row.raw.startsWith("-"))!;
+  const added = hunk.rows.find((row) => row.raw.startsWith("+"))!;
+  const preview = await service.preview(
+    input(state, [{ id: hunk.id, lines: [removed.index] }]),
+  );
+  const result = await service.squash(preview.token);
+  const parent = await fileAt(root, "@-", file.path);
+  assert.ok(!parent.includes(removed.raw.slice(1)));
+  assert.ok(!parent.includes(added.raw.slice(1)));
+  assert.ok(
+    result.state.files[0].hunks
+      .flatMap((h) => h.rows)
+      .some((r) => r.raw === added.raw),
+  );
+});
+
+test("multi-file hunks can squash into grandparent while retaining other source hunks", async () => {
+  const { service, state, root } = await fixture();
+  const selected = [state.files[0].hunks[1], state.files[1].hunks[1]];
+  const preview = await service.preview(
+    input(
+      state,
+      selected.map((h) => ({ id: h.id, lines: changes(h) })),
+      state.targets[1].changeId,
+    ),
+  );
+  const result = await service.squash(preview.token);
+  assert.equal(result.state.files.flatMap((f) => f.hunks).length, 4);
+  assert.ok(
+    (await fileAt(root, "@--", state.files[0].path)).includes(
+      "RETRY_DELAY_MS * attempt",
+    ),
+  );
+  assert.ok(
+    (await fileAt(root, "@--", state.files[1].path)).includes(
+      "All notifications paused",
+    ),
+  );
+  assert.equal(result.state.canUndo, true);
+});
+
+test("stale state and preview reject workspace edits without mutating history or retrying", async () => {
+  const { service, state, root } = await fixture();
+  const hunk = state.files[0].hunks[0];
+  const selection = [{ id: hunk.id, lines: changes(hunk) }];
+  const preview = await service.preview(input(state, selection));
+  await appendFile(
+    path.join(root, "src/notifications.ts"),
+    "\n// An external edit.\n",
+  );
+  await rejectsCode(service.squash(preview.token), "STALE_STATE");
+  const edited = await service.getState();
+  await rejectsCode(service.preview(input(state, selection)), "STALE_STATE");
+  await rejectsCode(service.squash(preview.token), "STALE_PREVIEW");
+  assert.equal((await service.getState()).operation, edited.operation);
+  assert.equal(edited.targets[0].commitId, state.targets[0].commitId);
+  assert.equal(edited.canUndo, false);
+});
+
+test("external history operation invalidates preview and undo even without changed file bytes", async () => {
+  const { service, state, root } = await fixture();
+  const hunk = state.files[0].hunks[0];
+  const preview = await service.preview(
+    input(state, [{ id: hunk.id, lines: changes(hunk) }]),
+  );
+  const result = await service.squash(preview.token);
+  await jj(root, ["describe", "-m", "External description change"]);
+  await rejectsCode(service.undo(result.state.version), "STALE_STATE");
+  const current = await service.getState();
+  assert.equal(current.canUndo, false);
+  await rejectsCode(service.undo(current.version), "UNDO_UNAVAILABLE");
+  assert.equal((await service.getState()).operation, current.operation);
+});
+
+test("invalid context, indices, duplicate hunks, unknown IDs and target injection never mutate", async () => {
+  const { service, state } = await fixture();
+  const hunk = state.files[0].hunks[0];
+  const context = hunk.rows.find((r) => r.raw.startsWith(" "))!.index;
+  for (const lines of [
+    [],
+    [0],
+    [-1],
+    [1.5],
+    [9999],
+    [context],
+    [changes(hunk)[0], changes(hunk)[0]],
+  ]) {
+    await rejectsCode(
+      service.preview(input(state, [{ id: hunk.id, lines }])),
+      "INVALID_SELECTION",
+    );
+  }
+  await rejectsCode(
+    service.preview(input(state, [{ id: "deadbee", lines: [1] }])),
+    "INVALID_SELECTION",
+  );
+  const selection = { id: hunk.id, lines: changes(hunk) };
+  await rejectsCode(
+    service.preview(input(state, [selection, selection])),
+    "INVALID_SELECTION",
+  );
+  for (const target of [
+    "root()",
+    "@",
+    state.source.changeId,
+    "; touch /tmp/never-execute",
+    "all()",
+  ]) {
+    await rejectsCode(
+      service.preview(input(state, [selection], target)),
+      "INVALID_TARGET",
+    );
+  }
+  assert.equal((await service.getState()).operation, state.operation);
+});
+
+test("serialized duplicate squash requests execute once only", async () => {
+  const { service, state } = await fixture();
+  const hunk = state.files[0].hunks[0];
+  const preview = await service.preview(
+    input(state, [{ id: hunk.id, lines: changes(hunk) }]),
+  );
+  const responses = await Promise.allSettled([
+    service.squash(preview.token),
+    service.squash(preview.token),
+    service.getState(),
+  ]);
+  assert.equal(responses[0].status, "fulfilled");
+  assert.equal(responses[1].status, "rejected");
+  if (responses[1].status === "rejected")
+    assert.equal(responses[1].reason.code, "STALE_PREVIEW");
+  const after = await service.getState();
+  assert.equal(after.files.flatMap((f) => f.hunks).length, 5);
+  assert.equal(after.canUndo, true);
+});
+
+test("demo reset creates a fresh repository and preserves previous directory; real repos cannot reset", async () => {
+  const { service, state, root } = await fixture();
+  const reset = await service.reset(state.version);
+  assert.notEqual(reset.state.repo.path, root);
+  assert.ok((await stat(path.join(root, ".jj"))).isDirectory());
+  assert.equal(reset.state.files.flatMap((f) => f.hunks).length, 6);
+  await rejectsCode(service.reset(state.version), "STALE_STATE");
+  const external = new ReviewService({
+    dataDir: await mkdtemp(path.join(os.tmpdir(), "fold-external-")),
+    repoPath: root,
+  });
+  const userState = await external.getState();
+  assert.equal(userState.repo.demo, false);
+  await rejectsCode(external.reset(userState.version), "NOT_DEMO");
+  assert.equal((await external.getState()).operation, userState.operation);
+});
+
+test("unsupported newline, mode, binary and rename structures fail closed", async () => {
+  const { service, state, root } = await fixture();
+  await writeFile(path.join(root, "src/notifications.ts"), "no newline");
+  const next = await service.getState();
+  const unsupported = next.files.find(
+    (f) => f.path === "src/notifications.ts",
+  )!;
+  assert.match(unsupported.unsupported!, /newline/);
+  assert.deepEqual(unsupported.hunks, []);
+  const goodPatch = state.files[0].patch;
+  for (const extra of [
+    "old mode 100644\nnew mode 100755\n",
+    "Binary files a/x and b/x differ\n",
+    "rename from x\nrename to y\n",
+  ]) {
+    assert.throws(() => parseFile(extra + goodPatch, state.files[0].path));
+  }
+});
+
+test("preview verifier rejects changed path, widened changes and shifted hunk positions", () => {
+  const patch = "--- a/x.ts\n+++ b/x.ts\n@@ -1,2 +1,4 @@\n a\n+b\n+c\n z\n";
+  const parsed = parseFile(patch, "x.ts");
+  const picks = [{ patch, path: "x.ts", hunk: parsed.hunks[0], lines: [2] }];
+  const exact = "--- a/x.ts\n+++ b/x.ts\n@@ -1,2 +1,3 @@\n a\n+b\n z\n";
+  assertExactPreview(exact, picks);
+  assert.throws(() =>
+    assertExactPreview(exact.replaceAll("x.ts", "other.ts"), picks),
+  );
+  assert.throws(() => assertExactPreview(patch, picks));
+  assert.throws(() => assertExactPreview(exact.replace("-1,2", "-2,2"), picks));
+});
+
+test("persistent pending mutation blocks later squashes rather than blindly retrying", async () => {
+  const { state, dataDir } = await fixture();
+  const { createHash } = await import("node:crypto");
+  const name = `operations-${createHash("sha256").update(state.repo.path).digest("hex").slice(0, 20)}.json`;
+  await writeFile(
+    path.join(dataDir, name),
+    JSON.stringify({
+      pending: {
+        beforeOperation: state.operation,
+        sourceCommit: state.source.commitId,
+        kind: "squash",
+      },
+    }),
+  );
+  const restarted = new ReviewService({ dataDir });
+  const current = await restarted.getState();
+  assert.equal(current.canUndo, false);
+  const hunk = current.files[0].hunks[0];
+  await rejectsCode(
+    restarted.preview(input(current, [{ id: hunk.id, lines: changes(hunk) }])),
+    "RECOVERY_REQUIRED",
+  );
+  assert.equal((await restarted.getState()).operation, current.operation);
+});
+
+test("Express API JSON contracts and malformed body validation", async (t) => {
+  const { service } = await fixture();
+  const app = express();
+  app.use("/api", createApi(service));
+  const server = app.listen(0, "127.0.0.1");
+  await new Promise<void>((resolve) => server.once("listening", resolve));
+  t.after(() => {
+    server.closeAllConnections();
+    server.close();
+  });
+  const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}/api`;
+  const get = await fetch(`${base}/state`);
+  assert.equal(get.status, 200);
+  assert.equal(get.headers.get("cache-control"), "no-store");
+  const state = (await get.json()) as State;
+  const post = (route: string, body: unknown) =>
+    fetch(`${base}/${route}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+  for (const [route, body] of [
+    ["preview", {}],
+    ["squash", { token: "--help" }],
+    ["undo", {}],
+    ["reset", { version: 1 }],
+  ] as const) {
+    const response = await post(route, body);
+    assert.equal(response.status, 400);
+    assert.equal((await response.json()).code, "INVALID_REQUEST");
+  }
+  const hunk = state.files[0].hunks[0];
+  const response = await post(
+    "preview",
+    input(state, [{ id: hunk.id, lines: changes(hunk) }]),
+  );
+  assert.equal(response.status, 200);
+  const preview = await response.json();
+  assert.equal(preview.selectedLines, 2);
+  const squash = await post("squash", { token: preview.token });
+  assert.equal(squash.status, 200);
+  const result = await squash.json();
+  assert.equal(result.state.canUndo, true);
+  assert.equal(typeof result.output, "string");
+  const replay = await post("squash", { token: preview.token });
+  assert.equal(replay.status, 409);
+  const undo = await post("undo", { version: result.state.version });
+  assert.equal(undo.status, 200);
+  const undone = await undo.json();
+  assert.equal(undone.state.canUndo, false);
+  const reset = await post("reset", { version: undone.state.version });
+  assert.equal(reset.status, 200);
+  assert.notEqual((await reset.json()).state.repo.path, state.repo.path);
+});
+
+test("nonzero tool exit after real squash leaves durable recovery guard and cannot replay", async () => {
+  const { dataDir, state } = await fixture();
+  let squashCalls = 0;
+  const service = new ReviewService({
+    dataDir,
+    toolRunner: async (command, args, cwd) => {
+      const result = await run(command, args, cwd);
+      if (args[0] === "squash") {
+        squashCalls++;
+        throw new ProcessError(
+          command,
+          args,
+          {
+            stdout: result.stdout,
+            stderr: result.stderr + "\nSimulated post-write failure",
+          },
+          23,
+        );
+      }
+      return result;
+    },
+  });
+  const hunk = state.files[0].hunks[0];
+  const preview = await service.preview(
+    input(state, [{ id: hunk.id, lines: changes(hunk) }]),
+  );
+  await rejectsCode(service.squash(preview.token), "PARTIAL_FAILURE");
+  assert.equal(squashCalls, 1);
+  await rejectsCode(service.squash(preview.token), "STALE_PREVIEW");
+  assert.equal(squashCalls, 1);
+  const restarted = new ReviewService({ dataDir });
+  const after = await restarted.getState();
+  assert.notEqual(after.operation, state.operation);
+  assert.equal(after.canUndo, false);
+  assert.equal(after.files.flatMap((f) => f.hunks).length, 5);
+  const nextHunk = after.files[0].hunks[0];
+  await rejectsCode(
+    restarted.preview(
+      input(after, [{ id: nextHunk.id, lines: changes(nextHunk) }]),
+    ),
+    "RECOVERY_REQUIRED",
+  );
+  assert.equal((await restarted.getState()).operation, after.operation);
+});
+
+test("tool failure without mutation consumes token but allows a newly reviewed plan", async () => {
+  const { dataDir, state } = await fixture();
+  let fail = true;
+  const service = new ReviewService({
+    dataDir,
+    toolRunner: async (command, args, cwd) => {
+      if (args[0] === "squash" && fail) {
+        fail = false;
+        throw new ProcessError(
+          command,
+          args,
+          { stdout: "", stderr: "Simulated failure before rewrite" },
+          23,
+        );
+      }
+      return run(command, args, cwd);
+    },
+  });
+  const hunk = state.files[0].hunks[0];
+  const selection = [{ id: hunk.id, lines: changes(hunk) }];
+  const first = await service.preview(input(state, selection));
+  await rejectsCode(service.squash(first.token), "TOOL_FAILED");
+  await rejectsCode(service.squash(first.token), "STALE_PREVIEW");
+  assert.equal((await service.getState()).operation, state.operation);
+  const second = await service.preview(input(state, selection));
+  assert.equal((await service.squash(second.token)).state.canUndo, true);
+});
+
+test("an intervening external operation during real squash disables attribution and undo", async () => {
+  const { dataDir, state } = await fixture();
+  const service = new ReviewService({
+    dataDir,
+    toolRunner: async (command, args, cwd) => {
+      if (args[0] === "squash")
+        await jj(cwd, ["bookmark", "create", "external-work", "-r", "@-"]);
+      return run(command, args, cwd);
+    },
+  });
+  const hunk = state.files[0].hunks[0];
+  const preview = await service.preview(
+    input(state, [{ id: hunk.id, lines: changes(hunk) }]),
+  );
+  await rejectsCode(service.squash(preview.token), "HISTORY_CHANGED");
+  await rejectsCode(service.squash(preview.token), "STALE_PREVIEW");
+  const after = await new ReviewService({ dataDir }).getState();
+  assert.equal(after.canUndo, false);
+  assert.notEqual(after.operation, state.operation);
+});
+
+test("conflicted repositories are refused, and immutable ancestors are never targets", async () => {
+  const { service, state, root } = await fixture();
+  await jj(root, [
+    "config",
+    "set",
+    "--repo",
+    'revset-aliases."immutable_heads()"',
+    state.targets[1].changeId,
+  ]);
+  const restricted = await service.getState();
+  assert.deepEqual(
+    restricted.targets.map((t) => t.changeId),
+    [state.targets[0].changeId],
+  );
+  const hunk = restricted.files[0].hunks[0];
+  await rejectsCode(
+    service.preview(
+      input(
+        restricted,
+        [{ id: hunk.id, lines: changes(hunk) }],
+        state.targets[1].changeId,
+      ),
+    ),
+    "INVALID_TARGET",
+  );
+  const base = restricted.source.commitId;
+  await jj(root, ["new", base, "-m", "Left conflict branch"]);
+  await writeFile(path.join(root, "src/notifications.ts"), "left version\n");
+  await jj(root, ["status"]);
+  const left = (
+    await jj(root, ["log", "-r", "@", "--no-graph", "-T", "commit_id"])
+  ).stdout.trim();
+  await jj(root, ["new", base, "-m", "Right conflict branch"]);
+  await writeFile(path.join(root, "src/notifications.ts"), "right version\n");
+  await jj(root, ["status"]);
+  await jj(root, ["new", left, "@", "-m", "Conflicted merge"]);
+  await rejectsCode(service.getState(), "CONFLICTED_REPO");
+  await rejectsCode(
+    service.preview(input(restricted, [{ id: hunk.id, lines: changes(hunk) }])),
+    "CONFLICTED_REPO",
+  );
+});

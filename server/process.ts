@@ -1,0 +1,63 @@
+import { spawn } from "node:child_process";
+
+export interface ProcessResult {
+  stdout: string;
+  stderr: string;
+}
+export class ProcessError extends Error {
+  constructor(
+    public command: string,
+    public args: string[],
+    public result: ProcessResult,
+    public exitCode: number | null,
+  ) {
+    super(
+      `${command} failed: ${result.stderr.trim() || result.stdout.trim() || `exit ${exitCode}`}`,
+    );
+  }
+}
+
+/** No shell, no automatic retries, and no timer that can kill a history rewrite. */
+export function run(
+  command: string,
+  args: string[],
+  cwd: string,
+): Promise<ProcessResult> {
+  return new Promise((resolve, reject) => {
+    const env: NodeJS.ProcessEnv = {
+      ...process.env,
+      NO_COLOR: "1",
+      CLICOLOR: "0",
+      JJ_PAGER: "cat",
+      PAGER: "cat",
+      JJ_EDITOR: "true",
+      EDITOR: "true",
+    };
+    // These are private protocol variables. Inheriting one could reverse a squash.
+    delete env.JJ_HUNK_TOOL_PATCH;
+    delete env.JJ_HUNK_TOOL_REVERSE;
+    const child = spawn(command, args, {
+      cwd,
+      stdio: ["ignore", "pipe", "pipe"],
+      env,
+    });
+    let stdout = "",
+      stderr = "";
+    child.stdout.setEncoding("utf8");
+    child.stderr.setEncoding("utf8");
+    child.stdout.on("data", (chunk) => {
+      stdout += chunk;
+    });
+    child.stderr.on("data", (chunk) => {
+      stderr += chunk;
+    });
+    child.on("error", reject);
+    child.on("close", (code) =>
+      code === 0
+        ? resolve({ stdout, stderr })
+        : reject(new ProcessError(command, args, { stdout, stderr }, code)),
+    );
+  });
+}
+export const jj = (cwd: string, args: string[]) =>
+  run("jj", ["--no-pager", "--color=never", ...args], cwd);
