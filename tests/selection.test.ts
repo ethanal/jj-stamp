@@ -115,7 +115,7 @@ test("a short range within a hundred-line hunk never selects the rest", () => {
   });
 });
 
-test("split selection stays on one side; crossing columns selects aligned rows", () => {
+test("split ranges always select both aligned columns, regardless of drag origin", () => {
   const index: GetLineIndexUtility = (line, side = "additions") => {
     if (line === 11 && side === "deletions") return [10, 10];
     if (line === 11) return [11, 10];
@@ -129,7 +129,7 @@ test("split selection stays on one side; crossing columns selects aligned rows",
       index,
       "split",
     ),
-    { first: [3] },
+    { first: [2, 3] },
   );
   assert.deepEqual(
     selectionFromRange(
@@ -138,7 +138,7 @@ test("split selection stays on one side; crossing columns selects aligned rows",
       index,
       "split",
     ),
-    { first: [3, 4] },
+    { first: [2, 3, 4] },
   );
   assert.deepEqual(
     selectionFromRange(
@@ -147,7 +147,7 @@ test("split selection stays on one side; crossing columns selects aligned rows",
       index,
       "split",
     ),
-    { first: [2] },
+    { first: [2, 3] },
   );
   assert.deepEqual(
     selectionFromRange(

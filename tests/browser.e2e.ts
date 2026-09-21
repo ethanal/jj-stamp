@@ -117,9 +117,9 @@ try {
   ).toContainText("+2−2");
   await page.getByRole("button", { name: "Split", exact: true }).click();
   await expect(page.locator('[data-diff-type="split"]')).toHaveCount(1);
-  await codeLine(21).click();
+  await drag(page.locator('[data-additions] [data-line="20"]'), codeLine(21));
   await expect(page.getByRole("status")).toContainText(
-    "1 changed line selected",
+    "2 changed lines selected",
   );
   await expect(
     page.locator(
@@ -130,12 +130,15 @@ try {
     page.locator(
       '[data-line][data-line-type="change-deletion"][data-fold-selected]',
     ),
-  ).toHaveCount(0);
+  ).toHaveCount(1);
   await pressMutation("s");
   await pressMutation("u");
-  await codeLine(21, "change-deletion").click();
+  await drag(
+    page.locator('[data-deletions] [data-line="20"]'),
+    codeLine(21, "change-deletion"),
+  );
   await expect(page.getByRole("status")).toContainText(
-    "1 changed line selected",
+    "2 changed lines selected",
   );
   await pressMutation("s");
   await pressMutation("u");
@@ -147,7 +150,7 @@ try {
   await page.getByRole("button", { name: "Stacked", exact: true }).click();
   await expect(page.locator('[data-diff-type="split"]')).toHaveCount(0);
   console.log(
-    "✓ Split/Stacked toggle; exact one-side selections, cross-column ranges, and +/- counts",
+    "✓ Split/Stacked toggle; drags select both columns from either side, and +/- counts",
   );
 
   await page.getByTitle("tests/notifications.test.ts", { exact: true }).click();

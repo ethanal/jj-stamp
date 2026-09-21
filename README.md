@@ -10,7 +10,7 @@ Minimal, keyboard-first review of `@` in a real Jujutsu workspace. Diff renderin
 - **Escape** clears the selection. **`r`** refreshes.
 - The left sidebar lists files with **`+ / −` counts**; the header shows totals for the whole working-copy change.
 - The **right-hand panel** shows actual `jj log` output. **`l`** toggles it; **`f`** focuses the diff.
-- **Split / Stacked** switches between side-by-side and unified diffs. The layout preference is saved locally. In split view, dragging within a column selects only that side; crossing columns selects the aligned rows. Switching layout preserves the exact selection.
+- **Split / Stacked** switches between side-by-side and unified diffs. The layout preference is saved locally. In split view, dragging selects the aligned rows in **both columns**, regardless of where the drag starts. Use Stacked view to select an individual addition or deletion. Switching layout preserves the exact selection.
 - **↑ 10 / ↓ 10** reveal ten more context lines above or below the hunk (or the remaining lines at a file boundary).
 
 Only changed rows are squashed, even when a range includes context or spans multiple hunks. Selections can include just one addition or deletion inside a long hunk. A new drag replaces the range; switching files clears it. Working-file contents are preserved.
