@@ -192,7 +192,6 @@ class StableDiffViewport extends Component<{
 export function CodeDiff({
   file,
   version,
-  renderKey: _renderKey,
   style,
   colorScheme = "dark",
   selections,
@@ -206,7 +205,6 @@ export function CodeDiff({
 }: {
   file: DiffFile;
   version: string;
-  renderKey: string;
   style: "unified" | "split";
   colorScheme?: ColorScheme;
   selections: Selections;
@@ -686,10 +684,7 @@ export function CodeDiff({
       }}
     >
       {editorError && (
-        <div
-          role="alert"
-          style={{ padding: "8px 12px", color: "var(--error, #d85b62)" }}
-        >
+        <div role="alert" className="editor-error">
           {editorError}
         </div>
       )}

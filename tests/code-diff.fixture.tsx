@@ -113,7 +113,6 @@ function Fixture() {
         <CodeDiff
           file={makeFile(squashed)}
           version={String(epoch)}
-          renderKey={String(epoch)}
           style={style}
           colorScheme={theme}
           selections={selections}

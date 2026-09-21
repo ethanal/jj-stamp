@@ -192,16 +192,6 @@ kbd {
   color: var(--fg);
   font-size: 11px;
 }
-.sr-only {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  padding: 0;
-  margin: -1px;
-  overflow: hidden;
-  clip-path: inset(50%);
-  white-space: nowrap;
-}
 .app {
   height: 100dvh;
   min-height: 240px;
@@ -589,6 +579,10 @@ kbd {
 }
 .code-surface:focus-visible {
   outline: none;
+}
+.editor-error {
+  padding: 8px 12px;
+  color: #d85b62;
 }
 .code-surface diffs-container {
   display: block;
