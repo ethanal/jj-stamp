@@ -17,6 +17,10 @@ export class ProcessError extends Error {
   }
 }
 
+export function processOutput(result: ProcessResult): string {
+  return result.stdout + result.stderr;
+}
+
 /** No shell, no automatic retries, and no timer that can kill a history rewrite. */
 export function run(
   command: string,

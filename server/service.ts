@@ -1,5 +1,5 @@
 import { createHash, randomBytes } from "node:crypto";
-import { lstat, realpath } from "node:fs/promises";
+import { realpath } from "node:fs/promises";
 import path from "node:path";
 import {
   parseFile,
@@ -9,26 +9,18 @@ import {
   assertExactPreview,
 } from "./diff.ts";
 import type { FileDiff, Hunk, Row, RevisionListing } from "./diff.ts";
-import { jj, run, ProcessError } from "./process.ts";
+import { editorExpression, resolveEditorPath } from "./editor.ts";
+import { ApiError } from "./errors.ts";
+import { jj, processOutput, run, ProcessError } from "./process.ts";
+import {
+  parseRevisionRecord,
+  revisionFieldsTemplate,
+  revisionTemplate,
+} from "./revision.ts";
+import type { Revision } from "./revision.ts";
 
-export class ApiError extends Error {
-  constructor(
-    public status: number,
-    public code: string,
-    message: string,
-    public details?: Record<string, unknown>,
-  ) {
-    super(message);
-  }
-}
-export interface Revision {
-  changeId: string;
-  commitId: string;
-  description: string;
-  author?: string;
-  /** jj's shortest distinguishing prefix, not an arbitrary fixed truncation. */
-  changeIdPrefix?: string;
-}
+export { ApiError } from "./errors.ts";
+export type { Revision } from "./revision.ts";
 export interface LogRow {
   /** The graph prefix or connector line emitted by jj, preserved verbatim. */
   graph: string;
@@ -120,9 +112,6 @@ interface Plan extends Preview {
   selections: Selection[];
   expires: number;
 }
-interface Active {
-  path: string;
-}
 interface Undo {
   operation: string;
   beforeOperation: string;
@@ -159,12 +148,23 @@ const hash = (value: string) =>
   createHash("sha256").update(value).digest("hex");
 export const reviewLogRevset =
   "trunk() | ((tracked_remote_bookmarks() & ~::trunk())::) | (mutable() & mine())::";
-const revisionTemplate =
-  'json(change_id) ++ "\\t" ++ json(commit_id) ++ "\\t" ++ json(description.first_line()) ++ "\\t" ++ json(author.name()) ++ "\\t" ++ json(change_id.shortest(8).prefix()) ++ "\\n"';
 
 function same(actual: unknown, expected: unknown) {
   return JSON.stringify(actual) === JSON.stringify(expected);
 }
+function squashArgs(specs: string[], source: string, target: string): string[] {
+  return [
+    "squash",
+    ...specs,
+    "--from",
+    source,
+    "--into",
+    target,
+    "--use-destination-message",
+    "--keep-emptied",
+  ];
+}
+
 function stale(): never {
   throw new ApiError(
     409,
@@ -176,19 +176,19 @@ function stale(): never {
 /** All requests, including reads (which snapshot jj), share one serial queue. */
 export class ReviewService {
   private queue: Promise<unknown> = Promise.resolve();
-  private active?: Active;
+  private activePath?: string;
   private history: SessionHistory = {};
-  private plans = new Map<string, Plan>();
+  private readonly plans = new Map<string, Plan>();
   // Commit IDs pin both the tree and its parent(s). Never cache mutable revsets,
   // workspace snapshots, operation heads, conflicts, or configuration decisions.
-  private fileCache = new Map<string, ReviewFile[]>();
-  private jjRunner: typeof jj;
+  private readonly fileCache = new Map<string, ReviewFile[]>();
+  private readonly jjRunner: typeof jj;
   private readonly repoPath: string;
   private readonly requestedRevision: string;
   private sourceChangeId?: string;
   private initialization?: Promise<void>;
-  private editorRunner: typeof run;
-  private toolRunner: typeof run;
+  private readonly editorRunner: typeof run;
+  private readonly toolRunner: typeof run;
   constructor(options: ServiceOptions) {
     if (!options?.repoPath)
       throw new Error("ReviewService requires explicit repoPath.");
@@ -204,8 +204,8 @@ export class ReviewService {
     return result;
   }
   private get root() {
-    if (!this.active) throw new Error("Repository not initialized");
-    return this.active.path;
+    if (!this.activePath) throw new Error("Repository not initialized");
+    return this.activePath;
   }
   private init(snapshot = true): Promise<void> {
     // Memoize even failures: retrying initialization must never reinterpret @ or
@@ -250,7 +250,7 @@ export class ReviewService {
     // the initial expression. Subsequent reads follow only this change identity
     // and revalidate it live; never re-evaluate a moving @ or bookmark.
     this.sourceChangeId = source.changeId;
-    this.active = { path: root };
+    this.activePath = root;
   }
   private changeRevset(changeId: string): string {
     return `change_id(${JSON.stringify(changeId)})`;
@@ -315,48 +315,28 @@ export class ReviewService {
         revset,
         "-T",
         requireVisible
-          ? revisionTemplate.replace(
-              ' ++ "\\n"',
-              ' ++ "\\t" ++ json(hidden) ++ "\\t" ++ json(divergent) ++ "\\n"',
-            )
+          ? revisionFieldsTemplate +
+            ' ++ "\\t" ++ json(hidden) ++ "\\t" ++ json(divergent) ++ "\\n"'
           : revisionTemplate,
         ...(snapshot ? [] : ["--ignore-working-copy"]),
       ])
     ).stdout.trim();
     if (!output) return [];
     return output.split("\n").map((line) => {
-      const [
-        changeId,
-        commitId,
-        description,
-        author,
-        changeIdPrefix,
-        ...visibility
-      ] = line.split("\t").map((value) => JSON.parse(value));
-      if (
-        !/^[k-z]+$/.test(changeId) ||
-        !/^[0-9a-f]{40,64}$/.test(commitId) ||
-        typeof description !== "string" ||
-        typeof author !== "string" ||
-        typeof changeIdPrefix !== "string" ||
-        !changeIdPrefix ||
-        !changeId.startsWith(changeIdPrefix)
-      )
-        throw new Error("Unrecognized revision identity.");
-      if (requireVisible) {
-        if (
-          visibility.length !== 2 ||
-          visibility.some((value) => typeof value !== "boolean")
-        )
-          throw new Error("Unrecognized revision visibility.");
-        if (visibility.some(Boolean))
-          throw new ApiError(
-            400,
-            "INVALID_REVISION",
-            "The requested change is hidden, abandoned, or divergent. Choose exactly one visible, non-divergent change.",
-          );
+      const { revision, flags: visibility } = parseRevisionRecord(
+        line,
+        requireVisible ? 2 : 0,
+        "Unrecognized revision identity.",
+        "Unrecognized revision visibility.",
+      );
+      if (requireVisible && visibility.some(Boolean)) {
+        throw new ApiError(
+          400,
+          "INVALID_REVISION",
+          "The requested change is hidden, abandoned, or divergent. Choose exactly one visible, non-divergent change.",
+        );
       }
-      return { changeId, commitId, description, author, changeIdPrefix };
+      return revision;
     });
   }
   private async files(
@@ -429,12 +409,11 @@ export class ReviewService {
             ...hunk,
             id: hunks[i].id,
           }));
-          file.additions = parsed.hunks
-            .flatMap((hunk) => hunk.rows)
-            .filter((row) => row.raw[0] === "+").length;
-          file.deletions = parsed.hunks
-            .flatMap((hunk) => hunk.rows)
-            .filter((row) => row.raw[0] === "-").length;
+          const changedRows = parsed.hunks.flatMap((hunk) => hunk.rows);
+          for (const row of changedRows) {
+            if (row.raw[0] === "+") file.additions++;
+            if (row.raw[0] === "-") file.deletions++;
+          }
         } catch (error) {
           file.unsupported =
             error instanceof Error ? error.message : String(error);
@@ -481,7 +460,7 @@ export class ReviewService {
           .map((revset) => `(${revset})`)
           .join(" | "),
         "-T",
-        revisionTemplate.replace(' ++ "\\n"', "") +
+        revisionFieldsTemplate +
           revsets.flat().map(contained).join("") +
           ' ++ "\\t" ++ json(self.contained_in("conflicts()"))' +
           ' ++ "\\t" ++ json(self.contained_in("mutable()")) ++ "\\n"',
@@ -490,38 +469,13 @@ export class ReviewService {
       .trim()
       .split("\n")
       .filter(Boolean)
-      .map((line) => {
-        const [
-          changeId,
-          commitId,
-          description,
-          author,
-          changeIdPrefix,
-          ...flags
-        ] = line.split("\t").map((value) => JSON.parse(value));
-        if (
-          !/^[k-z]+$/.test(changeId) ||
-          !/^[0-9a-f]{40,64}$/.test(commitId) ||
-          typeof description !== "string" ||
-          typeof author !== "string" ||
-          typeof changeIdPrefix !== "string" ||
-          !changeIdPrefix ||
-          !changeId.startsWith(changeIdPrefix) ||
-          flags.length !== selections.length * 3 + 2 ||
-          flags.some((flag) => typeof flag !== "boolean")
-        )
-          throw new Error("Unrecognized revision metadata.");
-        return {
-          revision: {
-            changeId,
-            commitId,
-            description,
-            author,
-            changeIdPrefix,
-          } as Revision,
-          flags,
-        };
-      });
+      .map((line) =>
+        parseRevisionRecord(
+          line,
+          selections.length * 3 + 2,
+          "Unrecognized revision metadata.",
+        ),
+      );
     return selections.map((selection, index) => {
       const metadata = rows.map(({ revision, flags }) => ({
         revision,
@@ -738,7 +692,7 @@ export class ReviewService {
       const template =
         JSON.stringify(marker) +
         " ++ " +
-        revisionTemplate.replace(' ++ "\\n"', "") +
+        revisionFieldsTemplate +
         ' ++ "\\t" ++ json(self.contained_in("mutable()"))' +
         ' ++ "\\t" ++ json(current_working_copy) ++ "\\n"';
       const rendered = (
@@ -759,33 +713,15 @@ export class ReviewService {
       const rows = lines.map((line): LogRow => {
         const index = line.indexOf(marker);
         if (index === -1) return { graph: line };
-        const [
-          changeId,
-          commitId,
-          description,
-          author,
-          changeIdPrefix,
-          mutable,
-          isWorkingCopy,
-        ] = line
-          .slice(index + marker.length)
-          .split("\t")
-          .map((value) => JSON.parse(value));
-        if (
-          !/^[k-z]+$/.test(changeId) ||
-          !/^[0-9a-f]{40,64}$/.test(commitId) ||
-          typeof description !== "string" ||
-          typeof author !== "string" ||
-          typeof changeIdPrefix !== "string" ||
-          !changeIdPrefix ||
-          !changeId.startsWith(changeIdPrefix) ||
-          typeof mutable !== "boolean" ||
-          typeof isWorkingCopy !== "boolean"
-        )
-          throw new Error("Unrecognized revision in jj graph.");
+        const { revision, flags } = parseRevisionRecord(
+          line.slice(index + marker.length),
+          2,
+          "Unrecognized revision in jj graph.",
+        );
+        const [mutable, isWorkingCopy] = flags;
         return {
           graph: line.slice(0, index),
-          revision: { changeId, commitId, description, author, changeIdPrefix },
+          revision,
           mutable,
           isWorkingCopy,
         };
@@ -840,15 +776,9 @@ export class ReviewService {
           "EDITOR_FILE_UNAVAILABLE",
           "Deleted files cannot be opened in the workspace editor.",
         );
-      await this.editorPath(input.path);
-      this.requireVersion(await this.readState(false, false), before.version);
-      const absolute = await this.editorPath(input.path);
-      // Only data enters the expression: Vim single-quoted strings escape an
-      // apostrophe by doubling it; backslashes are literal. Never use :edit,
-      // --remote-send, shell interpolation, or filename/key expansion.
-      const literal = (value: string) => `'${value.replaceAll("'", "''")}'`;
-      const lua =
-        "(function(a) local b = vim.fn.bufadd(a[1]); vim.fn.bufload(b); vim.bo[b].buflisted = true; vim.api.nvim_set_current_buf(b); vim.api.nvim_win_set_cursor(0, {math.min(a[2], vim.api.nvim_buf_line_count(b)), 0}); return 1 end)(_A)";
+      await resolveEditorPath(this.root, input.path);
+      await this.revalidateVersion(before.version, false, false);
+      const absolute = await resolveEditorPath(this.root, input.path);
       try {
         const result = await this.editorRunner(
           "nvim",
@@ -856,7 +786,7 @@ export class ReviewService {
             "--server",
             "127.0.0.1:4242",
             "--remote-expr",
-            `luaeval(${literal(lua)}, [${literal(absolute)}, ${input.line}])`,
+            editorExpression(absolute, input.line),
           ],
           this.root,
         );
@@ -876,59 +806,6 @@ export class ReviewService {
       }
       return { ok: true };
     });
-  }
-  private async editorPath(relative: string): Promise<string> {
-    const absolute = path.resolve(this.root, relative);
-    const contained = path.relative(this.root, absolute);
-    if (
-      !contained ||
-      contained === ".." ||
-      contained.startsWith(`..${path.sep}`) ||
-      path.isAbsolute(contained)
-    )
-      throw new ApiError(
-        400,
-        "INVALID_PATH",
-        "The editor file must be inside the workspace.",
-      );
-    try {
-      // Reject all symlinks, including directory links and links back inside the
-      // workspace. The editor must open this exact regular workspace file.
-      if ((await realpath(this.root)) !== this.root)
-        throw new ApiError(
-          422,
-          "EDITOR_FILE_UNAVAILABLE",
-          "The workspace path is now a symlink; restart jj-stamp.",
-        );
-      let current = this.root;
-      for (const part of contained.split(path.sep)) {
-        current = path.join(current, part);
-        const entry = await lstat(current);
-        if (
-          entry.isSymbolicLink() ||
-          (current === absolute ? !entry.isFile() : !entry.isDirectory())
-        )
-          throw new ApiError(
-            422,
-            "EDITOR_FILE_UNAVAILABLE",
-            "The editor requires a regular workspace file without symlinks.",
-          );
-      }
-      if ((await realpath(absolute)) !== absolute)
-        throw new ApiError(
-          422,
-          "EDITOR_FILE_UNAVAILABLE",
-          "The editor file resolves outside its workspace path.",
-        );
-    } catch (error) {
-      if (error instanceof ApiError) throw error;
-      throw new ApiError(
-        422,
-        "EDITOR_FILE_UNAVAILABLE",
-        "The file is missing or inaccessible in the current workspace; historical files cannot be opened.",
-      );
-    }
-    return absolute;
   }
   getFile(input: { version: string; path: string }): Promise<FileContents> {
     return this.serial(async () => {
@@ -971,7 +848,7 @@ export class ReviewService {
       const newFile = /^\+\+\+ \/dev\/null$/m.test(file.patch)
         ? null
         : await read(before.source.commitId);
-      this.requireVersion(await this.readState(), before.version);
+      await this.revalidateVersion(before.version);
       return { oldFile, newFile };
     });
   }
@@ -1005,7 +882,7 @@ export class ReviewService {
       });
       // Direct requests never expose a token or yield the serial queue. Validate
       // the exact pinned preview once, then snapshot/recheck before execution.
-      this.requireVersion(await this.readState(), state.version);
+      await this.revalidateVersion(state.version);
       return this.executeSquash(
         {
           ...preview,
@@ -1020,8 +897,17 @@ export class ReviewService {
       );
     });
   }
-  private requireVersion(state: State, version: string) {
+  private requireVersion(state: State, version: string): void {
     if (!version || version !== state.version) stale();
+  }
+  private async revalidateVersion(
+    version: string,
+    allowConflicts = false,
+    snapshot = true,
+  ): Promise<State> {
+    const state = await this.readState(allowConflicts, snapshot);
+    this.requireVersion(state, version);
+    return state;
   }
   private pendingError(
     status: number,
@@ -1113,7 +999,8 @@ export class ReviewService {
         if (file.unsupported)
           throw new ApiError(422, "UNSUPPORTED_DIFF", file.unsupported);
         const changed = hunk.rows.filter((row) => /^[+-]/.test(row.raw));
-        if (lines.some((index) => !changed.some((row) => row.index === index)))
+        const changedIndices = new Set(changed.map((row) => row.index));
+        if (lines.some((index) => !changedIndices.has(index)))
           throw new ApiError(
             400,
             "INVALID_SELECTION",
@@ -1146,16 +1033,7 @@ export class ReviewService {
     } catch (error) {
       throw new ApiError(422, "UNSAFE_PREVIEW", (error as Error).message);
     }
-    const args = [
-      "squash",
-      ...specs,
-      "--from",
-      state.source.commitId,
-      "--into",
-      target.commitId,
-      "--use-destination-message",
-      "--keep-emptied",
-    ];
+    const args = squashArgs(specs, state.source.commitId, target.commitId);
     return {
       patch,
       specs,
@@ -1173,7 +1051,7 @@ export class ReviewService {
     state: State,
   ): Promise<Preview> {
     const preview = await this.prepare(state, input);
-    this.requireVersion(await this.readState(), state.version);
+    await this.revalidateVersion(state.version);
     const token = randomBytes(32).toString("hex");
     for (const [key, plan] of this.plans)
       if (plan.expires < Date.now()) this.plans.delete(key);
@@ -1219,7 +1097,7 @@ export class ReviewService {
       check.command !== plan.command
     )
       stale();
-    this.requireVersion(await this.readState(), before.version);
+    await this.revalidateVersion(before.version);
     return this.executeSquash(plan, before);
   }
   private async executeSquash(
@@ -1249,16 +1127,7 @@ export class ReviewService {
     try {
       result = await this.toolRunner(
         "jj-hunk-tool",
-        [
-          "squash",
-          ...plan.specs,
-          "--from",
-          plan.source.commitId,
-          "--into",
-          plan.target.commitId,
-          "--use-destination-message",
-          "--keep-emptied",
-        ],
+        squashArgs(plan.specs, plan.source.commitId, plan.target.commitId),
         this.root,
       );
     } catch (error) {
@@ -1272,7 +1141,7 @@ export class ReviewService {
         409,
         "HISTORY_CHANGED",
         "The tool completed, but its operation could not be attributed. Automatic undo is disabled; do not retry the squash.",
-        { output: result.stdout + result.stderr, cause: String(error) },
+        { output: processOutput(result), cause: String(error) },
       );
     }
     if (
@@ -1287,7 +1156,7 @@ export class ReviewService {
         409,
         "HISTORY_CHANGED",
         "The tool completed, but operation history changed unexpectedly. Automatic undo is disabled; do not retry the squash.",
-        { output: result.stdout + result.stderr, currentOperation: afterOp.id },
+        { output: processOutput(result), currentOperation: afterOp.id },
       );
     }
     // Positive, live attribution ends mutation uncertainty. Clear only this
@@ -1315,7 +1184,7 @@ export class ReviewService {
         "HISTORY_CHANGED",
         "The squash completed and was attributed, but the repository changed or its updated view could not be validated. Automatic undo is disabled. Inspect jj op log and refresh before reviewing more work; do not retry the completed squash. No retry or rollback was attempted.",
         {
-          output: result.stdout + result.stderr,
+          output: processOutput(result),
           completedOperation: afterOp.id,
           cause: error instanceof Error ? error.message : String(error),
         },
@@ -1334,7 +1203,7 @@ export class ReviewService {
     after.canUndo = true;
     return {
       state: after,
-      output: (result.stdout + result.stderr).trim(),
+      output: processOutput(result).trim(),
       ...(warning ? { warning } : {}),
     };
   }
@@ -1366,7 +1235,7 @@ export class ReviewService {
     }
     const output =
       error instanceof ProcessError
-        ? error.result.stdout + error.result.stderr
+        ? processOutput(error.result)
         : String(error);
     const dependencyHint = /failed to run patch/.test(output)
       ? "jj-hunk-tool could not start its required patch executable. Install GNU patch or repair the packaged runtime. "
@@ -1438,7 +1307,7 @@ export class ReviewService {
       this.history = {};
       return {
         state: await this.readState(),
-        output: (result.stdout + result.stderr).trim(),
+        output: processOutput(result).trim(),
       };
     });
   }
