@@ -1,5 +1,12 @@
 import { createHash, randomBytes } from "node:crypto";
-import { mkdir, readFile, realpath, rename, writeFile } from "node:fs/promises";
+import {
+  lstat,
+  mkdir,
+  readFile,
+  realpath,
+  rename,
+  writeFile,
+} from "node:fs/promises";
 import path from "node:path";
 import {
   parseFile,
@@ -148,6 +155,7 @@ export interface ServiceOptions {
   dataDir: string;
   repoPath: string;
   revision?: string;
+  editorRunner?: typeof run;
   toolRunner?: typeof run;
   jjRunner?: typeof jj;
 }
@@ -197,10 +205,12 @@ export class ReviewService {
   private readonly requestedRevision: string;
   private sourceChangeId?: string;
   private initialization?: Promise<void>;
+  private editorRunner: typeof run;
   private toolRunner: typeof run;
   constructor(options: ServiceOptions) {
     if (!options?.repoPath || !options?.dataDir)
       throw new Error("ReviewService requires explicit repoPath and dataDir.");
+    this.editorRunner = options.editorRunner ?? run;
     this.toolRunner = options.toolRunner ?? run;
     this.jjRunner = options.jjRunner ?? jj;
     this.dataDir = path.resolve(options.dataDir);
@@ -384,7 +394,10 @@ export class ReviewService {
       return { changeId, commitId, description, author, changeIdPrefix };
     });
   }
-  private async files(source: string): Promise<ReviewFile[]> {
+  private async files(
+    source: string,
+    reconcileHunks = true,
+  ): Promise<ReviewFile[]> {
     const key = `${this.root}:${source}`;
     const cached = this.fileCache.get(key);
     if (cached) return structuredClone(cached);
@@ -421,6 +434,9 @@ export class ReviewService {
       }
       files.push(file);
     }
+    // Editor validation only needs pinned diff paths. Never run a hunk tool
+    // here: its internal jj reads may snapshot the workspace on a cache miss.
+    if (!reconcileHunks) return files;
     // One whole-revision listing, regardless of file count. Reconcile exact
     // paths, ordered hunks and every body row before exposing any selections.
     if (parsedFiles.size) {
@@ -654,22 +670,25 @@ export class ReviewService {
     if ((await this.operation()).id !== operation || !same(current, views))
       stale();
   }
-  private async readState(allowConflicts = false): Promise<State> {
-    await this.init();
-    const views = await this.readViews({ allowConflicts });
+  private async readState(
+    allowConflicts = false,
+    snapshot = true,
+  ): Promise<State> {
+    await this.init(snapshot);
+    const views = await this.readViews({ allowConflicts, snapshot });
     const view = this.requireView(views[0]);
     // The pinned diff does not depend on the operation query. Overlap these
     // reads, but drain BOTH even on failure before releasing the serial queue.
     // Metadata and the operation head are still rechecked in order below.
     const [operationResult, filesResult] = await Promise.allSettled([
       this.operation(),
-      this.files(view.source.commitId),
+      this.files(view.source.commitId, snapshot),
     ]);
     if (operationResult.status === "rejected") throw operationResult.reason;
     if (filesResult.status === "rejected") throw filesResult.reason;
     const operation = operationResult.value;
     const files = filesResult.value;
-    await this.validateViews(views, operation.id, { allowConflicts });
+    await this.validateViews(views, operation.id, { allowConflicts, snapshot });
     return this.state(view, operation.id, files);
   }
   /** Wait for all accepted requests before a graceful service shutdown. */
@@ -809,6 +828,142 @@ export class ReviewService {
       await this.validateViews(views, operation.id, viewOptions);
       return { version: this.version(views[0], operation.id), output, rows };
     });
+  }
+  /** Open workspace bytes, never a temporary historical file or a new editor. */
+  openEditor(input: {
+    version: string;
+    path: string;
+    line: number;
+  }): Promise<{ ok: true }> {
+    return this.serial(async () => {
+      if (
+        !input ||
+        Object.keys(input).some(
+          (key) => !["version", "path", "line"].includes(key),
+        ) ||
+        typeof input.version !== "string" ||
+        !/^[0-9a-f]{64}$/.test(input.version) ||
+        typeof input.path !== "string" ||
+        !input.path.length ||
+        input.path.length > 4096 ||
+        /[\x00-\x1f\x7f]/.test(input.path) ||
+        path.isAbsolute(input.path) ||
+        input.path
+          .split("/")
+          .some((part) => !part || part === "." || part === "..") ||
+        !Number.isSafeInteger(input.line) ||
+        input.line < 1
+      )
+        throw new ApiError(
+          400,
+          "INVALID_REQUEST",
+          "Supply the current version, a repository-relative file path, and a positive integer line.",
+        );
+      // Unlike diff reads, an editor request must not even snapshot jj edits.
+      const before = await this.readState(false, false);
+      this.requireVersion(before, input.version);
+      const file = before.files.find((file) => file.path === input.path);
+      if (!file)
+        throw new ApiError(
+          400,
+          "INVALID_PATH",
+          "Choose a file in the current diff.",
+        );
+      if (/^(?:deleted file mode |\+\+\+ \/dev\/null$)/m.test(file.patch))
+        throw new ApiError(
+          422,
+          "EDITOR_FILE_UNAVAILABLE",
+          "Deleted files cannot be opened in the workspace editor.",
+        );
+      await this.editorPath(input.path);
+      this.requireVersion(await this.readState(false, false), before.version);
+      const absolute = await this.editorPath(input.path);
+      // Only data enters the expression: Vim single-quoted strings escape an
+      // apostrophe by doubling it; backslashes are literal. Never use :edit,
+      // --remote-send, shell interpolation, or filename/key expansion.
+      const literal = (value: string) => `'${value.replaceAll("'", "''")}'`;
+      const lua =
+        "(function(a) local b = vim.fn.bufadd(a[1]); vim.fn.bufload(b); vim.bo[b].buflisted = true; vim.api.nvim_set_current_buf(b); vim.api.nvim_win_set_cursor(0, {math.min(a[2], vim.api.nvim_buf_line_count(b)), 0}); return 1 end)(_A)";
+      try {
+        const result = await this.editorRunner(
+          "nvim",
+          [
+            "--server",
+            "127.0.0.1:4242",
+            "--remote-expr",
+            `luaeval(${literal(lua)}, [${literal(absolute)}, ${input.line}])`,
+          ],
+          this.root,
+        );
+        if (result.stdout.trim() !== "1")
+          throw new Error(
+            result.stderr.trim() ||
+              result.stdout.trim() ||
+              "Neovim did not confirm opening the file.",
+          );
+      } catch (error) {
+        throw new ApiError(
+          503,
+          "EDITOR_UNAVAILABLE",
+          "Could not open the file in Neovim. Ensure nvim is on PATH and an existing session is listening with nvim --listen 127.0.0.1:4242. " +
+            (error instanceof Error ? error.message : String(error)),
+        );
+      }
+      return { ok: true };
+    });
+  }
+  private async editorPath(relative: string): Promise<string> {
+    const absolute = path.resolve(this.root, relative);
+    const contained = path.relative(this.root, absolute);
+    if (
+      !contained ||
+      contained === ".." ||
+      contained.startsWith(`..${path.sep}`) ||
+      path.isAbsolute(contained)
+    )
+      throw new ApiError(
+        400,
+        "INVALID_PATH",
+        "The editor file must be inside the workspace.",
+      );
+    try {
+      // Reject all symlinks, including directory links and links back inside the
+      // workspace. The editor must open this exact regular workspace file.
+      if ((await realpath(this.root)) !== this.root)
+        throw new ApiError(
+          422,
+          "EDITOR_FILE_UNAVAILABLE",
+          "The workspace path is now a symlink; restart jj-stamp.",
+        );
+      let current = this.root;
+      for (const part of contained.split(path.sep)) {
+        current = path.join(current, part);
+        const entry = await lstat(current);
+        if (
+          entry.isSymbolicLink() ||
+          (current === absolute ? !entry.isFile() : !entry.isDirectory())
+        )
+          throw new ApiError(
+            422,
+            "EDITOR_FILE_UNAVAILABLE",
+            "The editor requires a regular workspace file without symlinks.",
+          );
+      }
+      if ((await realpath(absolute)) !== absolute)
+        throw new ApiError(
+          422,
+          "EDITOR_FILE_UNAVAILABLE",
+          "The editor file resolves outside its workspace path.",
+        );
+    } catch (error) {
+      if (error instanceof ApiError) throw error;
+      throw new ApiError(
+        422,
+        "EDITOR_FILE_UNAVAILABLE",
+        "The file is missing or inaccessible in the current workspace; historical files cannot be opened.",
+      );
+    }
+    return absolute;
   }
   getFile(input: { version: string; path: string }): Promise<FileContents> {
     return this.serial(async () => {

@@ -1,3 +1,4 @@
+import { useId, useRef, type ReactNode } from "react";
 import type { Revision } from "./types";
 import {
   colorSchemes,
@@ -5,26 +6,31 @@ import {
   type ColorScheme,
 } from "./preferences";
 
-type RevisionMetadata = Revision & { author?: string; changeIdPrefix?: string };
+function shortChangeId({ changeId, changeIdPrefix }: Revision): string {
+  const length =
+    changeIdPrefix && changeId.startsWith(changeIdPrefix)
+      ? Math.max(8, changeIdPrefix.length)
+      : 8;
+  return changeId.slice(0, length);
+}
 export function revisionPageTitle(
   source: Revision | undefined,
   repoPath: string | undefined,
 ): string {
   return source && repoPath
-    ? `${source.changeId}: ${source.description} (${repoPath})`
+    ? `${source.description || "(no description)"} (${shortChangeId(source)} ${repoPath})`
     : "jj-stamp";
 }
-export function ChangeId({ revision }: { revision?: RevisionMetadata }) {
-  if (!revision) return <>—</>;
-  const { changeId, changeIdPrefix } = revision;
-  const prefix =
-    changeIdPrefix && changeId.startsWith(changeIdPrefix)
-      ? changeIdPrefix
-      : changeId.slice(0, 8);
-  const displayed = changeId.slice(0, Math.max(8, prefix.length));
-  return <>{displayed}</>;
+export function ChangeId({ revision }: { revision?: Revision }) {
+  return <>{revision ? shortChangeId(revision) : "—"}</>;
 }
-export function RevisionHeading({ source }: { source?: RevisionMetadata }) {
+export function RevisionHeading({
+  source,
+  children,
+}: {
+  source?: Revision;
+  children?: ReactNode;
+}) {
   return (
     <div className="revision-info" aria-label="Reviewed revision">
       <code
@@ -34,13 +40,6 @@ export function RevisionHeading({ source }: { source?: RevisionMetadata }) {
       >
         <ChangeId revision={source} />
       </code>
-      <span
-        className="revision-author"
-        title={source?.author}
-        aria-label="Revision author"
-      >
-        {source ? source.author || "Unknown author" : "—"}
-      </span>
       <span className="source-description" title={source?.description}>
         {source?.description ||
           (source ? "(no description)" : "Opening repository…")}
@@ -52,6 +51,7 @@ export function RevisionHeading({ source }: { source?: RevisionMetadata }) {
       >
         {source?.commitId.slice(0, 12) ?? "—"}
       </code>
+      {children}
     </div>
   );
 }
@@ -66,7 +66,7 @@ export function ColorSchemePicker({
 }) {
   return (
     <label className="color-scheme-picker">
-      <span className="sr-only">Color scheme</span>
+      <span>Color scheme</span>
       <select
         aria-label="Color scheme"
         value={value}
@@ -80,5 +80,68 @@ export function ColorSchemePicker({
         ))}
       </select>
     </label>
+  );
+}
+
+export function SettingsDialog({
+  colorScheme,
+  onColorSchemeChange,
+  disabled,
+}: {
+  colorScheme: ColorScheme;
+  onColorSchemeChange: (scheme: ColorScheme) => void;
+  disabled: boolean;
+}) {
+  const dialog = useRef<HTMLDialogElement>(null);
+  const id = useId();
+  return (
+    <>
+      <button
+        aria-haspopup="dialog"
+        aria-controls={id}
+        onClick={() => dialog.current?.showModal()}
+        disabled={disabled}
+      >
+        settings
+      </button>
+      <dialog
+        ref={dialog}
+        id={id}
+        className="settings-dialog"
+        aria-labelledby={`${id}-title`}
+        onKeyDown={(event) => {
+          event.stopPropagation();
+          if (event.key !== "Tab") return;
+          const controls = event.currentTarget.querySelectorAll<HTMLElement>(
+            "button:not(:disabled), select:not(:disabled)",
+          );
+          const first = controls[0];
+          const last = controls[controls.length - 1];
+          if (event.shiftKey && document.activeElement === first) {
+            event.preventDefault();
+            last?.focus();
+          } else if (!event.shiftKey && document.activeElement === last) {
+            event.preventDefault();
+            first?.focus();
+          }
+        }}
+      >
+        <div className="settings-heading">
+          <h2 id={`${id}-title`}>Settings</h2>
+          <button
+            autoFocus
+            aria-label="Close settings"
+            onClick={() => dialog.current?.close()}
+          >
+            ×
+          </button>
+        </div>
+        <ColorSchemePicker
+          value={colorScheme}
+          onChange={onColorSchemeChange}
+          disabled={disabled}
+        />
+      </dialog>
+    </>
   );
 }

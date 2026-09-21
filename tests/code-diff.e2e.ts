@@ -8,7 +8,8 @@ import { chromium, expect } from "@playwright/test";
 const app = express();
 const server = createServer(app);
 const vite = await createVite({
-  server: { middlewareMode: true, hmr: false },
+  // Attach HMR to this ephemeral server, avoiding Vite's shared port 24678.
+  server: { middlewareMode: true, hmr: { server } },
   appType: "custom",
 });
 app.get("/", async (_req, res) =>
@@ -41,23 +42,135 @@ try {
     await expect(line(10)).toBeVisible();
     if (layout === "split")
       await page.getByText("Layout", { exact: true }).click();
+    // A controlled anchor can be extended, replaced, cleared, and reset.
+    await line(10).click();
+    await line(30).click({ modifiers: ["Shift"] });
+    await expect(page.locator("#range")).toHaveText(
+      JSON.stringify({
+        start: 10,
+        side: "additions",
+        end: 30,
+        endSide: "additions",
+      }),
+    );
+    await line(30).click(); // plain click moves the anchor, rather than extending it
+    await line(10).click({ modifiers: ["Shift"] });
+    await expect(page.locator("#range")).toHaveText(
+      JSON.stringify({
+        start: 30,
+        side: "additions",
+        end: 10,
+        endSide: "additions",
+      }),
+    );
+    await line(10).click();
+    await line(10).click(); // click the lone selected line again to unselect
+    await expect(page.locator("#range")).toHaveText("null");
+    await expect(page.locator("#selection")).toHaveText("{}");
+    await line(30).click({ modifiers: ["Shift"] }); // no stale line-10 anchor
+    await expect(page.locator("#range")).toHaveText(
+      JSON.stringify({
+        start: 30,
+        side: "additions",
+        end: 30,
+        endSide: "additions",
+      }),
+    );
+    await page.keyboard.press("Escape");
+    await expect(page.locator("#range")).toHaveText("null");
+    await line(10).click({ modifiers: ["Shift"] });
+    await page.getByText("Clear", { exact: true }).click(); // external reset
+    await line(30).click({ modifiers: ["Shift"] });
+    await expect(page.locator("#range")).toHaveText(
+      JSON.stringify({
+        start: 30,
+        side: "additions",
+        end: 30,
+        endSide: "additions",
+      }),
+    );
+    await page.keyboard.press("Escape");
+
+    const requests: { path: string; version: string; line: number }[] = [];
+    let editorFailure = false;
+    await page.route("**/api/editor", async (route) => {
+      requests.push(route.request().postDataJSON());
+      await route.fulfill({
+        status: editorFailure ? 503 : 200,
+        contentType: "application/json",
+        body: JSON.stringify(
+          editorFailure
+            ? { error: "Neovim server is unavailable" }
+            : { success: true },
+        ),
+      });
+    });
+    await line(10).hover();
+    await page.keyboard.press("e");
+    await expect.poll(() => requests.length).toBe(1);
+    assert.deepEqual(requests[0], {
+      path: "scroll-fixture.txt",
+      version: "0",
+      line: 10,
+    });
+    await page
+      .locator('[data-line="10"][data-line-type="change-deletion"]')
+      .first()
+      .hover();
+    await page.keyboard.press("e");
+    await expect.poll(() => requests.length).toBe(2);
+    assert.equal(requests[1].line, 10); // deletion opens its working-tree replacement
+    await page.getByText("Layout", { exact: true }).hover();
+    await page.keyboard.press("e"); // no hovered line
+    await page
+      .getByRole("textbox", { name: "Editable shortcut guard" })
+      .focus();
+    await line(10).hover();
+    await page.keyboard.press("e");
+    await page.getByLabel("Editable text").focus();
+    await page.keyboard.press("e");
+    await page.locator(".code-surface").focus();
+    for (const key of ["Control+e", "Meta+e", "Alt+e", "Shift+e"])
+      await page.keyboard.press(key);
+    await page.waitForTimeout(100);
+    assert.equal(requests.length, 2, `${layout}: editor shortcut guards`);
+    await page.getByText("Refresh", { exact: true }).click();
+    await line(10).hover();
+    await page.locator(".code-surface").focus();
+    await page.keyboard.press("e");
+    await expect.poll(() => requests.length).toBe(3);
+    assert.equal(
+      requests[2].version,
+      "1",
+      "editor uses the refreshed diff version",
+    );
+    editorFailure = true;
+    await line(10).hover();
+    await page.keyboard.press("e");
+    await expect(page.getByRole("alert")).toContainText(
+      "Neovim server is unavailable",
+    );
+    await page.keyboard.press("Escape");
+    await expect(page.getByRole("alert")).toHaveCount(0);
+    await page.unroute("**/api/editor");
+
     const box = await line(10).boundingBox();
     assert(box);
     // Native selection does not call squash-selection handlers, even after a
-    // normal selection already exists (Shift must not extend the squash range).
+    // normal selection already exists (Alt must not extend the squash range).
     await page.mouse.move(box.x + 25, box.y + box.height / 2);
     await page.mouse.down();
     await page.mouse.move(box.x + 180, box.y + box.height / 2, { steps: 5 });
     await page.mouse.up();
     await expect(page.locator("#selection")).not.toHaveText("{}");
     const selectionBefore = await page.locator("#selection").textContent();
-    await page.keyboard.down("Shift");
+    await page.keyboard.down("Alt");
     await expect(line(10)).toHaveCSS("cursor", "text");
     await page.mouse.move(box.x + 35, box.y + box.height / 2);
     await page.mouse.down();
     await page.mouse.move(box.x + 200, box.y + box.height / 2, { steps: 5 });
     await page.mouse.up();
-    await page.keyboard.up("Shift");
+    await page.keyboard.up("Alt");
     assert(
       (await page.evaluate(() => window.getSelection()?.toString() ?? ""))
         .length > 0,
@@ -68,6 +181,15 @@ try {
     assert(copied.includes("fixture"), `${layout}: copy selected native text`);
     await expect(page.locator("#selection")).toHaveText(selectionBefore!);
     await expect(page.locator("#dragging")).toHaveText("false");
+    await line(10).click();
+    assert.equal(
+      await page.evaluate(() => window.getSelection()?.toString() ?? ""),
+      "",
+      `${layout}: ordinary click clears the old native text highlight`,
+    );
+    await expect(page.locator("#selection")).toHaveText("{}");
+    await line(10).click();
+    await expect(page.locator("#selection")).toHaveText(selectionBefore!);
 
     // Context and the shadow host survive refresh, theme, and layout changes.
     await expect(page.locator("[data-expand-up]").first()).toHaveCSS(

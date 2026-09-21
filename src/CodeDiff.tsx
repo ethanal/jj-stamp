@@ -5,6 +5,7 @@ import {
   useLayoutEffect,
   useMemo,
   useRef,
+  useState,
   type ReactNode,
   type PointerEvent as ReactPointerEvent,
 } from "react";
@@ -16,13 +17,20 @@ import {
   type SelectedLineRange,
 } from "@pierre/diffs";
 import type { DiffFile, Selections } from "./types";
-import { selectionFromRange } from "./selection";
+import {
+  selectionAnchor,
+  selectionFromRange,
+  workingTreeLine,
+  type LinePoint,
+} from "./selection";
+import { api, errorMessage } from "./api";
+import {
+  installCopySelectionHandler,
+  readRenderedRightHandLines,
+} from "./copy-selection";
 import { colorSchemes, type ColorScheme } from "./preferences";
 
-interface Point {
-  line: number;
-  side: "additions" | "deletions";
-}
+type Point = LinePoint;
 function pointFromElement(element: Element | null): Point | null {
   const row = element?.closest<HTMLElement>(
     "[data-line], [data-column-number]",
@@ -205,12 +213,18 @@ export function CodeDiff({
   contextDisabled: boolean;
   range: SelectedLineRange | null;
   disabled: boolean;
-  onSelection: (range: SelectedLineRange, selections: Selections) => void;
+  onSelection: (
+    range: SelectedLineRange | null,
+    selections: Selections,
+  ) => void;
   onDragging: (dragging: boolean) => void;
   onError: (message: string) => void;
   loadFile: (path: string, version: string) => Promise<FileDiffLoadedFiles>;
 }) {
   const root = useRef<HTMLDivElement>(null);
+  const [editorError, setEditorError] = useState("");
+  const editorPending = useRef(false);
+  const mouse = useRef<{ x: number; y: number } | null>(null);
   const instance = useRef<DiffInstance | null>(null);
   const stop = useRef<(() => void) | null>(null);
   const container = useRef<HTMLElement | null>(null);
@@ -223,6 +237,7 @@ export function CodeDiff({
     selections,
     style,
     contextDisabled,
+    version,
   });
   current.current = {
     file,
@@ -233,6 +248,7 @@ export function CodeDiff({
     selections,
     style,
     contextDisabled,
+    version,
   };
   const paint = useCallback(() => {
     const shadow = container.current?.shadowRoot;
@@ -330,10 +346,26 @@ export function CodeDiff({
   );
   useEffect(() => () => stop.current?.(), []);
   useEffect(() => {
+    if (!root.current) return;
+    return installCopySelectionHandler(root.current, () => {
+      const rendered = instance.current;
+      if (!rendered) return null;
+      return {
+        range: current.current.range,
+        style: current.current.style,
+        getLineIndex: rendered.getLineIndex,
+        fileDiff: rendered.fileDiff,
+        renderedLines: container.current?.shadowRoot
+          ? readRenderedRightHandLines(container.current.shadowRoot)
+          : [],
+      };
+    });
+  }, []);
+  useEffect(() => {
     const setTextCursor = (event: KeyboardEvent) => {
       container.current?.toggleAttribute(
         "data-fold-text-selection",
-        event.shiftKey,
+        event.altKey,
       );
     };
     const reset = () =>
@@ -345,6 +377,89 @@ export function CodeDiff({
       document.removeEventListener("keydown", setTextCursor);
       document.removeEventListener("keyup", setTextCursor);
       window.removeEventListener("blur", reset);
+    };
+  }, []);
+
+  useEffect(() => {
+    stop.current?.();
+    setEditorError("");
+  }, [file.path, file.patch]);
+  useEffect(() => {
+    if (disabled) stop.current?.();
+  }, [disabled]);
+  useEffect(() => {
+    const track = (event: PointerEvent) => {
+      mouse.current = { x: event.clientX, y: event.clientY };
+    };
+    const forget = () => {
+      mouse.current = null;
+    };
+    const key = (event: KeyboardEvent) => {
+      if (
+        event.defaultPrevented ||
+        event.repeat ||
+        event.isComposing ||
+        event.ctrlKey ||
+        event.metaKey ||
+        event.altKey ||
+        event.shiftKey
+      )
+        return;
+      if (
+        event
+          .composedPath()
+          .some(
+            (node) =>
+              node instanceof HTMLElement &&
+              (node.matches("input, textarea, select") ||
+                node.isContentEditable),
+          )
+      )
+        return;
+      if (event.key === "Escape" && !current.current.disabled) {
+        stop.current?.();
+        current.current.onSelection(null, {});
+        setEditorError("");
+        return;
+      }
+      if (
+        event.key !== "e" ||
+        current.current.disabled ||
+        editorPending.current ||
+        !mouse.current
+      )
+        return;
+      const element = deepElementAt(mouse.current.x, mouse.current.y);
+      const host = element?.getRootNode();
+      if (!(host instanceof ShadowRoot) || !root.current?.contains(host.host))
+        return;
+      const point = pointFromElement(element);
+      if (!point) return;
+      event.preventDefault();
+      const { file, version } = current.current;
+      editorPending.current = true;
+      setEditorError("");
+      void api("editor", {
+        version,
+        path: file.path,
+        line: workingTreeLine(file.hunks, point),
+      })
+        .catch((error: unknown) =>
+          setEditorError(`Could not open Neovim: ${errorMessage(error)}`),
+        )
+        .finally(() => {
+          editorPending.current = false;
+        });
+    };
+    document.addEventListener("pointermove", track);
+    document.addEventListener("pointerleave", forget);
+    window.addEventListener("blur", forget);
+    document.addEventListener("keydown", key);
+    return () => {
+      document.removeEventListener("pointermove", track);
+      document.removeEventListener("pointerleave", forget);
+      window.removeEventListener("blur", forget);
+      document.removeEventListener("keydown", key);
     };
   }, []);
 
@@ -368,8 +483,14 @@ export function CodeDiff({
   }, []);
   const pointerDown = useCallback(
     (event: ReactPointerEvent<HTMLDivElement>) => {
-      // Shift-drag must not preventDefault, focus, or emit squash selections.
-      if (event.shiftKey || event.button !== 0 || current.current.disabled)
+      // Alt-drag is native text selection: never preventDefault or focus.
+      if (
+        event.altKey ||
+        event.ctrlKey ||
+        event.metaKey ||
+        event.button !== 0 ||
+        current.current.disabled
+      )
         return;
       const path = event.nativeEvent.composedPath();
       const element = path.find((item) => item instanceof Element) as
@@ -377,9 +498,30 @@ export function CodeDiff({
       const point = pointFromElement(element ?? null);
       if (!point) return; // Expansion controls retain their own native events.
       event.preventDefault();
+      // A normal code gesture leaves copy mode, including its browser highlight.
+      document.getSelection()?.removeAllRanges();
+      (
+        container.current?.shadowRoot as
+          | (ShadowRoot & { getSelection?: () => Selection | null })
+          | null
+          | undefined
+      )
+        ?.getSelection?.()
+        ?.removeAllRanges();
       root.current?.focus({ preventScroll: true });
       stop.current?.();
-      const anchor = point;
+      const previous = current.current.range;
+      const anchor = selectionAnchor(point, event.shiftKey, previous);
+      const toggleOff =
+        !event.shiftKey &&
+        previous &&
+        previous.start === point.line &&
+        previous.end === point.line &&
+        (previous.side ?? "additions") === point.side &&
+        (previous.endSide ?? previous.side ?? "additions") === point.side;
+      let moved = false;
+      const startX = event.clientX,
+        startY = event.clientY;
       select(anchor, point);
       current.current.onDragging(true);
       const pointerId = event.pointerId;
@@ -397,13 +539,18 @@ export function CodeDiff({
       const move = (event: PointerEvent) => {
         if (event.pointerId !== pointerId) return;
         event.preventDefault();
+        moved ||=
+          Math.hypot(event.clientX - startX, event.clientY - startY) > 3;
         lastX = event.clientX;
         lastY = event.clientY;
         updateAt(lastX, lastY);
       };
       const finish = (event: PointerEvent) => {
         if (event.pointerId !== pointerId) return;
-        if (event.type === "pointerup") updateAt(event.clientX, event.clientY);
+        if (event.type === "pointerup") {
+          updateAt(event.clientX, event.clientY);
+          if (toggleOff && !moved) current.current.onSelection(null, {});
+        }
         cleanup();
       };
       const cleanup = () => {
@@ -519,7 +666,7 @@ export function CodeDiff({
       className="code-surface"
       ref={root}
       tabIndex={0}
-      aria-label={`Diff for ${file.path}. Drag code to select lines; Shift-drag to select text; press s to squash.`}
+      aria-label={`Diff for ${file.path}. Drag code to select lines; Shift-click to extend; Alt-drag to select text; press s to squash or e to open the hovered line in Neovim.`}
       onPointerDown={pointerDown}
       onClickCapture={(event) => {
         if (
@@ -538,6 +685,14 @@ export function CodeDiff({
         }
       }}
     >
+      {editorError && (
+        <div
+          role="alert"
+          style={{ padding: "8px 12px", color: "var(--error, #d85b62)" }}
+        >
+          {editorError}
+        </div>
+      )}
       <StableDiffViewport patch={file.patch}>
         {/* A changed patch starts with contracted context. Mere theme, layout,
             version, and queue updates keep the expanded renderer intact. */}

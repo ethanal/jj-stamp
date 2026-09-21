@@ -159,3 +159,87 @@ test("split ranges always select both aligned columns, regardless of drag origin
     { first: [2, 3] },
   );
 });
+
+test("Shift extends the controlled anchor; plain clicks and resets re-anchor", async () => {
+  const { selectionAnchor } = await import("../src/selection.ts");
+  const point = { line: 30, side: "additions" as const };
+  const range = { start: 11, end: 12, side: "deletions" as const };
+  assert.deepEqual(selectionAnchor(point, true, range), {
+    line: 11,
+    side: "deletions",
+  });
+  assert.deepEqual(selectionAnchor(point, false, range), point);
+  assert.deepEqual(selectionAnchor(point, true, null), point);
+});
+
+test("editor maps old-side replacement, context, and shifted expanded lines", async () => {
+  const { workingTreeLine } = await import("../src/selection.ts");
+  const old = (line: number) =>
+    workingTreeLine(hunks, { line, side: "deletions" });
+  assert.equal(old(11), 11);
+  assert.equal(old(12), 13);
+  assert.equal(old(25), 26);
+  assert.equal(old(30), 31);
+  assert.equal(old(40), 41);
+  assert.equal(workingTreeLine(hunks, { line: 25, side: "additions" }), 25);
+});
+
+test("editor maps pure deletions to surviving context, including EOF and empty files", async () => {
+  const { workingTreeLine } = await import("../src/selection.ts");
+  const deleted = (rows: Hunk["rows"], header = "@@ -10,4 +10,2 @@") =>
+    workingTreeLine([{ id: "deleted", header, rows }], {
+      line: 11,
+      side: "deletions",
+    });
+  const before = { index: 1, raw: " before", oldLine: 10, newLine: 10 };
+  const removal = { index: 2, raw: "-gone", oldLine: 11 };
+  const after = { index: 3, raw: " after", oldLine: 12, newLine: 11 };
+  assert.equal(deleted([before, removal, after]), 11);
+  assert.equal(deleted([before, removal]), 10);
+  assert.equal(deleted([removal], "@@ -1,11 +0,0 @@"), 1);
+});
+
+test("editor clamps uneven replacements to their last new-side line", async () => {
+  const { workingTreeLine } = await import("../src/selection.ts");
+  const rows = [
+    { index: 1, raw: "-one", oldLine: 1 },
+    { index: 2, raw: "-two", oldLine: 2 },
+    { index: 3, raw: "-three", oldLine: 3 },
+    { index: 4, raw: "+first", newLine: 1 },
+    { index: 5, raw: "+second", newLine: 2 },
+  ];
+  const hunks = [{ id: "replace", header: "@@ -1,3 +1,2 @@", rows }];
+  for (const [line, expected] of [
+    [1, 1],
+    [2, 2],
+    [3, 2],
+  ])
+    assert.equal(workingTreeLine(hunks, { line, side: "deletions" }), expected);
+});
+
+test("expanded context accounts for zero-context insert/delete hunk coordinates", async () => {
+  const { workingTreeLine } = await import("../src/selection.ts");
+  const insertion = [
+    {
+      id: "add",
+      header: "@@ -10,0 +11,2 @@",
+      rows: [
+        { index: 1, raw: "+one", newLine: 11 },
+        { index: 2, raw: "+two", newLine: 12 },
+      ],
+    },
+  ];
+  assert.equal(workingTreeLine(insertion, { line: 10, side: "deletions" }), 10);
+  assert.equal(workingTreeLine(insertion, { line: 11, side: "deletions" }), 13);
+  const deletion = [
+    {
+      id: "del",
+      header: "@@ -10,2 +9,0 @@",
+      rows: [
+        { index: 1, raw: "-one", oldLine: 10 },
+        { index: 2, raw: "-two", oldLine: 11 },
+      ],
+    },
+  ];
+  assert.equal(workingTreeLine(deletion, { line: 12, side: "deletions" }), 10);
+});

@@ -4,7 +4,7 @@ import { homedir } from "node:os";
 import path from "node:path";
 import { parseArgs } from "node:util";
 import { ReviewService } from "./server/service.ts";
-import { startLocalServer } from "./server/http.ts";
+import { DEFAULT_PORT, startLocalServer } from "./server/http.ts";
 import { run } from "./server/process.ts";
 
 declare const __JJ_STAMP_VERSION__: string;
@@ -17,7 +17,8 @@ Selected lines are squashed into that change's immediate mutable parent.
 
 Options:
   -R, --repository PATH  Workspace to review (default: current directory)
-      --port PORT        Loopback port (default: 0, choose an available port)
+      --port PORT        Loopback port (default: ${DEFAULT_PORT}, free port if occupied)
+                         Use 0 to always choose an available port
       --no-open          Print the URL without launching a browser
   -h, --help             Show this help
   -V, --version          Show version
@@ -55,7 +56,7 @@ async function main() {
       help: { type: "boolean", short: "h" },
       version: { type: "boolean", short: "V" },
       repository: { type: "string", short: "R" },
-      port: { type: "string", default: "0" },
+      port: { type: "string" },
       "no-open": { type: "boolean", default: false },
     },
   });
@@ -72,7 +73,10 @@ async function main() {
       "Supply one change ID or revision expression. See jj-stamp --help.",
     );
   }
-  if (!/^\d+$/.test(values.port) || Number(values.port) > 65535) {
+  if (
+    values.port !== undefined &&
+    (!/^\d+$/.test(values.port) || Number(values.port) > 65535)
+  ) {
     throw new Error("--port must be an integer between 0 and 65535.");
   }
   const repoPath = path.resolve(values.repository ?? process.cwd());
@@ -108,7 +112,7 @@ async function main() {
   const local = await startLocalServer({
     service,
     assetsDir,
-    port: Number(values.port),
+    port: values.port === undefined ? undefined : Number(values.port),
   });
   console.log(
     `Reviewing ${state.source.changeId.slice(0, 12)}: ${state.source.description}`,

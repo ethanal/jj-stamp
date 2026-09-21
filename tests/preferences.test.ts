@@ -13,6 +13,7 @@ import { SidebarResize } from "../src/SidebarResize.tsx";
 import {
   ChangeId,
   ColorSchemePicker,
+  SettingsDialog,
   RevisionHeading,
   revisionPageTitle,
 } from "../src/ReviewToolbar.tsx";
@@ -74,23 +75,38 @@ test("resizers expose their purpose, bounds and current width to keyboard and AT
   assert.match(html, /tabindex="0"/);
 });
 
-test("page title uses the complete change id and repository path in the requested order", () => {
+test("page title puts the description before the short change ID and full repository path", () => {
   assert.equal(
     revisionPageTitle(source, "/home/me/repository"),
-    "abcdefghijklmno: Review a change (/home/me/repository)",
+    "Review a change (abcdefgh /home/me/repository)",
   );
+  assert.equal(
+    revisionPageTitle(
+      { ...source, changeIdPrefix: "abcdefghij" },
+      "/repo with spaces",
+    ),
+    "Review a change (abcdefghij /repo with spaces)",
+  );
+  assert.equal(
+    revisionPageTitle({ ...source, description: "" }, "/repo"),
+    "(no description) (abcdefgh /repo)",
+  );
+  assert.equal(revisionPageTitle(source, undefined), "jj-stamp");
+  assert.equal(revisionPageTitle(undefined, "/repo"), "jj-stamp");
   assert.equal(revisionPageTitle(undefined, undefined), "jj-stamp");
 });
 
-test("heading puts change id, author, title, then commit id without bold prefixes", () => {
-  const html = renderToStaticMarkup(createElement(RevisionHeading, { source }));
-  assert.doesNotMatch(html, /<strong>/);
+test("heading groups change ID, title, commit ID and totals without the author", () => {
+  const html = renderToStaticMarkup(
+    createElement(RevisionHeading, { source }, "change +422 −15"),
+  );
+  assert.doesNotMatch(html, /<strong>|Revision author|A\. Reviewer/);
   assert.match(html, />abcdefgh</);
   const fields = [
     ">abcdefgh<",
-    "A. Reviewer",
     ">Review a change<",
     ">0123456789ab<",
+    "change +422 −15",
   ];
   const positions = fields.map((field) => html.indexOf(field));
   assert.ok(positions.every((position) => position >= 0));
@@ -100,15 +116,9 @@ test("heading puts change id, author, title, then commit id without bold prefixe
   );
   assert.match(
     renderToStaticMarkup(
-      createElement(RevisionHeading, {
-        source: {
-          changeId: "abcdefghijk",
-          commitId: "0123456789abcdef",
-          description: "",
-        },
-      }),
+      createElement(RevisionHeading, { source: { ...source, description: "" } }),
     ),
-    /Unknown author/,
+    /\(no description\)/,
   );
 });
 
@@ -151,4 +161,20 @@ test("theme control exposes all supported palettes and current preference", () =
   assert.match(html, /value="light" selected=""/);
   for (const scheme of Object.keys(colorSchemes))
     assert.match(html, new RegExp(`value="${scheme}"`));
+});
+
+test("settings uses a labeled, initially closed native dialog and a named close control", () => {
+  const html = renderToStaticMarkup(
+    createElement(SettingsDialog, {
+      colorScheme: "dark",
+      disabled: false,
+      onColorSchemeChange() {},
+    }),
+  );
+  assert.match(html, /aria-haspopup="dialog"/);
+  assert.match(html, /<dialog[^>]*aria-labelledby=/);
+  assert.doesNotMatch(html, /<dialog[^>]*\bopen(?:[ =>])/);
+  assert.match(html, /<h2[^>]*>Settings<\/h2>/);
+  assert.match(html, /aria-label="Close settings"/);
+  assert.match(html, /<span>Color scheme<\/span>/);
 });

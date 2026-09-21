@@ -8,7 +8,7 @@
     "build": "node scripts/build.mjs",
     "test": "tsx --test tests/*.test.ts",
     "benchmark": "tsx scripts/benchmark.ts",
-    "test:browser": "tsx tests/code-diff.e2e.ts && tsx tests/preferences.e2e.ts && tsx tests/browser.e2e.ts",
+    "test:browser": "tsx tests/code-diff.e2e.ts && tsx tests/copy-selection.e2e.ts && tsx tests/preferences.e2e.ts && tsx tests/browser.e2e.ts",
     "format": "prettier --write src server scripts tests cli.ts vite.config.ts tsconfig.json package.json README.md",
     "test:cli": "npm run build && tsx --test tests/cli.e2e.ts"
   },

@@ -60,6 +60,17 @@ export function createApi(service: ReviewService): express.Router {
       .parse(req.body);
     res.json(await service.selectRevision(input));
   });
+  router.post("/editor", async (req, res) => {
+    const input = z
+      .object({
+        version,
+        path: z.string().min(1).max(4096),
+        line: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+      })
+      .strict()
+      .parse(req.body);
+    res.json(await service.openEditor(input));
+  });
   router.post("/file", async (req, res) => {
     const input = z
       .object({ version, path: z.string().min(1).max(4096) })

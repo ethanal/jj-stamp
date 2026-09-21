@@ -86,6 +86,23 @@ function Fixture() {
       >
         Squash
       </button>
+      <button
+        onClick={() => {
+          setSelections({});
+          setRange(null);
+        }}
+      >
+        Clear
+      </button>
+      <input aria-label="Editable shortcut guard" />
+      <span
+        contentEditable
+        suppressContentEditableWarning
+        aria-label="Editable text"
+      >
+        editable
+      </span>
+      <output id="range">{JSON.stringify(range)}</output>
       <output id="selection">{JSON.stringify(selections)}</output>
       <output id="dragging">{String(dragging)}</output>
       <output id="error">{error}</output>

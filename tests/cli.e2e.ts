@@ -16,6 +16,7 @@ import test, { type TestContext } from "node:test";
 import { fileURLToPath } from "node:url";
 import { jj, run } from "../server/process.ts";
 import type { State } from "../server/service.ts";
+import { DEFAULT_PORT } from "../server/http.ts";
 import { createDemo } from "./fixtures.ts";
 
 const executable = fileURLToPath(new URL("../dist/cli.cjs", import.meta.url));
@@ -559,6 +560,33 @@ exec '${jjPath}' "$@"
     },
   );
 }
+
+test(
+  "default port is reused across launches and falls back only while occupied",
+  { timeout: 60_000 },
+  async (t) => {
+    const box = await sandbox(t);
+    const repo = await createDemo(box.root);
+    const args = ["--repository", repo, "--no-open"];
+    const first = box.start(args);
+    const firstUrl = await first.url();
+    assert.equal(new URL(firstUrl).port, String(DEFAULT_PORT));
+    // A second session must not fail or take over the first listener.
+    const fallback = box.start(args);
+    const fallbackUrl = await fallback.url();
+    assert.notEqual(new URL(fallbackUrl).port, String(DEFAULT_PORT));
+    assert.equal((await request(fallbackUrl, "/api/state")).status, 200);
+    await fallback.stop("SIGTERM");
+    await first.stop("SIGTERM");
+    const restarted = box.start(args);
+    assert.equal(await restarted.url(), firstUrl);
+    await restarted.stop("SIGTERM");
+    // Explicit zero still asks the OS for an ephemeral port.
+    const ephemeral = box.start([...args, "--port", "0"]);
+    assert.notEqual(new URL(await ephemeral.url()).port, String(DEFAULT_PORT));
+    await ephemeral.stop("SIGTERM");
+  },
+);
 
 test(
   "an occupied port fails clearly without opening a browser",

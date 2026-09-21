@@ -22,7 +22,6 @@
   --scrollbar: #363e49;
   --current-bg: #154d79;
   --current-fg: #ffffff;
-  --current-border: #79c9ff;
   --error-fg: #e6b192;
   --error-bg: #32271f;
   --error-border: #63432e;
@@ -82,7 +81,6 @@
   --scrollbar: #a1acb8;
   --current-bg: #07579a;
   --current-fg: #ffffff;
-  --current-border: #00345e;
   --error-fg: #71320d;
   --error-bg: #fff0df;
   --error-border: #c68b60;
@@ -112,7 +110,6 @@
   --scrollbar: #586e75;
   --current-bg: #005a6b;
   --current-fg: #fdf6e3;
-  --current-border: #2aa198;
   --error-fg: #fdf6e3;
   --error-bg: #4d2a23;
   --error-border: #cb4b16;
@@ -143,7 +140,6 @@
   --scrollbar: #93a1a1;
   --current-bg: #073642;
   --current-fg: #fdf6e3;
-  --current-border: #268bd2;
   --error-fg: #a83e12;
   --error-bg: #eee8d5;
   --error-border: #cb4b16;
@@ -248,14 +244,6 @@ kbd {
 .change-id {
   flex-shrink: 0;
 }
-.revision-author {
-  color: var(--muted);
-  max-width: 180px;
-  flex-shrink: 1;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
 .source-description {
   color: var(--fg);
   min-width: 0;
@@ -264,7 +252,6 @@ kbd {
   white-space: nowrap;
 }
 .commit-id {
-  margin-left: auto;
   flex-shrink: 0;
   font-size: 10px;
 }
@@ -520,6 +507,40 @@ kbd {
 .layout-toggle button.active {
   color: var(--strong);
 }
+.settings-dialog {
+  width: min(360px, calc(100vw - 32px));
+  padding: 20px;
+  color: var(--fg);
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  box-shadow: 0 12px 40px #0006;
+}
+.settings-dialog::backdrop {
+  background: #0008;
+}
+.settings-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 20px;
+}
+.settings-heading h2 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 500;
+}
+.settings-heading button {
+  width: 28px;
+  height: 28px;
+  font-size: 20px;
+}
+.color-scheme-picker {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
 .color-scheme-picker select {
   background: var(--panel);
   border: 1px solid var(--border);
@@ -613,7 +634,6 @@ kbd {
 .log-row.is-current {
   color: var(--current-fg);
   background: var(--current-bg);
-  box-shadow: -3px 0 var(--current-border);
 }
 .log-change {
   color: var(--accent);
@@ -720,9 +740,6 @@ kbd {
   .revision-info {
     gap: 9px;
   }
-  .revision-author {
-    max-width: 110px;
-  }
 }
 @media (max-width: 850px) {
   .workspace {
@@ -803,9 +820,6 @@ kbd {
   .revision-info {
     gap: 7px;
     font-size: 10px;
-  }
-  .revision-author {
-    max-width: 80px;
   }
   .commit-id {
     max-width: 52px;

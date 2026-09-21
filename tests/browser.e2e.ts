@@ -112,7 +112,7 @@ try {
   await expect(page.getByRole("button", { name: "reset demo" })).toHaveCount(0);
   await expect(codeLine(21)).toBeVisible();
   await expect(page).toHaveTitle(
-    `${initial.source.changeId}: ${initial.source.description} (${initial.repo.path})`,
+    `${initial.source.description} (${initial.source.changeId.slice(0, 8)} ${initial.repo.path})`,
   );
   await expect(page.getByLabel("Repository path")).toHaveText(
     initial.repo.path,
@@ -135,9 +135,7 @@ try {
     "title",
     initial.source.commitId,
   );
-  await expect(page.getByLabel("Revision author")).toHaveText(
-    initial.source.author!,
-  );
+  await expect(page.getByLabel("Revision author")).toHaveCount(0);
   await expect(
     page.getByLabel("Current change ID").locator("strong"),
   ).toHaveCount(0);
@@ -152,9 +150,9 @@ try {
       ),
     [
       "Current change ID",
-      "Revision author",
       "source-description",
       "Current commit ID",
+      "commit-totals",
     ],
   );
   await expect(page.locator(".file-tree [role=tree]")).toBeVisible();
@@ -326,9 +324,11 @@ try {
   await expect(page.getByRole("status")).toContainText(
     "1 changed line selected",
   );
+  await page.getByRole("button", { name: "settings", exact: true }).click();
   await page
     .getByRole("combobox", { name: "Color scheme" })
     .selectOption("light");
+  await page.getByRole("button", { name: "Close settings" }).click();
   await expect(page.locator("html")).toHaveAttribute(
     "data-color-scheme",
     "light",
@@ -339,6 +339,7 @@ try {
   );
   await page.reload();
   await expect(page.locator(".file-bar")).toContainText("src/notifications.ts");
+  await page.getByRole("button", { name: "settings", exact: true }).click();
   await expect(
     page.getByRole("combobox", { name: "Color scheme" }),
   ).toHaveValue("light");
@@ -365,6 +366,7 @@ try {
     "data-color-scheme",
     "dark",
   );
+  await page.getByRole("button", { name: "Close settings" }).click();
   console.log(
     "✓ Resizable sidebars, keyboard resizing, color schemes, persisted preferences, and heading metadata",
   );
@@ -469,13 +471,13 @@ try {
   );
   await codeLine(added[0].newLine!).click({ modifiers: ["Shift"] });
   await expect(page.getByRole("status")).toContainText(
-    "1 changed line selected",
+    "2 changed lines selected",
   );
-  // Shift must leave squash picks unchanged and allow real browser text selection.
+  // Alt must leave squash picks unchanged and allow real browser text selection.
   const copyLine = codeLine(added[0].newLine!);
   const copyBounds = await copyLine.boundingBox();
   assert(copyBounds);
-  await page.keyboard.down("Shift");
+  await page.keyboard.down("Alt");
   await page.mouse.move(
     copyBounds.x + 10,
     copyBounds.y + copyBounds.height / 2,
@@ -487,14 +489,14 @@ try {
     { steps: 8 },
   );
   await page.mouse.up();
-  await page.keyboard.up("Shift");
+  await page.keyboard.up("Alt");
   assert(
     (await page.evaluate(() => window.getSelection()?.toString() ?? ""))
       .length > 0,
-    "Shift+drag selects native text for copying",
+    "Alt+drag selects native text for copying",
   );
   await expect(page.getByRole("status")).toContainText(
-    "1 changed line selected",
+    "2 changed lines selected",
   );
   await codeLine(added[1].newLine!).click();
   await expect(page.getByRole("status")).toContainText(
@@ -509,7 +511,7 @@ try {
   ]);
   await pressMutation("u");
   console.log(
-    "✓ Exact single-line squash and Shift+drag native text copying; no whole-hunk selection",
+    "✓ Exact single-line squash and Alt+drag native text copying; no whole-hunk selection",
   );
 
   await expect(
@@ -845,23 +847,23 @@ try {
   ]);
   const described = await refreshState();
   await expect(page).toHaveTitle(
-    `${described.source.changeId}: Updated commit title (${initial.repo.path})`,
+    `Updated commit title (${described.source.changeId.slice(0, 8)} ${initial.repo.path})`,
   );
   await jj(initial.repo.path, ["new", "-m", "Next change"]);
   const stillReviewed = await refreshState();
   assert.equal(stillReviewed.source.changeId, described.source.changeId);
   await expect(page).toHaveTitle(
-    `${described.source.changeId}: Updated commit title (${initial.repo.path})`,
+    `Updated commit title (${described.source.changeId.slice(0, 8)} ${initial.repo.path})`,
   );
   await reviewWorkingCopy();
   const next = await refreshState();
   assert.notEqual(next.source.changeId, described.source.changeId);
   await expect(page.locator(".file-tree [role=treeitem]")).toHaveCount(0);
   await expect(page).toHaveTitle(
-    `${next.source.changeId}: Next change (${initial.repo.path})`,
+    `Next change (${next.source.changeId.slice(0, 8)} ${initial.repo.path})`,
   );
   console.log(
-    "✓ Page title follows the full change ID and commit title on refresh",
+    "✓ Page title follows the short change ID and commit title on refresh",
   );
   // Tree structure follows real repository changes, including duplicate
   // basenames, read-only files, and removal/restoration of a whole file.

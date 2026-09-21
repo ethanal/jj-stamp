@@ -19,7 +19,7 @@ import { useAppearancePreferences } from "./preferences";
 import { SidebarResize } from "./SidebarResize";
 import {
   ChangeId,
-  ColorSchemePicker,
+  SettingsDialog,
   RevisionHeading,
   revisionPageTitle,
 } from "./ReviewToolbar";
@@ -112,7 +112,12 @@ function App() {
   const source = queued.confirmed?.source ?? state?.source;
   useEffect(() => {
     document.title = revisionPageTitle(source, state?.repo.path);
-  }, [source?.changeId, source?.description, state?.repo.path]);
+  }, [
+    source?.changeId,
+    source?.changeIdPrefix,
+    source?.description,
+    state?.repo.path,
+  ]);
   const [activePath, setActivePath] = useState("");
   const [range, setRange] = useState<SelectedLineRange | null>(null);
   const [picked, setPicked] = useState<RowRef[]>([]);
@@ -291,7 +296,7 @@ function App() {
     [clear, queue],
   );
   const select = useCallback(
-    (next: SelectedLineRange, selected: Selections) => {
+    (next: SelectedLineRange | null, selected: Selections) => {
       const current = queue.getSnapshot();
       if (lock.current || current.recovering || !current.view) return;
       try {
@@ -403,7 +408,7 @@ function App() {
       if (
         event.target instanceof Element &&
         event.target.closest(
-          'input, textarea, select, [contenteditable="true"]',
+          'input, textarea, select, dialog, [contenteditable="true"]',
         )
       )
         return;
@@ -455,15 +460,16 @@ function App() {
         >
           {state?.repo.path ?? "Opening repository…"}
         </span>
-        <RevisionHeading source={source} />
-        <span className="commit-totals">
-          <span>change</span>
-          <Counts
-            additions={additions}
-            deletions={deletions}
-            label="Change line counts"
-          />
-        </span>
+        <RevisionHeading source={source}>
+          <span className="commit-totals">
+            <span>change</span>
+            <Counts
+              additions={additions}
+              deletions={deletions}
+              label="Change line counts"
+            />
+          </span>
+        </RevisionHeading>
         <button
           onClick={refresh}
           disabled={idleActionDisabled}
@@ -471,6 +477,11 @@ function App() {
         >
           refresh <kbd>r</kbd>
         </button>
+        <SettingsDialog
+          colorScheme={colorScheme}
+          onColorSchemeChange={setColorScheme}
+          disabled={dragging}
+        />
       </header>
       <div
         className={`workspace ${showLog ? "with-log" : "log-collapsed"} ${showFiles ? "" : "files-collapsed"}`}
@@ -544,11 +555,6 @@ function App() {
           <div className="file-bar">
             <span>{file?.path ?? "Reviewed change"}</span>
             <div className="file-bar-tools">
-              <ColorSchemePicker
-                value={colorScheme}
-                onChange={setColorScheme}
-                disabled={dragging}
-              />
               {file && (
                 <Counts additions={file.additions} deletions={file.deletions} />
               )}
@@ -775,9 +781,9 @@ function App() {
         </span>
         <span
           className="text-selection-hint"
-          title="Hold Shift and drag code to select text for copying"
+          title="Cmd/Ctrl+C copies selected right-hand code; Alt+drag selects native text; e opens the hovered line in Neovim"
         >
-          Shift+drag to copy text
+          Cmd/Ctrl+C to copy · Alt+drag for text
         </span>
         <div className="shortcuts">
           <button

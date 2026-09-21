@@ -4,6 +4,8 @@ import path from "node:path";
 import { createApi } from "./api.ts";
 import type { ReviewService } from "./service.ts";
 
+export const DEFAULT_PORT = 8000;
+
 export interface LocalServerOptions {
   service: ReviewService;
   assetsDir: string;
@@ -14,7 +16,7 @@ export interface LocalServerOptions {
 export async function startLocalServer({
   service,
   assetsDir,
-  port = 0,
+  port,
 }: LocalServerOptions) {
   const app = express();
   const server = createServer(app);
@@ -73,13 +75,32 @@ export async function startLocalServer({
   app.use(express.static(path.resolve(assetsDir), { etag: true }));
   app.use((_req, res) => res.status(404).send("Not found"));
 
-  await new Promise<void>((resolve, reject) => {
-    server.once("error", reject);
-    server.listen(port, "127.0.0.1", () => {
-      server.removeListener("error", reject);
-      resolve();
+  const listen = (requestedPort: number) =>
+    new Promise<void>((resolve, reject) => {
+      const failed = (error: Error) => {
+        server.removeListener("listening", ready);
+        reject(error);
+      };
+      const ready = () => {
+        server.removeListener("error", failed);
+        resolve();
+      };
+      server.once("error", failed);
+      server.once("listening", ready);
+      server.listen(requestedPort, "127.0.0.1");
     });
-  });
+  try {
+    await listen(port ?? DEFAULT_PORT);
+  } catch (error) {
+    // Keep the browser origin (and its preferences) stable whenever possible.
+    // Only the implicit default may fall back; explicit ports fail as requested.
+    if (
+      port !== undefined ||
+      (error as NodeJS.ErrnoException).code !== "EADDRINUSE"
+    )
+      throw error;
+    await listen(0);
+  }
   const address = server.address();
   if (!address || typeof address === "string")
     throw new Error("No listening address");
