@@ -561,3 +561,455 @@ test("conflicted repositories are refused, and immutable ancestors are never tar
     "CONFLICTED_REPO",
   );
 });
+
+test("immediate squash chooses only the exact parent, retains partial rows, and undoes", async () => {
+  const { service, state, root } = await fixture();
+  assert.deepEqual(state.parent, state.targets[0]);
+  assert.equal(state.squashUnavailable, undefined);
+  const file = state.files[2];
+  const hunk = file.hunks[1];
+  const added = hunk.rows.filter((row) => row.raw.startsWith("+"));
+  const grandparent = (
+    await jj(root, ["log", "--no-graph", "-r", "@--", "-T", "commit_id"])
+  ).stdout;
+  const result = await service.squashLines({
+    version: state.version,
+    selections: [{ id: hunk.id, lines: [added[0].index] }],
+  });
+  assert.equal(result.state.parent!.changeId, state.parent!.changeId);
+  assert.notEqual(result.state.parent!.commitId, state.parent!.commitId);
+  assert.equal(
+    (await jj(root, ["log", "--no-graph", "-r", "@--", "-T", "commit_id"]))
+      .stdout,
+    grandparent,
+  );
+  const parent = await fileAt(root, "@-", file.path);
+  assert.ok(parent.includes(added[0].raw.slice(1)));
+  assert.ok(!parent.includes(added[1].raw.slice(1)));
+  assert.equal(result.state.canUndo, true);
+  await rejectsCode(
+    service.squashLines({
+      version: state.version,
+      selections: [{ id: hunk.id, lines: [added[0].index] }],
+    }),
+    "STALE_STATE",
+  );
+  const undone = await service.undo(result.state.version);
+  assert.deepEqual(undone.state.files, state.files);
+  assert.deepEqual(undone.state.parent, state.parent);
+});
+
+test("immediate squash rejects target override and concurrent duplicate execution", async () => {
+  const { service, state } = await fixture();
+  const hunk = state.files[0].hunks[0];
+  const request = {
+    version: state.version,
+    selections: [{ id: hunk.id, lines: changes(hunk) }],
+  };
+  await rejectsCode(
+    service.squashLines({
+      ...request,
+      target: state.targets[1].changeId,
+    } as typeof request),
+    "INVALID_REQUEST",
+  );
+  const results = await Promise.allSettled([
+    service.squashLines(request),
+    service.squashLines(request),
+  ]);
+  assert.equal(results[0].status, "fulfilled");
+  assert.equal(results[1].status, "rejected");
+  if (results[1].status === "rejected")
+    assert.equal(results[1].reason.code, "STALE_STATE");
+  assert.equal(
+    (await service.getState()).files.flatMap((file) => file.hunks).length,
+    5,
+  );
+});
+
+test("immutable immediate parent never falls back to an older candidate", async () => {
+  const { service, state, root } = await fixture();
+  await jj(root, [
+    "config",
+    "set",
+    "--repo",
+    'revset-aliases."immutable_heads()"',
+    state.parent!.changeId,
+  ]);
+  let restricted = await service.getState();
+  assert.equal(restricted.parent, null);
+  assert.match(restricted.squashUnavailable!, /immediate parent is immutable/);
+  // Model a customized mutable() alias which advertises an older ancestor.
+  // Immutable ancestry is normally closed, but such aliases must not cause fallback.
+  await jj(root, [
+    "config",
+    "set",
+    "--repo",
+    'revset-aliases."mutable()"',
+    `${state.source.changeId} | ${state.targets[1].changeId}`,
+  ]);
+  restricted = await service.getState();
+  assert.deepEqual(
+    restricted.targets.map((target) => target.changeId),
+    [state.targets[1].changeId],
+  );
+  assert.equal(restricted.parent, null);
+  const hunk = restricted.files[0].hunks[0];
+  await rejectsCode(
+    service.squashLines({
+      version: restricted.version,
+      selections: [{ id: hunk.id, lines: changes(hunk) }],
+    }),
+    "SQUASH_UNAVAILABLE",
+  );
+  assert.equal((await service.getState()).operation, restricted.operation);
+});
+
+test("merge parents are unavailable rather than selecting any ancestor; file context fails closed", async () => {
+  const { service, state, root } = await fixture();
+  await jj(root, ["new", state.source.commitId, "-m", "left"]);
+  await writeFile(path.join(root, "left.txt"), "left\n");
+  const left = (
+    await jj(root, ["log", "--no-graph", "-r", "@", "-T", "commit_id"])
+  ).stdout.trim();
+  await jj(root, ["new", state.source.commitId, "-m", "right"]);
+  await writeFile(path.join(root, "right.txt"), "right\n");
+  await jj(root, ["new", left, "@", "-m", "merge"]);
+  await writeFile(path.join(root, "merge.txt"), "merge\n");
+  const merged = await service.getState();
+  assert.equal(merged.parent, null);
+  assert.match(merged.squashUnavailable!, /exactly one immediate parent/);
+  assert.ok(merged.targets.length > 1);
+  const hunk = merged.files[0].hunks[0];
+  await rejectsCode(
+    service.squashLines({
+      version: merged.version,
+      selections: [{ id: hunk.id, lines: changes(hunk) }],
+    }),
+    "SQUASH_UNAVAILABLE",
+  );
+  await rejectsCode(
+    service.getFile({ version: merged.version, path: "merge.txt" }),
+    "UNSUPPORTED_DIFF",
+  );
+});
+
+test("log is real default jj graph output, with no custom app template or ANSI", async () => {
+  const { service, state, root } = await fixture();
+  const result = await service.getLog();
+  assert.equal(result.version, state.version);
+  assert.equal(
+    result.output,
+    (await jj(root, ["log", "--limit", "100"])).stdout,
+  );
+  assert.match(result.output, /@/);
+  assert.ok(result.output.includes(state.source.description));
+  assert.ok(!result.output.includes("\u001b"));
+  assert.equal((await service.getState()).operation, state.operation);
+});
+
+test("file context uses full pinned parent/source contents and rejects stale or arbitrary paths", async () => {
+  const { service, state, root } = await fixture();
+  for (const file of state.files) {
+    const result = await service.getFile({
+      version: state.version,
+      path: file.path,
+    });
+    assert.deepEqual(result, {
+      oldFile: {
+        name: file.path,
+        contents: await fileAt(root, state.parent!.commitId, file.path),
+      },
+      newFile: {
+        name: file.path,
+        contents: await readFile(path.join(root, file.path), "utf8"),
+      },
+    });
+    assert.ok(
+      result.newFile!.contents.split("\n").length > file.hunks[0].rows.length,
+    );
+  }
+  for (const name of [
+    "/etc/passwd",
+    "../package.json",
+    ".jj/repo/config.toml",
+    "src",
+    "all()",
+    "--help",
+    "src/*.ts",
+  ]) {
+    await rejectsCode(
+      service.getFile({ version: state.version, path: name }),
+      "INVALID_PATH",
+    );
+  }
+  await appendFile(
+    path.join(root, state.files[0].path),
+    "\n// stale context\n",
+  );
+  await rejectsCode(
+    service.getFile({ version: state.version, path: state.files[0].path }),
+    "STALE_STATE",
+  );
+});
+
+test("context new/deleted files have null opposite sides and unsupported files are refused", async () => {
+  const { service, root } = await fixture();
+  const { unlink } = await import("node:fs/promises");
+  await writeFile(path.join(root, "added.txt"), "one\ntwo\n");
+  const deletedContents = await fileAt(root, "@-", "src/preferences.ts");
+  await unlink(path.join(root, "src/preferences.ts"));
+  let state = await service.getState();
+  assert.deepEqual(
+    await service.getFile({ version: state.version, path: "added.txt" }),
+    {
+      oldFile: null,
+      newFile: { name: "added.txt", contents: "one\ntwo\n" },
+    },
+  );
+  assert.deepEqual(
+    await service.getFile({
+      version: state.version,
+      path: "src/preferences.ts",
+    }),
+    {
+      oldFile: { name: "src/preferences.ts", contents: deletedContents },
+      newFile: null,
+    },
+  );
+  await writeFile(path.join(root, "added.txt"), "missing newline");
+  state = await service.getState();
+  await rejectsCode(
+    service.getFile({ version: state.version, path: "added.txt" }),
+    "UNSUPPORTED_DIFF",
+  );
+});
+
+test("file and graph reads reject repository changes during their final validation", async () => {
+  const { dataDir, state, root } = await fixture();
+  for (const action of ["file", "log"] as const) {
+    let calls = 0;
+    const service = new ReviewService({
+      dataDir,
+      toolRunner: async (command, args, cwd) => {
+        if (args[0] === "hunks" && ++calls === 4) {
+          // The first read calls hunks once per diff file. Change during the
+          // second read to exercise the endpoint's post-read stale guard.
+          await appendFile(
+            path.join(root, state.files[0].path),
+            `\n// race ${action}\n`,
+          );
+        }
+        return run(command, args, cwd);
+      },
+    });
+    const version = (await new ReviewService({ dataDir }).getState()).version;
+    await rejectsCode(
+      action === "file"
+        ? service.getFile({ version, path: state.files[0].path })
+        : service.getLog(),
+      "STALE_STATE",
+    );
+  }
+});
+
+test("immediate squash retains preview verification and revalidates before mutation", async () => {
+  const { dataDir, state, root } = await fixture();
+  let squashCalls = 0;
+  const service = new ReviewService({
+    dataDir,
+    toolRunner: async (command, args, cwd) => {
+      const result = await run(command, args, cwd);
+      if (args[0] === "patch")
+        await appendFile(
+          path.join(root, "src/notifications.ts"),
+          "\n// external edit during internal preview\n",
+        );
+      if (args[0] === "squash") squashCalls++;
+      return result;
+    },
+  });
+  const hunk = state.files[0].hunks[0];
+  await rejectsCode(
+    service.squashLines({
+      version: state.version,
+      selections: [{ id: hunk.id, lines: changes(hunk) }],
+    }),
+    "STALE_STATE",
+  );
+  assert.equal(squashCalls, 0);
+  assert.equal(
+    (await service.getState()).parent!.commitId,
+    state.parent!.commitId,
+  );
+});
+
+test("new endpoint contracts include parent, raw log, context and immediate squash without target", async (t) => {
+  const { service, state } = await fixture();
+  const app = express();
+  app.use("/api", createApi(service));
+  const server = app.listen(0, "127.0.0.1");
+  await new Promise<void>((resolve) => server.once("listening", resolve));
+  t.after(() => {
+    server.closeAllConnections();
+    server.close();
+  });
+  const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}/api`;
+  const post = (route: string, body: unknown) =>
+    fetch(`${base}/${route}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+  assert.deepEqual(
+    (await (await fetch(`${base}/state`)).json()).parent,
+    state.parent,
+  );
+  const log = await fetch(`${base}/log`);
+  assert.equal(log.status, 200);
+  assert.equal(log.headers.get("cache-control"), "no-store");
+  assert.deepEqual(await log.json(), await service.getLog());
+  const file = await post("file", {
+    version: state.version,
+    path: state.files[0].path,
+  });
+  assert.equal(file.status, 200);
+  assert.deepEqual(
+    await file.json(),
+    await service.getFile({
+      version: state.version,
+      path: state.files[0].path,
+    }),
+  );
+  const hunk = state.files[0].hunks[0];
+  const request = {
+    version: state.version,
+    selections: [{ id: hunk.id, lines: changes(hunk) }],
+  };
+  for (const [route, body] of [
+    ["squash-lines", {}],
+    ["squash-lines", { ...request, target: state.targets[1].changeId }],
+    ["squash-lines", { ...request, selections: [] }],
+    ["file", {}],
+    [
+      "file",
+      { version: state.version, path: state.files[0].path, revision: "@--" },
+    ],
+  ] as const) {
+    const response = await post(route, body);
+    assert.equal(response.status, 400);
+    assert.equal((await response.json()).code, "INVALID_REQUEST");
+  }
+  const invalid = await post("file", {
+    version: state.version,
+    path: "../secret",
+  });
+  assert.equal(invalid.status, 400);
+  const response = await post("squash-lines", request);
+  assert.equal(response.status, 200);
+  const result = await response.json();
+  assert.equal(result.state.canUndo, true);
+  assert.equal(typeof result.output, "string");
+  assert.equal("token" in result, false);
+  assert.equal((await post("squash-lines", request)).status, 409);
+  assert.equal(
+    (await post("file", { version: state.version, path: state.files[0].path }))
+      .status,
+    409,
+  );
+  assert.equal(
+    (await post("undo", { version: result.state.version })).status,
+    200,
+  );
+});
+
+test("file context remains available when the exact parent is immutable", async () => {
+  const { service, state, root } = await fixture();
+  await jj(root, [
+    "config",
+    "set",
+    "--repo",
+    'revset-aliases."immutable_heads()"',
+    state.parent!.changeId,
+  ]);
+  const restricted = await service.getState();
+  assert.equal(restricted.parent, null);
+  const file = restricted.files[0];
+  const context = await service.getFile({
+    version: restricted.version,
+    path: file.path,
+  });
+  assert.equal(
+    context.oldFile!.contents,
+    await fileAt(root, state.parent!.commitId, file.path),
+  );
+});
+
+test("immediate squash refuses unsafe internal previews without executing the tool", async () => {
+  const { dataDir, state } = await fixture();
+  let squashCalls = 0;
+  const service = new ReviewService({
+    dataDir,
+    toolRunner: async (command, args, cwd) => {
+      if (args[0] === "squash") squashCalls++;
+      const result = await run(command, args, cwd);
+      return args[0] === "patch"
+        ? {
+            ...result,
+            stdout: result.stdout.replaceAll(
+              "src/notifications.ts",
+              "src/wrong.ts",
+            ),
+          }
+        : result;
+    },
+  });
+  const hunk = state.files[0].hunks[0];
+  await rejectsCode(
+    service.squashLines({
+      version: state.version,
+      selections: [{ id: hunk.id, lines: changes(hunk) }],
+    }),
+    "UNSAFE_PREVIEW",
+  );
+  assert.equal(squashCalls, 0);
+  assert.equal((await service.getState()).operation, state.operation);
+});
+
+test("immediate squash preserves durable recovery guard after a post-write tool failure", async () => {
+  const { dataDir, state } = await fixture();
+  let squashCalls = 0;
+  const service = new ReviewService({
+    dataDir,
+    toolRunner: async (command, args, cwd) => {
+      const result = await run(command, args, cwd);
+      if (args[0] === "squash") {
+        squashCalls++;
+        throw new ProcessError(
+          command,
+          args,
+          {
+            ...result,
+            stderr: "Simulated immediate squash failure after mutation",
+          },
+          23,
+        );
+      }
+      return result;
+    },
+  });
+  const hunk = state.files[0].hunks[0];
+  const selections = [{ id: hunk.id, lines: changes(hunk) }];
+  await rejectsCode(
+    service.squashLines({ version: state.version, selections }),
+    "PARTIAL_FAILURE",
+  );
+  const restarted = new ReviewService({ dataDir });
+  const current = await restarted.getState();
+  assert.equal(current.canUndo, false);
+  await rejectsCode(
+    restarted.squashLines({ version: current.version, selections }),
+    "RECOVERY_REQUIRED",
+  );
+  assert.equal(squashCalls, 1);
+});

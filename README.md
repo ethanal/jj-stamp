@@ -1,38 +1,41 @@
 # Fold
 
-A working web app for reviewing **Jujutsu working-copy diffs** and moving selected changes into earlier revisions with **jj-hunk-tool**. Diff rendering and native gutter selection use **@pierre/diffs** from diffs.com.
+Minimal, keyboard-first review of `@` in a real Jujutsu workspace. Diff rendering uses Pierre Diffs; selected lines move through `jj-hunk-tool`.
 
-## Try the running demo
+## Use
 
-The VM serves Fold on port **8000**, managed by the `fold` systemd service. It starts with a real `orbit` repository: three TypeScript files, six independent hunks, and two mutable ancestors.
+- **Drag directly on code** (or line numbers) to select a range. Shift-click extends it.
+- **`s`** immediately squashes the selected changed lines **from `@` into `@-`**. No confirmation dialog or target picker.
+- **`u`** undoes the last app squash, provided the repository is unchanged.
+- **Escape** clears the selection. **`r`** refreshes.
+- **Files / Log** in the sidebar switch between the diff and actual `jj log` graph output. Shortcuts: **`f` / `l`**.
+- **↑ 10 / ↓ 10** reveal ten more context lines above or below the hunk (or the remaining lines at a file boundary).
 
-1. Check a hunk or file. Or click/drag line numbers for a range; Shift-click extends it.
-2. Choose a destination revision in the right-hand panel.
-3. **Preview squash** shows the exact selected patch and command. Nothing changes until you confirm.
-4. Confirm to move the selected changes. The remaining diff stays in `@`; working-file contents stay unchanged.
-5. **Undo squash** reverts the exact last app squash, if no other operation has occurred. **Start a fresh demo** creates a new repository and keeps the previous demo on disk.
+Only changed rows are squashed, even when a range includes context or spans multiple hunks. Selections can include just one addition or deletion inside a long hunk. A new drag replaces the range; switching files/views clears it. Working-file contents are preserved.
 
-Selections in separate hunks accumulate. A new range replaces the selection within its hunk. Unified view supports selecting individual additions or deletions; split view selects both sides of aligned display rows. Context rows are never squashed.
+An immutable immediate parent or merge is rejected, never silently redirected to an older ancestor.
 
-## Run locally
+The running VM demo is served on port **8000** by systemd unit **fold**. **reset demo** creates a new demo repository without deleting the previous one. Tests use independent repositories and never mutate the running demo.
 
-Requirements: Node.js 22.12+ (tested on 24), `jj`, and `jj-hunk-tool` on `PATH`.
+## Run
+
+Requires Node.js 22.12+ (tested on 24), `jj`, and `jj-hunk-tool` on `PATH`.
 
 ```sh
 npm ci
-npm run dev
-# Open http://localhost:8000
+npm run dev                          # http://localhost:8000
+npm run demo                         # optional: initialize / print existing demo
 ```
 
-The initial request lazily creates a demo. `npm run demo` can initialize it explicitly and print its location; rerunning it does not reset anything. The active demo and last-operation journal persist in `.data/` (gitignored).
+The first request creates the persistent `orbit` demo. `.data/active-repo.json` records its path; repositories and mutation journals are gitignored.
 
-For a different, **trusted** jj workspace:
+To use a different **trusted** repository:
 
 ```sh
 JJ_REPO=/absolute/path/to/workspace PORT=8001 npm start
 ```
 
-The repository is configured on the server, not supplied in HTTP requests. Only the current `@` is reviewed, and only mutable ancestors are squash destinations. Demo reset is disabled for user repositories. Use a separate service/data directory if running multiple configured repositories; never run two Fold processes against the same repository.
+Only server configuration chooses the repository. Reset is disabled for user repositories. Run one Fold process per repository, and use separate data directories/services for independent configured repositories.
 
 ### Production
 
@@ -41,7 +44,7 @@ npm run build
 NODE_ENV=production npm start
 ```
 
-`fold.service` is the installed VM-specific unit; it serves the production build on 8000. After code changes:
+The VM-specific `fold.service` serves the production build. To deploy changes:
 
 ```sh
 npm run build
@@ -49,42 +52,41 @@ sudo systemctl restart fold
 journalctl -u fold -n 30 --no-pager
 ```
 
-For hot-reload development, stop the service and run `npm run dev`, or use a separate port and a separate test repository. No credentials are required. Fonts, scripts, syntax grammars, and themes are served locally.
+The service drains accepted operations during normal shutdown rather than interrupting a history rewrite. Fonts, syntax grammars, themes, and scripts are served locally.
 
-## Safety and scope
+## Safety / limits
 
-This is a single-user, trusted-repository prototype, not a public multi-tenant hosting service. The exe.dev proxy supplies authentication on this VM; the app itself has no login. Do not expose it without an authenticated proxy. Mutation endpoints require JSON, a custom header, and an allowed origin; no CORS permission is granted.
+This is a single-user, trusted-repository app, **not public multi-tenant hosting**. The exe.dev proxy provides authentication on this VM; the app has no login. Do not expose it without authentication. Mutation requests require JSON, a custom header, and an allowed origin; no CORS access is granted.
 
-- Selections are translated to **jj-hunk-tool’s one-based patch-body rows**, not guessed from file line numbers.
-- Preview verifies file identity, hunk position, context, and the exact selected additions/deletions. Execution repeats validation, pins commit hashes, preserves the destination description, and keeps emptied sources.
-- Requests serialize; stale snapshots and replayed/expired preview tokens are refused. Tokens expire after ten minutes and on server restart.
-- Undo uses a specific `jj op revert`, never `jj op restore`.
-- Ambiguous or partially failed mutations are journaled and blocked from retry until an operator inspects history. The server never blindly retries, rolls back, or kills a rewrite on a timer.
-- Binary files, renames, copies, mode changes, missing final newlines, whitespace/quoted paths, and other unsafe tool formats are displayed read-only. Conflicted repositories are rejected.
-- **Do not concurrently edit files or run jj operations in the same workspace while confirming a squash.** External processes cannot be locked by the in-process queue; a race can be detected after a mutation, not necessarily prevented. See `server/README.md` for recovery and API details.
-- This first version loads the diff eagerly; very large repositories are not yet virtualized.
+- Code coordinates map through the renderer to original one-based **patch-body indices**, not guessed source-line ranges. Context expansion never changes the underlying tool hunk IDs.
+- Before squashing, the backend internally validates the exact patch, source, immediate parent, operation version, and tool IDs. It pins commit hashes, keeps destination descriptions, and retains emptied source changes.
+- Reads/writes serialize. Stale requests, target overrides, and replayed operations are refused. No interactive tools or automatic mutation retries.
+- Undo reverts one attributed operation with `jj op revert`, never `jj op restore`.
+- Ambiguous failures leave a durable recovery guard. Inspect `jj op log` before proceeding; see `server/README.md` for recovery details.
+- **Avoid concurrent edits or jj commands while squashing/undoing.** The in-process queue cannot lock external processes. A race may be detected only after a mutation, not prevented. Never run two Fold instances against one repository.
+- Unsupported tool formats (binary, renames/copies, mode changes, no final newline, ambiguous paths) are read-only. Conflicted repositories are rejected.
+- Diffs load one file at a time; very large files are not virtualized yet.
 
-## Tests
+## Test
 
 ```sh
-npm test                    # Unit tests and isolated real-jj integration tests
+npm test
 npx playwright install chromium
-npm run test:browser        # Real Chromium + isolated jj repo; never touches the live demo
-npm run build               # Type-check and build
+npm run test:browser
+npm run build
 ```
 
-Coverage includes full hunks, partial additions/deletions, cross-file/grandparent squash, untouched working files, exact persisted undo, stale/replayed/invalid requests, failed/interleaved operations, immutable/conflicted repositories, reset, native pointer selection, Shift-click, split layout, filtering, focus handling, and mobile overflow.
+Browser tests exercise real code dragging, exact single-line and 3-of-40-line squashes, immediate-parent routing, keyboard undo, Shift-click, graph output, ten-line context expansion, selections from expanded context, shortcut guards, and mobile layout. Backend tests cover stale versions, invalid paths, immutable/merge parents, target overrides, pinned file contents, exact patches, persisted undo, and failure/interleaving recovery.
 
-Test repositories are retained under `/tmp/fold-backend-*` and `/tmp/fold-browser-*` for inspection. The app project is Git-managed independently of the jj demo repositories.
+Fixtures remain in `/tmp/fold-backend-*` and `/tmp/fold-browser-*` for inspection. App source is Git-managed separately from the demo jj repositories.
 
-## Structure
+## Source
 
-- `src/main.tsx` — review UI, selections, preview/confirmation workflow
-- `src/selection.ts` — file-side coordinates → exact patch-body rows
-- `server/api.ts` — validated JSON API
-- `server/service.ts` — serialized, versioned preview/squash/undo operations
-- `server/diff.ts` — fail-closed patch parsing and preview reconciliation
-- `server/demo.ts` — isolated, non-destructive fixture creation
-- `web.ts` — same-origin guards and Vite/production serving
+- `src/main.tsx` — minimal shell, Files / Log, shortcuts
+- `src/CodeDiff.tsx` — code-drag selection and context expansion
+- `src/selection.ts` — exact selected patch rows
+- `server/api.ts`, `server/service.ts` — versioned reads and safe mutations
+- `server/diff.ts` — fail-closed parsing and patch reconciliation
+- `server/demo.ts` — non-destructive demo creation
 
-The backend parser was adapted from the existing local `hunk-jj-squash` project without modifying it. Its core dependencies are React, Express, Pierre Diffs, Jujutsu, and mvzink/jj-hunk-tool.
+The parser was adapted from the existing local `hunk-jj-squash` project without modifying it. UI styling takes cues from Hunk’s terminal diff viewer.

@@ -32,6 +32,23 @@ export function createApi(service = new ReviewService()): express.Router {
   router.get("/state", async (_req, res) => {
     res.json(await service.getState());
   });
+  router.get("/log", async (_req, res) => {
+    res.json(await service.getLog());
+  });
+  router.post("/file", async (req, res) => {
+    const input = z
+      .object({ version, path: z.string().min(1).max(4096) })
+      .strict()
+      .parse(req.body);
+    res.json(await service.getFile(input));
+  });
+  router.post("/squash-lines", async (req, res) => {
+    res.json(
+      await service.squashLines(
+        previewSchema.omit({ target: true }).parse(req.body),
+      ),
+    );
+  });
   router.post("/preview", async (req, res) => {
     res.json(await service.preview(previewSchema.parse(req.body)));
   });

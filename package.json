@@ -13,11 +13,9 @@
     "format": "prettier --write src server scripts tests web.ts vite.config.ts tsconfig.json package.json README.md"
   },
   "dependencies": {
-    "@fontsource-variable/dm-sans": "^5.3.0",
     "@fontsource/ibm-plex-mono": "^5.3.0",
     "@pierre/diffs": "^1.4.3",
     "express": "^5.1.0",
-    "lucide-react": "^0.577.0",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
     "zod": "^4.0.0"

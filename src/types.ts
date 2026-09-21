@@ -26,16 +26,11 @@ export interface RepoState {
   repo: { name: string; path: string; demo: boolean };
   version: string;
   source: Revision;
+  parent: Revision | null;
+  squashUnavailable?: string;
   targets: Revision[];
   files: DiffFile[];
   operation: string;
   canUndo: boolean;
-}
-export interface Preview {
-  token: string;
-  patch: string;
-  specs: string[];
-  command: string;
-  selectedLines: number;
 }
 export type Selections = Record<string, number[]>;

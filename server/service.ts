@@ -40,6 +40,8 @@ export interface State {
   version: string;
   source: Revision;
   targets: Revision[];
+  parent: Revision | null;
+  squashUnavailable?: string;
   files: ReviewFile[];
   operation: string;
   canUndo: boolean;
@@ -47,6 +49,14 @@ export interface State {
 export interface Selection {
   id: string;
   lines: number[];
+}
+export interface SquashLinesInput {
+  version: string;
+  selections: Selection[];
+}
+export interface FileContents {
+  oldFile: { name: string; contents: string } | null;
+  newFile: { name: string; contents: string } | null;
 }
 export interface PreviewInput {
   version: string;
@@ -323,6 +333,19 @@ export class ReviewService {
           `mutable() & ::${source.commitId} ~ ${source.commitId}`,
         )
       : [];
+    const parents = await this.revisions(`${source.commitId}-`);
+    const parent =
+      parents.length === 1
+        ? (targets.find((target) => target.commitId === parents[0].commitId) ??
+          null)
+        : null;
+    const squashUnavailable = !mutableSource.length
+      ? "The current revision is immutable."
+      : parents.length !== 1
+        ? "Squashing requires exactly one immediate parent; merges are not supported."
+        : !parent
+          ? "The immediate parent is immutable; squashing into an older ancestor is not allowed."
+          : undefined;
     const files = await this.files(source.commitId);
     await jj(this.root, ["status"]);
     if (
@@ -331,7 +354,15 @@ export class ReviewService {
     )
       stale();
     const version = hash(
-      JSON.stringify([this.root, operation.id, source, targets, files]),
+      JSON.stringify([
+        this.root,
+        operation.id,
+        source,
+        targets,
+        parent,
+        squashUnavailable,
+        files,
+      ]),
     );
     const canUndo =
       !this.journal.pending &&
@@ -345,6 +376,8 @@ export class ReviewService {
       },
       source,
       targets,
+      parent,
+      ...(squashUnavailable ? { squashUnavailable } : {}),
       files,
       version,
       operation: operation.id,
@@ -357,6 +390,91 @@ export class ReviewService {
   }
   getState(): Promise<State> {
     return this.serial(() => this.readState());
+  }
+  getLog(): Promise<{ version: string; output: string }> {
+    return this.serial(async () => {
+      const before = await this.readState();
+      // Deliberately use jj's configured, real graph output, not an app template.
+      const output = (await jj(this.root, ["log", "--limit", "100"])).stdout;
+      this.requireVersion(await this.readState(), before.version);
+      return { version: before.version, output };
+    });
+  }
+  getFile(input: { version: string; path: string }): Promise<FileContents> {
+    return this.serial(async () => {
+      const before = await this.readState();
+      this.requireVersion(before, input.version);
+      const file = before.files.find((file) => file.path === input.path);
+      if (!file)
+        throw new ApiError(
+          400,
+          "INVALID_PATH",
+          "Choose a file in the current diff.",
+        );
+      if (file.unsupported)
+        throw new ApiError(422, "UNSUPPORTED_DIFF", file.unsupported);
+      const parents = await this.revisions(`${before.source.commitId}-`);
+      if (parents.length !== 1)
+        throw new ApiError(
+          422,
+          "UNSUPPORTED_DIFF",
+          "File context requires exactly one source parent; merge context is not supported.",
+        );
+      // A literal root-relative fileset prevents glob or fileset syntax in names
+      // from reading additional paths. Both revisions are full pinned commit IDs.
+      const read = async (revision: string) => ({
+        name: file.path,
+        contents: (
+          await jj(this.root, [
+            "file",
+            "show",
+            "-r",
+            revision,
+            "--",
+            `root-file:${JSON.stringify(file.path)}`,
+          ])
+        ).stdout,
+      });
+      const oldFile = /^--- \/dev\/null$/m.test(file.patch)
+        ? null
+        : await read(parents[0].commitId);
+      const newFile = /^\+\+\+ \/dev\/null$/m.test(file.patch)
+        ? null
+        : await read(before.source.commitId);
+      this.requireVersion(await this.readState(), before.version);
+      return { oldFile, newFile };
+    });
+  }
+  squashLines(
+    input: SquashLinesInput,
+  ): Promise<{ state: State; output: string; warning?: string }> {
+    return this.serial(async () => {
+      // Reject target overrides even when called directly rather than via HTTP.
+      if (
+        Object.keys(input).some(
+          (key) => key !== "version" && key !== "selections",
+        )
+      )
+        throw new ApiError(
+          400,
+          "INVALID_REQUEST",
+          "Squash destination is always the immediate parent; no target override is accepted.",
+        );
+      const state = await this.readState();
+      this.requireVersion(state, input.version);
+      this.assertNotPending();
+      if (!state.parent)
+        throw new ApiError(
+          409,
+          "SQUASH_UNAVAILABLE",
+          state.squashUnavailable ?? "No mutable immediate parent.",
+        );
+      const preview = await this.previewInternal(
+        { ...input, target: state.parent.changeId },
+        state,
+      );
+      return this.squashInternal(preview.token);
+    });
   }
   private requireVersion(state: State, version: string) {
     if (!version || version !== state.version) stale();
@@ -481,125 +599,133 @@ export class ReviewService {
     };
   }
   preview(input: PreviewInput): Promise<Preview> {
-    return this.serial(async () => {
-      const state = await this.readState();
-      const preview = await this.prepare(state, input);
-      this.requireVersion(await this.readState(), state.version);
-      const token = randomBytes(32).toString("hex");
-      for (const [key, plan] of this.plans)
-        if (plan.expires < Date.now()) this.plans.delete(key);
-      if (this.plans.size >= 100)
-        this.plans.delete(this.plans.keys().next().value!);
-      this.plans.set(token, {
-        ...preview,
-        token,
-        version: state.version,
-        source: state.source,
-        target: state.targets.find((t) => t.changeId === input.target)!,
-        selections: structuredClone(input.selections),
-        expires: Date.now() + 10 * 60_000,
-      });
-      return { ...preview, token };
+    return this.serial(async () =>
+      this.previewInternal(input, await this.readState()),
+    );
+  }
+  private async previewInternal(
+    input: PreviewInput,
+    state: State,
+  ): Promise<Preview> {
+    const preview = await this.prepare(state, input);
+    this.requireVersion(await this.readState(), state.version);
+    const token = randomBytes(32).toString("hex");
+    for (const [key, plan] of this.plans)
+      if (plan.expires < Date.now()) this.plans.delete(key);
+    if (this.plans.size >= 100)
+      this.plans.delete(this.plans.keys().next().value!);
+    this.plans.set(token, {
+      ...preview,
+      token,
+      version: state.version,
+      source: state.source,
+      target: state.targets.find((t) => t.changeId === input.target)!,
+      selections: structuredClone(input.selections),
+      expires: Date.now() + 10 * 60_000,
     });
+    return { ...preview, token };
   }
   squash(
     token: string,
   ): Promise<{ state: State; output: string; warning?: string }> {
-    return this.serial(async () => {
-      const plan = this.plans.get(token);
-      this.plans.delete(token); // One shot, even on an ambiguous failure. Never retry a rewrite.
-      if (!plan || plan.expires < Date.now())
-        throw new ApiError(
-          409,
-          "STALE_PREVIEW",
-          "This preview expired or was already used. Refresh and preview your selection again.",
-        );
-      const before = await this.readState();
-      this.requireVersion(before, plan.version);
-      const check = await this.prepare(before, {
-        version: plan.version,
-        target: plan.target.changeId,
-        selections: plan.selections,
-      });
-      if (
-        !same(check.specs, plan.specs) ||
-        check.patch !== plan.patch ||
-        check.command !== plan.command
-      )
-        stale();
-      this.requireVersion(await this.readState(), before.version);
-      this.journal = {
-        pending: {
-          beforeOperation: before.operation,
-          sourceCommit: plan.source.commitId,
-          kind: "squash",
-        },
-      };
-      await this.saveJournal();
-      this.plans.clear();
-      let result;
-      try {
-        result = await this.toolRunner(
-          "jj-hunk-tool",
-          [
-            "squash",
-            ...plan.specs,
-            "--from",
-            plan.source.commitId,
-            "--into",
-            plan.target.commitId,
-            "--use-destination-message",
-            "--keep-emptied",
-          ],
-          this.root,
-        );
-      } catch (error) {
-        return this.failedMutation(error, before.operation);
-      }
-      const afterOp = await this.operation();
-      if (
-        !this.isSquashOperation(
-          afterOp,
-          before.operation,
-          plan.source.commitId,
-          plan.target.commitId,
-        )
-      ) {
-        throw new ApiError(
-          409,
-          "HISTORY_CHANGED",
-          "The tool completed, but operation history changed unexpectedly. Inspect jj op log. Automatic undo is disabled; do not retry the squash.",
-          { output: result.stdout + result.stderr },
-        );
-      }
-      const after = await this.readState(true);
-      if (after.operation !== afterOp.id)
-        throw new ApiError(
-          409,
-          "HISTORY_CHANGED",
-          "Another operation followed the squash. Inspect jj op log; automatic undo is disabled.",
-        );
-      this.journal = {
-        undo: {
-          operation: afterOp.id,
-          beforeOperation: before.operation,
-          afterVersion: after.version,
-          sourceCommit: plan.source.commitId,
-          targetCommit: plan.target.commitId,
-        },
-      };
-      await this.saveJournal();
-      after.canUndo = true;
-      let warning: string | undefined;
-      if ((await this.revisions("conflicts()")).length)
-        warning =
-          "The squash created a conflict. Undo this operation now, or resolve the conflict with jj before continuing.";
-      return {
-        state: after,
-        output: (result.stdout + result.stderr).trim(),
-        ...(warning ? { warning } : {}),
-      };
+    return this.serial(() => this.squashInternal(token));
+  }
+  private async squashInternal(
+    token: string,
+  ): Promise<{ state: State; output: string; warning?: string }> {
+    const plan = this.plans.get(token);
+    this.plans.delete(token); // One shot, even on an ambiguous failure. Never retry a rewrite.
+    if (!plan || plan.expires < Date.now())
+      throw new ApiError(
+        409,
+        "STALE_PREVIEW",
+        "This preview expired or was already used. Refresh and preview your selection again.",
+      );
+    const before = await this.readState();
+    this.requireVersion(before, plan.version);
+    const check = await this.prepare(before, {
+      version: plan.version,
+      target: plan.target.changeId,
+      selections: plan.selections,
     });
+    if (
+      !same(check.specs, plan.specs) ||
+      check.patch !== plan.patch ||
+      check.command !== plan.command
+    )
+      stale();
+    this.requireVersion(await this.readState(), before.version);
+    this.journal = {
+      pending: {
+        beforeOperation: before.operation,
+        sourceCommit: plan.source.commitId,
+        kind: "squash",
+      },
+    };
+    await this.saveJournal();
+    this.plans.clear();
+    let result;
+    try {
+      result = await this.toolRunner(
+        "jj-hunk-tool",
+        [
+          "squash",
+          ...plan.specs,
+          "--from",
+          plan.source.commitId,
+          "--into",
+          plan.target.commitId,
+          "--use-destination-message",
+          "--keep-emptied",
+        ],
+        this.root,
+      );
+    } catch (error) {
+      return this.failedMutation(error, before.operation);
+    }
+    const afterOp = await this.operation();
+    if (
+      !this.isSquashOperation(
+        afterOp,
+        before.operation,
+        plan.source.commitId,
+        plan.target.commitId,
+      )
+    ) {
+      throw new ApiError(
+        409,
+        "HISTORY_CHANGED",
+        "The tool completed, but operation history changed unexpectedly. Inspect jj op log. Automatic undo is disabled; do not retry the squash.",
+        { output: result.stdout + result.stderr },
+      );
+    }
+    const after = await this.readState(true);
+    if (after.operation !== afterOp.id)
+      throw new ApiError(
+        409,
+        "HISTORY_CHANGED",
+        "Another operation followed the squash. Inspect jj op log; automatic undo is disabled.",
+      );
+    this.journal = {
+      undo: {
+        operation: afterOp.id,
+        beforeOperation: before.operation,
+        afterVersion: after.version,
+        sourceCommit: plan.source.commitId,
+        targetCommit: plan.target.commitId,
+      },
+    };
+    await this.saveJournal();
+    after.canUndo = true;
+    let warning: string | undefined;
+    if ((await this.revisions("conflicts()")).length)
+      warning =
+        "The squash created a conflict. Undo this operation now, or resolve the conflict with jj before continuing.";
+    return {
+      state: after,
+      output: (result.stdout + result.stderr).trim(),
+      ...(warning ? { warning } : {}),
+    };
   }
   private isSquashOperation(
     operation: Operation,
