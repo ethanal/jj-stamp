@@ -17,6 +17,7 @@ import {
 } from "@pierre/diffs";
 import type { DiffFile, Selections } from "./types";
 import { selectionFromRange } from "./selection";
+import type { ColorScheme } from "./preferences";
 
 interface Point {
   line: number;
@@ -54,24 +55,24 @@ const separatorCSS = `
 [data-column-number] { user-select: none; }
 :host([data-fold-text-selection]) [data-line] { cursor: text; }
 [data-expand-button] { cursor: pointer; }
-[data-line][data-fold-selected], [data-column-number][data-fold-selected] { background: #16466b; }
-[data-line][data-fold-context-selected], [data-column-number][data-fold-context-selected] { background: #172f46; }
+[data-line][data-fold-selected], [data-column-number][data-fold-selected] { background: var(--diff-selection-bg, #16466b); }
+[data-line][data-fold-context-selected], [data-column-number][data-fold-context-selected] { background: var(--diff-context-selection-bg, #172f46); }
 [data-fold-in-range] {
   --selection-top: transparent;
   --selection-bottom: transparent;
   box-shadow: inset 0 1px var(--selection-top), inset 0 -1px var(--selection-bottom);
 }
-[data-fold-selection-start] { --selection-top: #72b8e6; }
-[data-fold-selection-end] { --selection-bottom: #72b8e6; }
+[data-fold-selection-start] { --selection-top: var(--diff-selection-border, #72b8e6); }
+[data-fold-selection-end] { --selection-bottom: var(--diff-selection-border, #72b8e6); }
 [data-column-number][data-fold-in-range] {
-  color: #b7defb;
-  box-shadow: inset 3px 0 #79c9ff, inset 0 1px var(--selection-top), inset 0 -1px var(--selection-bottom);
+  color: var(--diff-selection-number-fg, #b7defb);
+  box-shadow: inset 3px 0 var(--diff-selection-border, #79c9ff), inset 0 1px var(--selection-top), inset 0 -1px var(--selection-bottom);
 }
-[data-column-number][data-fold-selected] { color: #e3f3ff; font-weight: 500; }
-[data-line][data-fold-in-range] { box-shadow: inset 0 1px var(--selection-top), inset 0 -1px var(--selection-bottom), inset -1px 0 #386990; }
-[data-separator="line-info-basic"] { height: 25px; background: #20262e; }
+[data-column-number][data-fold-selected] { color: var(--diff-selection-fg, #e3f3ff); font-weight: 500; }
+[data-line][data-fold-in-range] { box-shadow: inset 0 1px var(--selection-top), inset 0 -1px var(--selection-bottom), inset -1px 0 var(--diff-selection-border, #386990); }
+[data-separator="line-info-basic"] { height: 25px; background: var(--diff-separator-bg, #20262e); }
 [data-separator-wrapper] { font-size: 11px; }
-[data-gutter] [data-separator-wrapper] { display: flex !important; flex-direction: row; width: max-content; align-items: center; background: #20262e; }
+[data-gutter] [data-separator-wrapper] { display: flex !important; flex-direction: row; width: max-content; align-items: center; background: var(--diff-separator-bg, #20262e); }
 [data-gutter] [data-separator-content] { display: block; height: auto; padding: 0 8px; white-space: nowrap; }
 [data-separator-wrapper][data-separator-multi-button] { grid-template-rows: 100%; grid-template-columns: 48px 48px auto; }
 [data-expand-button] { border: none !important; min-width: 48px; width: 48px; flex-shrink: 0; font-size: 11px; }
@@ -80,25 +81,7 @@ const separatorCSS = `
 [data-expand-up]::before { content: '↓ 10'; }
 [data-expand-both]::before { content: '↕ 10'; }
 [data-expand-all-button] { display: none !important; }
-[data-separator-content] { font-size: 11px; color: #7e8895; }
-`;
-
-const dimCSS = `
-[data-line][data-fold-selected], [data-column-number][data-fold-selected] { background: #245778; }
-[data-line][data-fold-context-selected], [data-column-number][data-fold-context-selected] { background: #303e50; }
-[data-separator="line-info-basic"], [data-gutter] [data-separator-wrapper] { background: #343c46; }
-[data-separator-content] { color: #adbac7; }
-`;
-
-const lightCSS = `
-[data-line][data-fold-selected], [data-column-number][data-fold-selected] { background: #c7e4fa; }
-[data-line][data-fold-context-selected], [data-column-number][data-fold-context-selected] { background: #e6f1fb; }
-[data-fold-selection-start] { --selection-top: #3379ad; }
-[data-fold-selection-end] { --selection-bottom: #3379ad; }
-[data-column-number][data-fold-in-range] { color: #235d87; }
-[data-column-number][data-fold-selected] { color: #123e60; }
-[data-separator="line-info-basic"], [data-gutter] [data-separator-wrapper] { background: #eef1f5; }
-[data-separator-content] { color: #566575; }
+[data-separator-content] { font-size: 11px; color: var(--diff-separator-fg, #7e8895); }
 `;
 
 // The renderer mutates its shadow DOM in a child layout effect. An effect
@@ -203,8 +186,7 @@ export function CodeDiff({
   version,
   renderKey: _renderKey,
   style,
-  colorScheme,
-  theme = colorScheme ?? "dark",
+  colorScheme = "dark",
   selections,
   contextDisabled,
   range,
@@ -218,8 +200,7 @@ export function CodeDiff({
   version: string;
   renderKey: string;
   style: "unified" | "split";
-  theme?: "light" | "dark" | "dim";
-  colorScheme?: "light" | "dark" | "dim";
+  colorScheme?: ColorScheme;
   selections: Selections;
   contextDisabled: boolean;
   range: SelectedLineRange | null;
@@ -462,12 +443,13 @@ export function CodeDiff({
   const options = useMemo(
     () => ({
       theme:
-        theme === "light"
+        colorScheme === "light"
           ? "github-light"
-          : theme === "dim"
+          : colorScheme === "dim"
             ? "github-dark-dimmed"
             : "github-dark",
-      themeType: theme === "light" ? ("light" as const) : ("dark" as const),
+      themeType:
+        colorScheme === "light" ? ("light" as const) : ("dark" as const),
       diffStyle: style,
       diffIndicators: "classic" as const,
       disableFileHeader: true,
@@ -478,7 +460,6 @@ export function CodeDiff({
       lineHoverHighlight: "line" as const,
       unsafeCSS:
         separatorCSS +
-        (theme === "light" ? lightCSS : theme === "dim" ? dimCSS : "") +
         (contextDisabled
           ? "[data-expand-button], [data-unmodified-lines] { opacity: .35; cursor: wait; }"
           : ""),
@@ -534,7 +515,7 @@ export function CodeDiff({
       loadFile,
       onError,
       style,
-      theme,
+      colorScheme,
       contextDisabled,
       paint,
     ],

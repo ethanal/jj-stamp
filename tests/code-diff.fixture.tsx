@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import "../src/styles.css";
 import { createRoot } from "react-dom/client";
 import type { SelectedLineRange } from "@pierre/diffs";
 import { CodeDiff } from "../src/CodeDiff";
@@ -44,6 +45,9 @@ function makeFile(squashed: boolean): DiffFile {
 function Fixture() {
   const [style, setStyle] = useState<"unified" | "split">("unified");
   const [theme, setTheme] = useState<"dark" | "light" | "dim">("dark");
+  useEffect(() => {
+    document.documentElement.dataset.colorScheme = theme;
+  }, [theme]);
   const [squashed, setSquashed] = useState(false);
   const [epoch, setEpoch] = useState(0);
   const [selections, setSelections] = useState<Selections>({});
