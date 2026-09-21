@@ -394,3 +394,50 @@ test("a failed parallel read drains its sibling before releasing the service que
   await Promise.all([failed, draining]);
   assert.equal(drained, true);
 });
+
+test("cold state subprocess budget stays constant with many files and mutable ancestors", async (t) => {
+  const options = await fixture(t);
+  for (let i = 0; i < 12; i++)
+    await jj(options.repoPath, ["new", "-m", `Ancestor ${i}`]);
+  for (let i = 0; i < 40; i++)
+    await writeFile(
+      path.join(options.repoPath, `file-${i}.txt`),
+      `change ${i}\n`,
+    );
+  await jj(options.repoPath, ["status"]);
+  const calls: Array<{ command: string; args: string[] }> = [];
+  const service = new ReviewService({
+    ...options,
+    jjRunner: (cwd, args) => {
+      calls.push({ command: "jj", args });
+      return jj(cwd, args);
+    },
+    toolRunner: (command, args, cwd) => {
+      calls.push({ command, args });
+      return run(command, args, cwd);
+    },
+  });
+  const state = await service.getState();
+  assert.equal(state.files.length, 40);
+  assert.equal(
+    state.targets.length,
+    14,
+    "do not truncate live eligible ancestor metadata",
+  );
+  assert.ok(
+    state.files.every((file) => !file.unsupported && file.hunks.length === 1),
+  );
+  assert.equal(calls.length, 8);
+  assert.equal(
+    calls.filter(({ command }) => command === "jj-hunk-tool").length,
+    1,
+  );
+  assert.equal(calls.filter(({ args }) => args[0] === "diff").length, 1);
+  calls.length = 0;
+  assert.deepEqual(await service.getState(), state);
+  assert.equal(
+    calls.length,
+    4,
+    "warm reads still revalidate live metadata and operation heads",
+  );
+});

@@ -813,9 +813,9 @@ test("state and graph batch revision author and jj's distinguishing change prefi
   assert.equal(state.parent!.author, "Orbit Team");
   assert.equal(
     state.source.changeIdPrefix,
-    await revisionId(options.repoPath, "@", "change_id.shortest().prefix()"),
+    await revisionId(options.repoPath, "@", "change_id.shortest(8).prefix()"),
   );
-  assert.ok(state.source.changeId.startsWith(state.source.changeIdPrefix));
+  assert.ok(state.source.changeId.startsWith(state.source.changeIdPrefix!));
   toolCalls = 0;
   const graph = await service.getLog({ includeOutput: false });
   assert.deepEqual(

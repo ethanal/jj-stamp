@@ -25,9 +25,9 @@ export interface Revision {
   changeId: string;
   commitId: string;
   description: string;
-  author: string;
+  author?: string;
   /** jj's shortest distinguishing prefix, not an arbitrary fixed truncation. */
-  changeIdPrefix: string;
+  changeIdPrefix?: string;
 }
 export interface LogRow {
   /** The graph prefix or connector line emitted by jj, preserved verbatim. */
@@ -146,7 +146,7 @@ const hash = (value: string) =>
 export const reviewLogRevset =
   "trunk() | ((tracked_remote_bookmarks() & ~::trunk())::) | (mutable() & mine())::";
 const revisionTemplate =
-  'json(change_id) ++ "\\t" ++ json(commit_id) ++ "\\t" ++ json(description.first_line()) ++ "\\t" ++ json(author.name()) ++ "\\t" ++ json(change_id.shortest().prefix()) ++ "\\n"';
+  'json(change_id) ++ "\\t" ++ json(commit_id) ++ "\\t" ++ json(description.first_line()) ++ "\\t" ++ json(author.name()) ++ "\\t" ++ json(change_id.shortest(8).prefix()) ++ "\\n"';
 
 async function readJSON<T>(file: string): Promise<T | undefined> {
   try {
