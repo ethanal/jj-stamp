@@ -582,6 +582,8 @@ kbd {
   color: var(--modified);
 }
 .error {
+  max-height: 45vh;
+  overflow: auto;
   color: var(--error-fg);
   background: var(--error-bg);
   border-bottom: 1px solid var(--error-border);
@@ -593,8 +595,37 @@ kbd {
   line-height: 1.6;
   flex-shrink: 0;
 }
-.error span {
+.error-content {
   flex: 1;
+  min-width: 0;
+}
+.error-summary {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.error-diagnostic {
+  margin-top: 8px;
+}
+.error-diagnostic-heading {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.error-diagnostic-heading code {
+  overflow-wrap: anywhere;
+}
+.error-output {
+  margin: 5px 0 0;
+  padding: 8px 10px;
+  max-height: 200px;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  background: var(--bg);
+  color: var(--fg);
+  border: 1px solid var(--error-border);
+  user-select: text;
+  cursor: text;
 }
 .error button {
   font-size: 16px;

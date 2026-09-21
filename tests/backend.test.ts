@@ -1499,3 +1499,47 @@ test("missing patch runtime dependency is actionable over HTTP and never retried
     "reads and restart never replay the failed selection",
   );
 });
+
+test("squash preview process failures expose stdout and stderr without attempting a mutation", async (t) => {
+  const { dataDir, root, state } = await fixture();
+  const stdout = "Previewing chosen rows\n";
+  const stderr = "Error: selected hunk could not be read\n";
+  let squashCalls = 0;
+  const service = new ReviewService({
+    dataDir,
+    repoPath: root,
+    toolRunner: async (command, args, cwd) => {
+      if (args[0] === "patch")
+        throw new ProcessError(command, args, { stdout, stderr }, 1);
+      if (args[0] === "squash") squashCalls++;
+      return run(command, args, cwd);
+    },
+  });
+  const app = express();
+  app.use("/api", createApi(service));
+  const server = app.listen(0, "127.0.0.1");
+  await new Promise<void>((resolve) => server.once("listening", resolve));
+  t.after(() => {
+    server.closeAllConnections();
+    server.close();
+  });
+  const hunk = state.files[0].hunks[0];
+  const response = await fetch(
+    `http://127.0.0.1:${(server.address() as AddressInfo).port}/api/squash-lines`,
+    {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        version: state.version,
+        selections: [{ id: hunk.id, lines: [changes(hunk)[0]] }],
+      }),
+    },
+  );
+  assert.equal(response.status, 500);
+  const error = await response.json();
+  assert.equal(error.code, "TOOL_FAILED");
+  assert.equal(error.output, stdout + stderr);
+  assert.match(error.error, /selected hunk could not be read/);
+  assert.equal(squashCalls, 0);
+  assert.deepEqual(await service.getState(), state);
+});

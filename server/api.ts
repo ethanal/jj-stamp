@@ -1,6 +1,7 @@
 import express from "express";
 import { z } from "zod";
 import { ApiError, ReviewService } from "./service.ts";
+import { ProcessError } from "./process.ts";
 
 const version = z.string().regex(/^[0-9a-f]{64}$/);
 const previewSchema = z
@@ -92,6 +93,14 @@ export function createApi(service: ReviewService): express.Router {
       res
         .status(error.status)
         .json({ error: error.message, code: error.code, ...error.details });
+      return;
+    }
+    if (error instanceof ProcessError) {
+      res.status(500).json({
+        error: error.message,
+        code: "TOOL_FAILED",
+        output: error.result.stdout + error.result.stderr,
+      });
       return;
     }
     if (error instanceof z.ZodError) {

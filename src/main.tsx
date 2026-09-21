@@ -14,6 +14,7 @@ import { CodeDiff } from "./CodeDiff";
 import { ChangedFilesTree } from "./ChangedFilesTree";
 import { refsFromSelection, specsForRefs, type RowRef } from "./optimistic";
 import { SquashQueue } from "./squash-queue";
+import { api, errorMessage, errorDetails, type ErrorDetail } from "./api";
 import { useAppearancePreferences } from "./preferences";
 import { SidebarResize } from "./SidebarResize";
 import {
@@ -27,25 +28,6 @@ import "@fontsource/ibm-plex-mono/500.css";
 import "@fontsource/ibm-plex-mono/700.css";
 import "./styles.css";
 
-async function api<T>(route: string, body?: unknown): Promise<T> {
-  const response = await fetch(
-    `/api/${route}`,
-    body === undefined
-      ? { cache: "no-store" }
-      : {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "X-Fold-Request": "1",
-          },
-          body: JSON.stringify(body),
-        },
-  );
-  const value = await response.json();
-  if (!response.ok)
-    throw new Error(value.error || `Request failed (${response.status}).`);
-  return value;
-}
 const loadFile = (path: string, version: string) =>
   api<FileDiffLoadedFiles>("file", { path, version });
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
@@ -136,11 +118,26 @@ function App() {
   const [picked, setPicked] = useState<RowRef[]>([]);
   const [dragging, setDragging] = useState(false);
   const [busy, setBusy] = useState("");
-  const [localError, setError] = useState("");
+  const [localError, setLocalError] = useState<{
+    message: string;
+    details: ErrorDetail[];
+  } | null>(null);
+  const setError = useCallback((error: unknown) => {
+    setLocalError(
+      error === ""
+        ? null
+        : {
+            message: errorMessage(error),
+            details: errorDetails(error),
+          },
+    );
+  }, []);
   const [notice, setNotice] = useState("");
   const [log, setLog] = useState<LogRow[]>([]);
   const [logLoading, setLogLoading] = useState(false);
   const logOperation = useRef<string | undefined>(undefined);
+  const logVersion = useRef<string | undefined>(undefined);
+  const [graphRefresh, setGraphRefresh] = useState(0);
   const [showFiles, setShowFiles] = useState(() => readExpanded("files"));
   const [showLog, setShowLog] = useState(() => readExpanded("log"));
   const [style, setStyle] = useState<"unified" | "split">(() => {
@@ -172,7 +169,10 @@ function App() {
     0,
   );
   const working = !!busy || queued.recovering;
-  const error = localError || queued.error;
+  const error = [queued.error, localError?.message]
+    .filter(Boolean)
+    .join("\n\n");
+  const diagnostics = [...queued.errorDetails, ...(localError?.details ?? [])];
   const clear = useCallback(() => {
     setRange(null);
     setPicked([]);
@@ -200,7 +200,8 @@ function App() {
     try {
       replace(await api<RepoState>("state"));
     } catch (error) {
-      setError((error as Error).message);
+      setError(error);
+      setGraphRefresh((value) => value + 1);
     } finally {
       lock.current = false;
       setBusy("");
@@ -225,25 +226,32 @@ function App() {
     }
   }, [showFiles, showLog]);
   useEffect(() => {
-    if (!showLog || !queued.confirmed || queued.pending || queued.recovering)
+    if (
+      !showLog ||
+      queued.pending ||
+      queued.recovering ||
+      (!queued.confirmed && !graphRefresh)
+    )
       return;
     let cancelled = false;
+    logVersion.current = undefined;
+    setLogLoading(true);
     // Load immediately on startup/change selection. Only debounce after history
     // changes, so graph reads don't get ahead of a burst of queued squashes.
-    const operation = queued.confirmed.operation;
+    const operation = queued.confirmed?.operation;
     const delay =
       logOperation.current && logOperation.current !== operation ? 120 : 0;
     const timer = setTimeout(() => {
-      setLogLoading(true);
       api<{ version: string; rows: LogRow[] }>("graph")
         .then((result) => {
           if (!cancelled) {
             setLog(result.rows);
+            logVersion.current = result.version;
             logOperation.current = operation;
           }
         })
         .catch((error) => {
-          if (!cancelled) setError(error.message);
+          if (!cancelled) setError(error);
         })
         .finally(() => {
           if (!cancelled) setLogLoading(false);
@@ -253,7 +261,13 @@ function App() {
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [queued.confirmed?.version, queued.pending, queued.recovering, showLog]);
+  }, [
+    queued.confirmed?.version,
+    queued.pending,
+    queued.recovering,
+    showLog,
+    graphRefresh,
+  ]);
   useEffect(() => {
     if (queued.halted) clear();
   }, [queued.halted, clear]);
@@ -285,7 +299,7 @@ function App() {
         setRange(next);
         setNotice("");
       } catch (error) {
-        setError((error as Error).message);
+        setError(error);
         clear();
       }
     },
@@ -315,7 +329,7 @@ function App() {
       queue.enqueue(picked);
       clear();
     } catch (error) {
-      setError((error as Error).message);
+      setError(error);
     }
   }, [queue, picked, count, dragging, clear]);
   const undo = useCallback(async () => {
@@ -338,7 +352,7 @@ function App() {
       replace(result.state);
       setNotice("Squash undone");
     } catch (error) {
-      setError((error as Error).message);
+      setError(error);
     } finally {
       lock.current = false;
       setBusy("");
@@ -352,8 +366,7 @@ function App() {
         dragging ||
         current.pending ||
         current.recovering ||
-        !current.confirmed ||
-        current.confirmed.source.changeId === changeId
+        !logVersion.current
       )
         return;
       lock.current = true;
@@ -361,14 +374,14 @@ function App() {
       setError("");
       try {
         const result = await api<{ state: RepoState }>("revision", {
-          version: current.confirmed.version,
+          version: logVersion.current,
           changeId,
         });
         replace(result.state);
         setActivePath(result.state.files[0]?.path ?? "");
         scroll.current?.scrollTo(0, 0);
       } catch (error) {
-        setError((error as Error).message);
+        setError(error);
       } finally {
         lock.current = false;
         setBusy("");
@@ -561,18 +574,39 @@ function App() {
           </div>
           {error && (
             <div className="error" role="alert">
-              <span>
-                {error}
+              <div className="error-content">
+                <div className="error-summary">{error}</div>
+                {diagnostics.map((detail, index) => (
+                  <section
+                    className="error-diagnostic"
+                    key={index}
+                    aria-label={`${detail.label} error details`}
+                  >
+                    <div className="error-diagnostic-heading">
+                      <strong>{detail.label} error</strong>
+                      {detail.code && <code>{detail.code}</code>}
+                    </div>
+                    {detail.output && (
+                      <pre
+                        className="error-output"
+                        tabIndex={0}
+                        aria-label={`${detail.label} output`}
+                      >
+                        {detail.output}
+                      </pre>
+                    )}
+                  </section>
+                ))}
                 {queued.halted && (
                   <button
                     className="retry"
                     onClick={refresh}
                     disabled={idleActionDisabled}
                   >
-                    refresh to continue
+                    refresh repository
                   </button>
                 )}
-              </span>
+              </div>
               <button
                 onClick={() => {
                   setError("");
@@ -692,7 +726,11 @@ function App() {
                           }
                           title={`${row.revision.changeId}\n${row.revision.description}${row.mutable ? "" : "\nImmutable change"}`}
                           disabled={
-                            !row.mutable || idleActionDisabled || dragging
+                            !row.mutable ||
+                            idleActionDisabled ||
+                            dragging ||
+                            logLoading ||
+                            !logVersion.current
                           }
                           onClick={() =>
                             void selectRevision(row.revision!.changeId)

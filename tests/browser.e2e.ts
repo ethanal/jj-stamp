@@ -717,6 +717,8 @@ try {
     releaseFailure = resolve;
   });
   let failureRequests = 0;
+  const failedToolOutput =
+    "patching src/long.ts\nHunk #1 FAILED at 71.\nCaused by: permission denied\n<img src=x onerror=alert('unsafe')>\n";
   await page.route("**/api/squash-lines", async (route) => {
     failureRequests++;
     if (failureRequests === 1) {
@@ -726,7 +728,11 @@ try {
       await route.fulfill({
         status: 503,
         contentType: "application/json",
-        body: JSON.stringify({ error: "Injected queue failure" }),
+        body: JSON.stringify({
+          error: "Injected queue failure",
+          code: "TOOL_FAILED",
+          output: failedToolOutput,
+        }),
       });
     }
   });
@@ -742,6 +748,18 @@ try {
     { timeout: 15000 },
   );
   await expect(page.getByRole("status")).toContainText("Queue stopped");
+  await expect(page.getByLabel("Squash error details")).toContainText(
+    "TOOL_FAILED",
+  );
+  await expect(page.getByLabel("Squash output")).toHaveText(failedToolOutput);
+  await expect(page.getByLabel("Squash output").locator("img")).toHaveCount(0);
+  await expect(page.getByLabel("Squash output")).toBeVisible();
+  assert.equal(
+    await page
+      .getByLabel("Squash output")
+      .evaluate((node) => getComputedStyle(node).whiteSpace),
+    "pre-wrap",
+  );
   await expect(page.getByLabel("Change line counts")).toHaveText("+36−0");
   await expect(treeRow("src/long.ts")).toContainText("+36−0");
   assert.equal(
@@ -767,7 +785,7 @@ try {
     "Drag code to select lines",
   );
   console.log(
-    "✓ Failure stops FIFO, cancels unsent jobs, and reloads actual diff/counts without replay",
+    "✓ Failure shows literal multiline tool output/code, stops FIFO, and reloads without replay",
   );
 
   await codeLine(failLines[1].newLine!).click();
@@ -922,11 +940,46 @@ try {
   console.log(
     "✓ Two-parent change shows an error and disables squashing; another mutable change remains selectable",
   );
+  // A healthy new @ does not resurrect an empty review that jj auto-abandoned.
+  // Cold-page recovery must work without any successful /state response.
+  await jj(repoPath, ["new", "-m", "Healthy replacement change"]);
+  const replacement = (
+    await jj(repoPath, ["log", "--no-graph", "-r", "@", "-T", "change_id"])
+  ).stdout.trim();
+  await jj(repoPath, ["new"]);
+  await reviewWorkingCopy();
+  const pinnedEmpty = await refreshState();
+  await jj(repoPath, ["edit", replacement]);
+  await page.reload();
+  await expect(page.getByRole("alert")).toContainText(
+    pinnedEmpty.source.changeId,
+  );
+  await expect(page.getByRole("alert")).toContainText("SOURCE_UNAVAILABLE");
+  await expect(reviewChange(replacement)).toBeEnabled();
+  const recoverySelection = page.waitForResponse((response) =>
+    response.url().endsWith("/api/revision"),
+  );
+  await reviewChange(replacement).click();
+  const recovered = await recoverySelection;
+  assert.equal(recovered.status(), 200, await recovered.text());
+  await expect(page.getByLabel("Current change ID")).toHaveAttribute(
+    "title",
+    replacement,
+  );
+  await expect(page.getByRole("alert")).toHaveCount(0);
+  console.log(
+    "✓ Missing pinned source identifies its full ID and permits explicit graph recovery without a loaded diff",
+  );
   assert(mutations.every((endpoint) => endpoint === "/api/squash-lines"));
   // Fixture edits intentionally race an outstanding read-only graph refresh.
   // Any 409 must be that guard, never an unexpected mutation/context failure.
   for (const rejected of rejectedReads)
-    assert.deepEqual(rejected, { path: "/api/graph", code: "STALE_STATE" });
+    assert.ok(
+      (rejected.path === "/api/graph" && rejected.code === "STALE_STATE") ||
+        (rejected.path === "/api/state" &&
+          rejected.code === "SOURCE_UNAVAILABLE"),
+      JSON.stringify(rejected),
+    );
   if (rejectedReads.length) {
     for (let i = 0; i < rejectedReads.length; i++) {
       const index = errors.findIndex((error) =>

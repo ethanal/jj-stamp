@@ -7,6 +7,7 @@ import {
   refsFromSelection,
   type RowRef,
 } from "../src/optimistic.ts";
+import { RequestError } from "../src/api.ts";
 import { SquashQueue, type SquashTransport } from "../src/squash-queue.ts";
 import type { RepoState } from "../src/types.ts";
 
@@ -444,4 +445,51 @@ test("subscribers can enqueue during acknowledgement without parallel POSTs", as
   await tick();
   assert.equal(queue.getSnapshot().pending, 0);
   assert.equal(queue.getSnapshot().halted, false);
+});
+
+test("squash diagnostics survive successful and failed reloads, and dismissal never resumes work", async () => {
+  for (const reloadFails of [false, true]) {
+    const { queue, posts, reads, state } = setup();
+    queue.enqueue(refs(state, 2));
+    queue.enqueue(refs(queue.getSnapshot().view!, 2));
+    const output = "patch: hunk FAILED\nCaused by: permission denied\n";
+    posts[0].result.reject(
+      new RequestError("Tool failed.", 500, "TOOL_FAILED", output),
+    );
+    await tick();
+    const primary = { label: "Squash", code: "TOOL_FAILED", output };
+    assert.deepEqual(queue.getSnapshot().errorDetails, [primary]);
+    if (reloadFails)
+      reads[0].reject(
+        new RequestError(
+          "Cannot reload.",
+          409,
+          "SOURCE_UNAVAILABLE",
+          "selected change missing\n",
+        ),
+      );
+    else reads[0].resolve(state);
+    await tick();
+    assert.deepEqual(
+      queue.getSnapshot().errorDetails,
+      reloadFails
+        ? [
+            primary,
+            {
+              label: "Reload",
+              code: "SOURCE_UNAVAILABLE",
+              output: "selected change missing\n",
+            },
+          ]
+        : [primary],
+    );
+    assert.equal(posts.length, 1);
+    assert.equal(reads.length, 1);
+    queue.clearError();
+    assert.deepEqual(queue.getSnapshot().errorDetails, []);
+    assert.equal(queue.getSnapshot().halted, true);
+    assert.throws(() => queue.enqueue(refs(state, 2)), /paused/);
+    queue.replace(state);
+    assert.deepEqual(queue.getSnapshot().errorDetails, []);
+  }
 });

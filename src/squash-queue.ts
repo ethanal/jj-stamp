@@ -6,6 +6,7 @@ import {
   type SquashSpec,
 } from "./optimistic";
 import type { RepoState } from "./types";
+import { errorMessage as message, errorDetails, type ErrorDetail } from "./api";
 
 export interface SquashTransport {
   squash(input: {
@@ -21,6 +22,7 @@ export interface Snapshot {
   recovering: boolean;
   halted: boolean;
   error: string;
+  errorDetails: ErrorDetail[];
   notice: string;
   epoch: number;
 }
@@ -29,8 +31,6 @@ interface Job {
   beforeSignature: string;
   count: number;
 }
-const message = (error: unknown): string =>
-  error instanceof Error ? error.message : String(error);
 
 /** In-memory FIFO. Each mutation is sent at most once, against an acknowledged version. */
 export class SquashQueue {
@@ -41,6 +41,7 @@ export class SquashQueue {
     recovering: false,
     halted: false,
     error: "",
+    errorDetails: [],
     notice: "",
     epoch: 0,
   };
@@ -84,6 +85,7 @@ export class SquashQueue {
       recovering: false,
       halted: false,
       error: "",
+      errorDetails: [],
       notice: "",
       epoch: this.snapshot.epoch + 1,
     });
@@ -91,7 +93,7 @@ export class SquashQueue {
 
   clearError(): void {
     // Dismissing a message is not permission to resume or retry a failed mutation.
-    this.publish({ error: "" });
+    this.publish({ error: "", errorDetails: [] });
   }
 
   enqueue(refs: RowRef[]): void {
@@ -112,6 +114,7 @@ export class SquashQueue {
       view: projected,
       pending: this.jobs.length,
       error: "",
+      errorDetails: [],
       notice: "",
       epoch: this.snapshot.epoch + 1,
     });
@@ -128,6 +131,7 @@ export class SquashQueue {
       recovering: false,
       halted: true,
       error,
+      errorDetails: [],
       notice: "",
       epoch: this.snapshot.epoch + 1,
     });
@@ -135,7 +139,7 @@ export class SquashQueue {
 
   private async recover(error: unknown): Promise<void> {
     this.jobs = [];
-    const explanation = `Squash stopped: ${message(error)} No queued squashes were retried. Refresh or undo before continuing.`;
+    const explanation = `Squash stopped: ${message(error)} No queued squashes were retried.`;
     // Do not leave speculative edits visible while a potentially slow GET runs.
     this.publish({
       view: this.snapshot.confirmed,
@@ -143,6 +147,7 @@ export class SquashQueue {
       recovering: true,
       halted: true,
       error: explanation,
+      errorDetails: errorDetails(error, "Squash"),
       notice: "",
       epoch: this.snapshot.epoch + 1,
     });
@@ -159,6 +164,10 @@ export class SquashQueue {
       this.publish({
         view: this.snapshot.confirmed,
         recovering: false,
+        errorDetails: [
+          ...errorDetails(error, "Squash"),
+          ...errorDetails(refreshError, "Reload"),
+        ],
         error: `${explanation} Reload also failed: ${message(refreshError)} Showing the last confirmed state; repository state is uncertain.`,
       });
     }
