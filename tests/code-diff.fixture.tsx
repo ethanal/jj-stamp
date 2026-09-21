@@ -43,7 +43,7 @@ function makeFile(squashed: boolean): DiffFile {
 }
 function Fixture() {
   const [style, setStyle] = useState<"unified" | "split">("unified");
-  const [theme, setTheme] = useState<"dark" | "light">("dark");
+  const [theme, setTheme] = useState<"dark" | "light" | "dim">("dark");
   const [squashed, setSquashed] = useState(false);
   const [epoch, setEpoch] = useState(0);
   const [selections, setSelections] = useState<Selections>({});
@@ -55,7 +55,13 @@ function Fixture() {
       <button onClick={() => setStyle(style === "split" ? "unified" : "split")}>
         Layout
       </button>
-      <button onClick={() => setTheme(theme === "dark" ? "light" : "dark")}>
+      <button
+        onClick={() =>
+          setTheme(
+            theme === "dark" ? "light" : theme === "light" ? "dim" : "dark",
+          )
+        }
+      >
         Theme
       </button>
       <button onClick={() => setEpoch(epoch + 1)}>Refresh</button>
@@ -80,7 +86,7 @@ function Fixture() {
           version={String(epoch)}
           renderKey={String(epoch)}
           style={style}
-          theme={theme}
+          colorScheme={theme}
           selections={selections}
           range={range}
           disabled={false}

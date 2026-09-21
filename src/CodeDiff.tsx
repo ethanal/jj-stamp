@@ -83,6 +83,13 @@ const separatorCSS = `
 [data-separator-content] { font-size: 11px; color: #7e8895; }
 `;
 
+const dimCSS = `
+[data-line][data-fold-selected], [data-column-number][data-fold-selected] { background: #245778; }
+[data-line][data-fold-context-selected], [data-column-number][data-fold-context-selected] { background: #303e50; }
+[data-separator="line-info-basic"], [data-gutter] [data-separator-wrapper] { background: #343c46; }
+[data-separator-content] { color: #adbac7; }
+`;
+
 const lightCSS = `
 [data-line][data-fold-selected], [data-column-number][data-fold-selected] { background: #c7e4fa; }
 [data-line][data-fold-context-selected], [data-column-number][data-fold-context-selected] { background: #e6f1fb; }
@@ -196,7 +203,8 @@ export function CodeDiff({
   version,
   renderKey: _renderKey,
   style,
-  theme = "dark",
+  colorScheme,
+  theme = colorScheme ?? "dark",
   selections,
   contextDisabled,
   range,
@@ -210,7 +218,8 @@ export function CodeDiff({
   version: string;
   renderKey: string;
   style: "unified" | "split";
-  theme?: "light" | "dark";
+  theme?: "light" | "dark" | "dim";
+  colorScheme?: "light" | "dark" | "dim";
   selections: Selections;
   contextDisabled: boolean;
   range: SelectedLineRange | null;
@@ -452,8 +461,13 @@ export function CodeDiff({
   );
   const options = useMemo(
     () => ({
-      theme: theme === "light" ? "github-light" : "github-dark",
-      themeType: theme,
+      theme:
+        theme === "light"
+          ? "github-light"
+          : theme === "dim"
+            ? "github-dark-dimmed"
+            : "github-dark",
+      themeType: theme === "light" ? ("light" as const) : ("dark" as const),
       diffStyle: style,
       diffIndicators: "classic" as const,
       disableFileHeader: true,
@@ -464,7 +478,7 @@ export function CodeDiff({
       lineHoverHighlight: "line" as const,
       unsafeCSS:
         separatorCSS +
-        (theme === "light" ? lightCSS : "") +
+        (theme === "light" ? lightCSS : theme === "dim" ? dimCSS : "") +
         (contextDisabled
           ? "[data-expand-button], [data-unmodified-lines] { opacity: .35; cursor: wait; }"
           : ""),

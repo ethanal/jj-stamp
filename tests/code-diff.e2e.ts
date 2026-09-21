@@ -84,6 +84,14 @@ try {
     await page.getByText("Refresh", { exact: true }).click();
     await page.getByText("Theme", { exact: true }).click();
     await expect(line(20)).toBeVisible();
+    await expect(
+      page.locator('[data-separator="line-info-basic"]').first(),
+    ).toHaveCSS("background-color", "rgb(238, 241, 245)");
+    await page.getByText("Theme", { exact: true }).click();
+    await expect(
+      page.locator('[data-separator="line-info-basic"]').first(),
+    ).toHaveCSS("background-color", "rgb(52, 60, 70)");
+    await expect(line(20)).toBeVisible();
     await expect(page.locator("diffs-container")).toHaveAttribute(
       "data-test-identity",
       "preserved",
