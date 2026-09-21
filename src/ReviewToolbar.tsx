@@ -1,5 +1,9 @@
 import type { Revision } from "./types";
-import type { ColorScheme } from "./preferences";
+import {
+  colorSchemes,
+  parseColorScheme,
+  type ColorScheme,
+} from "./preferences";
 
 type RevisionMetadata = Revision & { author?: string; changeIdPrefix?: string };
 export function revisionPageTitle(
@@ -18,12 +22,7 @@ export function ChangeId({ revision }: { revision?: RevisionMetadata }) {
       ? changeIdPrefix
       : changeId.slice(0, 8);
   const displayed = changeId.slice(0, Math.max(8, prefix.length));
-  return (
-    <>
-      <strong>{prefix}</strong>
-      {displayed.slice(prefix.length)}
-    </>
-  );
+  return <>{displayed}</>;
 }
 export function RevisionHeading({ source }: { source?: RevisionMetadata }) {
   return (
@@ -72,11 +71,13 @@ export function ColorSchemePicker({
         aria-label="Color scheme"
         value={value}
         disabled={disabled}
-        onChange={(event) => onChange(event.target.value as ColorScheme)}
+        onChange={(event) => onChange(parseColorScheme(event.target.value))}
       >
-        <option value="dark">Dark</option>
-        <option value="dim">Dim</option>
-        <option value="light">Light</option>
+        {Object.entries(colorSchemes).map(([scheme, { label }]) => (
+          <option key={scheme} value={scheme}>
+            {label}
+          </option>
+        ))}
       </select>
     </label>
   );

@@ -4,6 +4,7 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import {
   clampSidebarWidth,
+  colorSchemes,
   parseColorScheme,
   parseSidebarWidth,
   resizeFromKey,
@@ -27,7 +28,10 @@ const source = {
 test("appearance preferences validate stored values and preserve known schemes", () => {
   assert.equal(parseColorScheme(null), "dark");
   assert.equal(parseColorScheme("unknown"), "dark");
-  for (const scheme of ["light", "dark", "dim"] as const)
+  assert.equal(parseColorScheme("toString"), "dark");
+  assert.equal(colorSchemes["solarized-dark"].themeType, "dark");
+  assert.equal(colorSchemes["solarized-light"].themeType, "light");
+  for (const scheme of Object.keys(colorSchemes))
     assert.equal(parseColorScheme(scheme), scheme);
   assert.equal(parseSidebarWidth("files", null), 245);
   assert.equal(parseSidebarWidth("log", ""), 350);
@@ -78,11 +82,12 @@ test("page title uses the complete change id and repository path in the requeste
   assert.equal(revisionPageTitle(undefined, undefined), "jj-stamp");
 });
 
-test("heading puts change id, author, title, then commit id and bolds only unique prefix", () => {
+test("heading puts change id, author, title, then commit id without bold prefixes", () => {
   const html = renderToStaticMarkup(createElement(RevisionHeading, { source }));
-  assert.match(html, /<strong>abc<\/strong>defgh/);
+  assert.doesNotMatch(html, /<strong>/);
+  assert.match(html, />abcdefgh</);
   const fields = [
-    "<strong>abc",
+    ">abcdefgh<",
     "A. Reviewer",
     ">Review a change<",
     ">0123456789ab<",
@@ -114,7 +119,7 @@ test("change ID display handles old metadata and prefixes longer than eight char
         revision: { ...source, changeIdPrefix: undefined },
       }),
     ),
-    "<strong>abcdefgh</strong>",
+    "abcdefgh",
   );
   assert.equal(
     renderToStaticMarkup(
@@ -122,7 +127,7 @@ test("change ID display handles old metadata and prefixes longer than eight char
         revision: { ...source, changeIdPrefix: "abcdefghij" },
       }),
     ),
-    "<strong>abcdefghij</strong>",
+    "abcdefghij",
   );
   assert.equal(
     renderToStaticMarkup(
@@ -130,7 +135,7 @@ test("change ID display handles old metadata and prefixes longer than eight char
         revision: { ...source, changeIdPrefix: "mismatch" },
       }),
     ),
-    "<strong>abcdefgh</strong>",
+    "abcdefgh",
   );
 });
 
@@ -144,6 +149,6 @@ test("theme control exposes all supported palettes and current preference", () =
   );
   assert.match(html, /aria-label="Color scheme"/);
   assert.match(html, /value="light" selected=""/);
-  for (const scheme of ["light", "dark", "dim"])
+  for (const scheme of Object.keys(colorSchemes))
     assert.match(html, new RegExp(`value="${scheme}"`));
 });

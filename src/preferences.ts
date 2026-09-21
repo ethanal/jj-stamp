@@ -1,6 +1,21 @@
 import { useEffect, useState } from "react";
 
-export type ColorScheme = "dark" | "dim" | "light";
+export const colorSchemes = {
+  dark: { label: "Dark", theme: "github-dark", themeType: "dark" },
+  dim: { label: "Dim", theme: "github-dark-dimmed", themeType: "dark" },
+  light: { label: "Light", theme: "github-light", themeType: "light" },
+  "solarized-dark": {
+    label: "Solarized Dark",
+    theme: "solarized-dark",
+    themeType: "dark",
+  },
+  "solarized-light": {
+    label: "Solarized Light",
+    theme: "solarized-light",
+    themeType: "light",
+  },
+} as const;
+export type ColorScheme = keyof typeof colorSchemes;
 export type SidebarSide = "files" | "log";
 export const sidebarLimits = {
   files: { min: 120, max: 520, initial: 245 },
@@ -8,7 +23,9 @@ export const sidebarLimits = {
 } as const;
 
 export function parseColorScheme(value: string | null): ColorScheme {
-  return value === "light" || value === "dim" ? value : "dark";
+  return value !== null && Object.hasOwn(colorSchemes, value)
+    ? (value as ColorScheme)
+    : "dark";
 }
 export function clampSidebarWidth(side: SidebarSide, width: number): number {
   const { min, max, initial } = sidebarLimits[side];

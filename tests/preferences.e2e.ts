@@ -63,7 +63,9 @@ try {
   );
   await expect(
     page.getByLabel("Current change ID").locator("strong"),
-  ).toHaveText("abc");
+  ).toHaveCount(0);
+  await expect(page.getByLabel("Current change ID")).toHaveText("abcdefgh");
+  await expect(page.locator(".log-change strong")).toHaveCount(0);
   await expect(page.getByLabel("Revision author")).toHaveText("A. Reviewer");
   await expect(page.locator(".log-row.is-current")).toBeVisible();
   const files = page.getByRole("separator", { name: "Resize files sidebar" });
@@ -128,6 +130,23 @@ try {
     "background-color",
     "rgb(34, 39, 46)",
   );
+  for (const [scheme, background, mode] of [
+    ["solarized-dark", "rgb(0, 43, 54)", "dark"],
+    ["solarized-light", "rgb(253, 246, 227)", "light"],
+  ] as const) {
+    await page.getByLabel("Color scheme").selectOption(scheme);
+    await expect(page.locator("html")).toHaveCSS(
+      "background-color",
+      background,
+    );
+    await expect(page.locator("html")).toHaveCSS("color-scheme", mode);
+    await page.reload();
+    await expect(page.getByLabel("Color scheme")).toHaveValue(scheme);
+    await expect(page.locator("html")).toHaveCSS(
+      "background-color",
+      background,
+    );
+  }
   await page.screenshot({ path: "/tmp/jj-stamp-preferences-desktop.png" });
   await page.setViewportSize({ width: 600, height: 800 });
   await expect(files).toBeVisible();
@@ -158,7 +177,7 @@ try {
   await noStorage.close();
   assert.deepEqual(errors, []);
   console.log(
-    "Preference browser checks passed: drag/keyboard resize, persistence, themes, title, prefix, mobile, unavailable storage.",
+    "Preference browser checks passed: drag/keyboard resize, persistence, themes, title, plain IDs, mobile, unavailable storage.",
   );
 } finally {
   await browser.close();

@@ -17,7 +17,7 @@ import {
 } from "@pierre/diffs";
 import type { DiffFile, Selections } from "./types";
 import { selectionFromRange } from "./selection";
-import type { ColorScheme } from "./preferences";
+import { colorSchemes, type ColorScheme } from "./preferences";
 
 interface Point {
   line: number;
@@ -442,14 +442,8 @@ export function CodeDiff({
   );
   const options = useMemo(
     () => ({
-      theme:
-        colorScheme === "light"
-          ? "github-light"
-          : colorScheme === "dim"
-            ? "github-dark-dimmed"
-            : "github-dark",
-      themeType:
-        colorScheme === "light" ? ("light" as const) : ("dark" as const),
+      theme: colorSchemes[colorScheme].theme,
+      themeType: colorSchemes[colorScheme].themeType,
       diffStyle: style,
       diffIndicators: "classic" as const,
       disableFileHeader: true,

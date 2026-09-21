@@ -140,7 +140,8 @@ try {
   );
   await expect(
     page.getByLabel("Current change ID").locator("strong"),
-  ).toHaveText(initial.source.changeIdPrefix!);
+  ).toHaveCount(0);
+  await expect(page.locator(".log-change strong")).toHaveCount(0);
   assert.deepEqual(
     await page
       .getByLabel("Reviewed revision")
@@ -875,6 +876,16 @@ try {
   await writeFile(path.join(initial.repo.path, "other/raw.txt"), "no newline");
   await refreshState();
   await expect(treeRow("nested/deep/one.txt")).toBeVisible();
+  await expect(treeRow("nested/deep/")).toHaveAttribute(
+    "aria-label",
+    "nested / deep",
+  );
+  await expect(treeRow("nested/")).toHaveCount(0);
+  await expect(treeRow("nested/deep/")).toHaveAttribute("aria-level", "1");
+  await expect(treeRow("nested/deep/one.txt")).toHaveAttribute(
+    "aria-level",
+    "2",
+  );
   await expect(treeRow("other/one.txt")).toBeVisible();
   await expect(treeRow("nested/deep/one.txt")).toHaveAttribute(
     "data-item-git-status",
@@ -890,7 +901,13 @@ try {
     1,
   );
   await expect(page.locator(".file-bar")).toContainText("other/one.txt");
-  await treeRow("nested/").click();
+  await treeRow("nested/deep/").click();
+  await expect(treeRow("nested/deep/one.txt")).toHaveCount(0);
+  await refreshState();
+  await expect(treeRow("nested/deep/")).toHaveAttribute(
+    "aria-expanded",
+    "false",
+  );
   await expect(treeRow("nested/deep/one.txt")).toHaveCount(0);
   await codeLine(1).click();
   await treeRow("other/").click();
@@ -911,7 +928,7 @@ try {
   await expect(treeRow("other/one.txt")).toBeVisible();
   await expect(treeRow("other/one.txt")).toContainText("+1−0");
   console.log(
-    "✓ Nested paths, duplicate names, single active file, read-only rows, whole-file squash/undo, and fallback reveal",
+    "✓ Compact folder chains, collapse survives refresh, duplicate names, whole-file squash/undo, and fallback reveal",
   );
   // A merge can be reviewed, but there is no single safe squash destination.
   const left = (

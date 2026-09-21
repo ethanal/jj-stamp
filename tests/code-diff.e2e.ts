@@ -91,6 +91,21 @@ try {
     await expect(
       page.locator('[data-separator="line-info-basic"]').first(),
     ).toHaveCSS("background-color", "rgb(52, 60, 70)");
+    for (const [mode, separator] of [
+      ["dark", "rgb(7, 54, 66)"],
+      ["light", "rgb(238, 232, 213)"],
+    ]) {
+      await page.getByText("Theme", { exact: true }).click();
+      await expect(page.locator("diffs-container")).toHaveCSS(
+        "color-scheme",
+        mode,
+      );
+      await expect(
+        page.locator('[data-separator="line-info-basic"]').first(),
+      ).toHaveCSS("background-color", separator);
+      await expect(line(20)).toBeVisible();
+      await expect(page.locator("#selection")).toHaveText(selectionBefore!);
+    }
     await expect(line(20)).toBeVisible();
     await expect(page.locator("diffs-container")).toHaveAttribute(
       "data-test-identity",

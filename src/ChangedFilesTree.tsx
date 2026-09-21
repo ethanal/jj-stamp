@@ -34,7 +34,8 @@ export function ChangedFilesTree(props: Props) {
     initialExpansion: "closed",
     initialExpandedPaths: directoryPaths(props.files),
     initialSelectedPaths: props.activePath ? [props.activePath] : [],
-    flattenEmptyDirectories: false,
+    // Compact directory-only chains into one row, e.g. src/components/ui.
+    flattenEmptyDirectories: true,
     icons: "minimal",
     itemHeight: 28,
     density: "compact",

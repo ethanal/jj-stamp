@@ -48,16 +48,16 @@ The flake exposes a default package/app and development shell for x86_64/aarch64
 - **`s`:** selected changed lines disappear immediately and queue for squash. Real operations run one at a time. Continue selecting while they drain; changing revisions, refreshing, expanding context, and undo wait for an empty queue.
 - **`u`:** undo the last app squash when the queue is empty and the repository is unchanged.
 - **Escape:** clear the selection. **`r`:** refresh. **`f`:** focus the diff. **`l`:** toggle the graph.
-- The file tree supports collapsible folders, arrow-key navigation, Enter to open a file, change-status indicators, and live **`+ / −` counts**. Folder choices survive refresh and squash/undo updates.
+- The file tree compacts single-child folder chains into one row (for example, `src/components/ui`). It supports collapsible folders, arrow-key navigation, Enter to open a file, change-status indicators, and live **`+ / −` counts**. Folder choices survive refresh and squash/undo updates.
 - **Split / Stacked** switches layouts without changing the exact selection. Split drags select aligned rows in both columns. Stacked lets you select an individual addition or deletion.
 - **↑ 10 / ↓ 10** reveals ten context lines at a time.
 - Both sidebars collapse to narrow rails; drag their inner edges to resize them. Sidebar widths, collapsed states, and diff layout persist in browser `localStorage`.
-- Choose a **color scheme** in the toolbar. The scheme preference also persists in `localStorage` for this browser origin.
+- Choose **Dark**, **Dim**, **Light**, **Solarized Dark**, or **Solarized Light** in the color-scheme toolbar. The scheme preference also persists in `localStorage` for this browser origin.
 
 - Failed squashes show the API error code and full, selectable tool output. If reloading also fails, the original squash diagnostics remain visible alongside the reload error. Dismissing an error never resumes or retries queued work.
 - A review stays pinned to its selected change, not the moving working copy. If jj abandons that change (for example, when editing away from an empty undescribed change), the error identifies its full ID. The graph remains available: explicitly select another mutable change to resume review. Missing and divergent changes are reported separately.
 
-The heading lists the **change ID** (short prefix bolded), **author**, **title**, then **commit ID**. The browser tab reads **`<changeid>: <title> (<full repo path>)`**. The graph is rendered by `jj`, with clickable change IDs and a high-contrast selected-change highlight. It uses `trunk() | ((tracked_remote_bookmarks() & ~::trunk())::) | (mutable() & mine())::`, plus the selected change and working copy instead of the default log revset or a 100-entry cap. Graph refreshes wait for queued operations to complete and show recorded history without snapshotting the working copy.
+The heading lists the **change ID** (uniformly styled, without a bold prefix), **author**, **title**, then **commit ID**. The browser tab reads **`<changeid>: <title> (<full repo path>)`**. The graph is rendered by `jj`, with clickable change IDs and a high-contrast selected-change highlight. It uses `trunk() | ((tracked_remote_bookmarks() & ~::trunk())::) | (mutable() & mine())::`, plus the selected change and working copy instead of the default log revset or a 100-entry cap. Graph refreshes wait for queued operations to complete and show recorded history without snapshotting the working copy.
 
 There is no demo creation or reset endpoint. Test fixtures live only in temporary directories.
 

@@ -3,6 +3,7 @@ import "../src/styles.css";
 import { createRoot } from "react-dom/client";
 import type { SelectedLineRange } from "@pierre/diffs";
 import { CodeDiff } from "../src/CodeDiff";
+import { type ColorScheme } from "../src/preferences";
 import type { DiffFile, Selections } from "../src/types";
 
 const path = "scroll-fixture.txt";
@@ -44,7 +45,7 @@ function makeFile(squashed: boolean): DiffFile {
 }
 function Fixture() {
   const [style, setStyle] = useState<"unified" | "split">("unified");
-  const [theme, setTheme] = useState<"dark" | "light" | "dim">("dark");
+  const [theme, setTheme] = useState<ColorScheme>("dark");
   useEffect(() => {
     document.documentElement.dataset.colorScheme = theme;
   }, [theme]);
@@ -61,9 +62,16 @@ function Fixture() {
       </button>
       <button
         onClick={() =>
-          setTheme(
-            theme === "dark" ? "light" : theme === "light" ? "dim" : "dark",
-          )
+          setTheme((theme) => {
+            const themes: ColorScheme[] = [
+              "dark",
+              "light",
+              "dim",
+              "solarized-dark",
+              "solarized-light",
+            ];
+            return themes[(themes.indexOf(theme) + 1) % themes.length];
+          })
         }
       >
         Theme
