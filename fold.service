@@ -1,5 +1,5 @@
 [Unit]
-Description=Fold — interactive jj code review
+Description=jj-stamp — interactive jj code review
 After=network.target
 
 [Service]

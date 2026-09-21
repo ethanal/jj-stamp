@@ -67,6 +67,12 @@ async function drag(from: Locator, to: Locator) {
   await page.mouse.move(b.x + Math.min(220, b.width / 2), b.y + b.height / 2, {
     steps: 8,
   });
+  await expect(
+    page.locator("[data-line][data-fold-selected]").first(),
+  ).toBeVisible();
+  await expect(
+    page.locator("[data-line][data-fold-selection-start]").first(),
+  ).toBeVisible();
   await page.mouse.up();
 }
 async function pressMutation(key: "s" | "u") {
@@ -86,7 +92,90 @@ try {
   await expect(page.locator(".file-bar")).toContainText("src/notifications.ts");
   await expect(page.getByRole("checkbox")).toHaveCount(0);
   await expect(codeLine(21)).toBeVisible();
+  await expect(page).toHaveTitle("jj-stamp · jj code review");
+  await expect(page.locator(".app-name")).toHaveText("jj-stamp");
+  await expect(page.getByLabel("Current change ID")).toHaveText(
+    initial.source.changeId.slice(0, 8),
+  );
+  await expect(page.getByLabel("Current change ID")).toHaveAttribute(
+    "title",
+    initial.source.changeId,
+  );
+  await expect(page.getByLabel("Current commit ID")).toHaveText(
+    initial.source.commitId.slice(0, 12),
+  );
+  await expect(page.getByLabel("Current commit ID")).toHaveAttribute(
+    "title",
+    initial.source.commitId,
+  );
+  await codeLine(21).click();
+  const beforeWidth = (await page.locator(".viewer").boundingBox())!.width;
+  const surface = await page.locator(".code-surface").elementHandle();
+  await page
+    .getByRole("button", { name: "Collapse files sidebar", exact: true })
+    .click();
+  await expect(
+    page.getByRole("button", { name: "Expand files sidebar", exact: true }),
+  ).toHaveAttribute("aria-expanded", "false");
+  await expect(page.locator("#files-sidebar-content")).toBeHidden();
+  await page
+    .getByRole("button", { name: "Collapse log sidebar", exact: true })
+    .click();
+  await expect(
+    page.getByRole("button", { name: "Expand log sidebar", exact: true }),
+  ).toBeVisible();
+  await expect(page.getByLabel("jj log output")).toBeHidden();
+  assert(
+    (await page.locator(".viewer").boundingBox())!.width > beforeWidth + 400,
+  );
+  assert(
+    await surface!.evaluate(
+      (node) => node === document.querySelector(".code-surface"),
+    ),
+  );
+  await expect(page.getByRole("status")).toContainText(
+    "1 changed line selected",
+  );
+  await page.reload();
+  await expect(
+    page.getByRole("button", { name: "Expand files sidebar", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Expand log sidebar", exact: true }),
+  ).toBeVisible();
+  await page
+    .getByRole("button", { name: "Expand files sidebar", exact: true })
+    .click();
+  await page
+    .getByRole("button", { name: "Expand log sidebar", exact: true })
+    .click();
+  await expect(page.locator("#files-sidebar-content")).toBeVisible();
+  await expect(page.getByLabel("jj log output")).toBeVisible();
+  console.log(
+    "✓ jj-stamp branding, full revision IDs on hover, persistent sidebar rails, selection retained across collapse",
+  );
   await drag(codeLine(21, "change-deletion"), codeLine(21));
+  await expect(
+    page.locator("[data-line][data-fold-selection-start]"),
+  ).toHaveCount(1);
+  await expect(
+    page.locator("[data-line][data-fold-selection-end]"),
+  ).toHaveCount(1);
+  assert.equal(
+    await codeLine(21).evaluate(
+      (node) => getComputedStyle(node).backgroundColor,
+    ),
+    "rgb(22, 70, 107)",
+  );
+  assert(
+    (
+      await page
+        .locator("[data-column-number][data-fold-selected]")
+        .first()
+        .evaluate((node) => getComputedStyle(node).boxShadow)
+    ).includes("rgb(121, 201, 255)"),
+  );
+
   await expect(page.getByRole("status")).toContainText(
     "2 changed lines selected",
   );
@@ -96,6 +185,10 @@ try {
   );
   const result = await pressMutation("s");
   assert.equal(result.state.parent.changeId, initial.parent!.changeId);
+  await expect(page.getByLabel("Current commit ID")).toHaveAttribute(
+    "title",
+    result.state.source.commitId,
+  );
   await expect(page.getByRole("dialog")).toHaveCount(0);
   await expect(codeLine(21)).toHaveCount(0);
   assert.equal(
@@ -192,10 +285,13 @@ try {
   await page.keyboard.press("s");
   await page.waitForTimeout(150);
   assert.equal(mutations.length, previousMutations);
-  await page.getByRole("button", { name: "Toggle log panel" }).click();
-  await expect(page.locator(".log-panel")).toHaveCount(0);
+  await page.getByRole("button", { name: "Collapse log sidebar" }).click();
+  await expect(page.getByLabel("jj log output")).toBeHidden();
+  await expect(
+    page.getByRole("button", { name: "Expand log sidebar" }),
+  ).toBeVisible();
   await page.keyboard.press("l");
-  await expect(page.locator(".log-panel")).toBeVisible();
+  await expect(page.getByLabel("jj log output")).toBeVisible();
   await expect(page.locator(".code-surface")).toBeVisible();
   console.log(
     "✓ Right-side raw jj log, independent of diff, and guarded empty selection",
@@ -439,7 +535,24 @@ try {
       () => document.documentElement.scrollWidth <= innerWidth,
     ),
   );
-  await page.screenshot({ path: path.join(dataDir, "minimal-mobile.png") });
+  await expect(page.getByLabel("Current change ID")).toBeVisible();
+  await expect(page.getByLabel("Current commit ID")).toBeVisible();
+  await page.getByRole("button", { name: "Collapse files sidebar" }).click();
+  await page.getByRole("button", { name: "Collapse log sidebar" }).click();
+  await expect(
+    page.getByRole("button", { name: "Expand files sidebar" }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Expand log sidebar" }),
+  ).toBeVisible();
+  assert(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= innerWidth,
+    ),
+  );
+  await page.getByRole("button", { name: "Expand files sidebar" }).click();
+  await page.getByRole("button", { name: "Expand log sidebar" }).click();
+  await page.screenshot({ path: path.join(dataDir, "jj-stamp-mobile.png") });
   assert(mutations.every((endpoint) => endpoint === "/api/squash-lines"));
   // Fixture edits intentionally race an outstanding read-only graph refresh.
   // Any 409 must be that guard, never an unexpected mutation/context failure.

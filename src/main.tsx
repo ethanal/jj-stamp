@@ -54,6 +54,50 @@ function Counts({
     </span>
   );
 }
+function readExpanded(side: "files" | "log"): boolean {
+  try {
+    return localStorage.getItem(`jj-stamp.${side}-expanded`) !== "false";
+  } catch {
+    return true;
+  }
+}
+function SidebarToggle({
+  side,
+  expanded,
+  onToggle,
+  disabled,
+}: {
+  side: "files" | "log";
+  expanded: boolean;
+  onToggle: () => void;
+  disabled: boolean;
+}) {
+  const label = `${expanded ? "Collapse" : "Expand"} ${side} sidebar`;
+  const left = side === "files" ? expanded : !expanded;
+  return (
+    <button
+      className="sidebar-toggle"
+      onClick={onToggle}
+      disabled={disabled}
+      aria-label={label}
+      title={label}
+      aria-expanded={expanded}
+      aria-controls={`${side}-sidebar-content`}
+    >
+      <svg
+        viewBox="0 0 16 16"
+        width="15"
+        height="15"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.4"
+        aria-hidden="true"
+      >
+        <path d={left ? "M10 3 5 8l5 5" : "m6 3 5 5-5 5"} />
+      </svg>
+    </button>
+  );
+}
 function App() {
   const [queue] = useState(
     () =>
@@ -73,10 +117,12 @@ function App() {
   const [notice, setNotice] = useState("");
   const [log, setLog] = useState("");
   const [logLoading, setLogLoading] = useState(false);
-  const [showLog, setShowLog] = useState(true);
+  const [showFiles, setShowFiles] = useState(() => readExpanded("files"));
+  const [showLog, setShowLog] = useState(() => readExpanded("log"));
   const [style, setStyle] = useState<"unified" | "split">(() => {
     try {
-      return localStorage.getItem("fold.diff-style") === "split"
+      return (localStorage.getItem("jj-stamp.diff-style") ??
+        localStorage.getItem("fold.diff-style")) === "split"
         ? "split"
         : "unified";
     } catch {
@@ -141,11 +187,19 @@ function App() {
   }, [refresh]);
   useEffect(() => {
     try {
-      localStorage.setItem("fold.diff-style", style);
+      localStorage.setItem("jj-stamp.diff-style", style);
     } catch {
       /* Preference storage is optional. */
     }
   }, [style]);
+  useEffect(() => {
+    try {
+      localStorage.setItem("jj-stamp.files-expanded", String(showFiles));
+      localStorage.setItem("jj-stamp.log-expanded", String(showLog));
+    } catch {
+      /* Sidebar preferences are optional. */
+    }
+  }, [showFiles, showLog]);
   useEffect(() => {
     if (!showLog || !queued.confirmed || queued.pending || queued.recovering)
       return;
@@ -341,13 +395,30 @@ function App() {
   const deletions =
     state?.files.reduce((sum, file) => sum + file.deletions, 0) ?? 0;
   const idleActionDisabled = working || queued.pending > 0;
+  const source = queued.confirmed?.source ?? state?.source;
   return (
     <div className="app">
       <header className="topbar">
-        <span className="app-name">fold</span>
+        <span className="app-name">jj-stamp</span>
         <span className="divider">/</span>
         <span>{state?.repo.name ?? "…"}</span>
-        <span className="source-description">{state?.source.description}</span>
+        <span className="source-description" title={source?.description}>
+          {source?.description}
+        </span>
+        <div className="revision-info" aria-label="Working copy revision">
+          <span>
+            <span className="revision-label">change</span>
+            <code aria-label="Current change ID" title={source?.changeId}>
+              {source?.changeId.slice(0, 8) ?? "—"}
+            </code>
+          </span>
+          <span>
+            <span className="revision-label">commit</span>
+            <code aria-label="Current commit ID" title={source?.commitId}>
+              {source?.commitId.slice(0, 12) ?? "—"}
+            </code>
+          </span>
+        </div>
         <span className="commit-totals">
           <span>@</span>
           <Counts
@@ -357,14 +428,6 @@ function App() {
           />
         </span>
         <button
-          onClick={() => setShowLog((value) => !value)}
-          aria-label="Toggle log panel"
-          aria-pressed={showLog}
-          title="Toggle log panel (l)"
-        >
-          Log
-        </button>
-        <button
           onClick={refresh}
           disabled={idleActionDisabled}
           title="Refresh (r)"
@@ -372,67 +435,94 @@ function App() {
           refresh <kbd>r</kbd>
         </button>
       </header>
-      <div className={`workspace ${showLog ? "with-log" : ""}`}>
-        <aside className="sidebar">
+      <div
+        className={`workspace ${showLog ? "with-log" : "log-collapsed"} ${showFiles ? "" : "files-collapsed"}`}
+      >
+        <aside
+          className={`sidebar ${showFiles ? "" : "is-collapsed"}`}
+          aria-label="Files sidebar"
+        >
           <div className="sidebar-heading">
-            Files <span>{state?.files.length ?? 0}</span>
-          </div>
-          <div className="sidebar-content">
-            <nav aria-label="Changed files" className="file-list">
-              {state?.files.map((item, index, files) => {
-                const folder = item.path.includes("/")
-                  ? item.path.slice(0, item.path.lastIndexOf("/") + 1)
-                  : "";
-                const previous = files[index - 1]?.path;
-                const sameFolder =
-                  previous?.slice(0, previous.lastIndexOf("/") + 1) === folder;
-                return (
-                  <div key={item.path}>
-                    {folder && !sameFolder && (
-                      <div className="folder">{folder}</div>
-                    )}
-                    <button
-                      className={`file-item ${file?.path === item.path ? "active" : ""}`}
-                      aria-current={
-                        file?.path === item.path ? "true" : undefined
-                      }
-                      onClick={() => selectFile(item.path)}
-                      title={item.path}
-                      disabled={working}
-                    >
-                      <span className="file-status">
-                        {item.unsupported
-                          ? "·"
-                          : item.patch.includes("new file mode")
-                            ? "A"
-                            : item.patch.includes("deleted file mode")
-                              ? "D"
-                              : "M"}
-                      </span>
-                      <span className="filename">
-                        {item.path.split("/").at(-1)}
-                      </span>
-                      <Counts
-                        additions={item.additions}
-                        deletions={item.deletions}
-                      />
-                    </button>
-                  </div>
-                );
-              })}
-            </nav>
-          </div>
-          <div className="sidebar-footer">
-            <span>@ → @-</span>
-            {state?.repo.demo && (
-              <button
-                onClick={reset}
-                disabled={idleActionDisabled}
-                title="Create a fresh demo repository; keep the old one on disk"
-              >
-                reset demo
-              </button>
+            {showFiles && (
+              <>
+                Files <span>{state?.files.length ?? 0}</span>
+              </>
             )}
+            <SidebarToggle
+              side="files"
+              expanded={showFiles}
+              onToggle={() => setShowFiles((value) => !value)}
+              disabled={dragging}
+            />
+          </div>
+          {!showFiles && (
+            <span className="rail-label" aria-hidden="true">
+              Files
+            </span>
+          )}
+          <div
+            className="sidebar-body"
+            id="files-sidebar-content"
+            hidden={!showFiles}
+          >
+            <div className="sidebar-content">
+              <nav aria-label="Changed files" className="file-list">
+                {state?.files.map((item, index, files) => {
+                  const folder = item.path.includes("/")
+                    ? item.path.slice(0, item.path.lastIndexOf("/") + 1)
+                    : "";
+                  const previous = files[index - 1]?.path;
+                  const sameFolder =
+                    previous?.slice(0, previous.lastIndexOf("/") + 1) ===
+                    folder;
+                  return (
+                    <div key={item.path}>
+                      {folder && !sameFolder && (
+                        <div className="folder">{folder}</div>
+                      )}
+                      <button
+                        className={`file-item ${file?.path === item.path ? "active" : ""}`}
+                        aria-current={
+                          file?.path === item.path ? "true" : undefined
+                        }
+                        onClick={() => selectFile(item.path)}
+                        title={item.path}
+                        disabled={working}
+                      >
+                        <span className="file-status">
+                          {item.unsupported
+                            ? "·"
+                            : item.patch.includes("new file mode")
+                              ? "A"
+                              : item.patch.includes("deleted file mode")
+                                ? "D"
+                                : "M"}
+                        </span>
+                        <span className="filename">
+                          {item.path.split("/").at(-1)}
+                        </span>
+                        <Counts
+                          additions={item.additions}
+                          deletions={item.deletions}
+                        />
+                      </button>
+                    </div>
+                  );
+                })}
+              </nav>
+            </div>
+            <div className="sidebar-footer">
+              <span>@ → @-</span>
+              {state?.repo.demo && (
+                <button
+                  onClick={reset}
+                  disabled={idleActionDisabled}
+                  title="Create a fresh demo repository; keep the old one on disk"
+                >
+                  reset demo
+                </button>
+              )}
+            </div>
           </div>
         </aside>
         <main className="viewer">
@@ -527,23 +617,44 @@ function App() {
             )}
           </div>
         </main>
-        {showLog && (
-          <aside className="log-panel" aria-label="Revision graph">
-            <div className="log-header">
-              <span>jj log</span>
-              <span className="log-status">
-                {queued.pending
-                  ? `${queued.pending} queued`
-                  : logLoading
-                    ? "updating…"
-                    : ""}
-              </span>
-            </div>
-            <pre className="jj-log" aria-label="jj log output">
-              {log || (logLoading ? "Loading…" : "")}
-            </pre>
-          </aside>
-        )}
+        <aside
+          className={`log-panel ${showLog ? "" : "is-collapsed"}`}
+          aria-label="Revision graph"
+        >
+          <div className="log-header">
+            {showLog && (
+              <>
+                <span>jj log</span>
+                <span className="log-status">
+                  {queued.pending
+                    ? `${queued.pending} queued`
+                    : logLoading
+                      ? "updating…"
+                      : ""}
+                </span>
+              </>
+            )}
+            <SidebarToggle
+              side="log"
+              expanded={showLog}
+              onToggle={() => setShowLog((value) => !value)}
+              disabled={dragging}
+            />
+          </div>
+          {!showLog && (
+            <span className="rail-label" aria-hidden="true">
+              Log
+            </span>
+          )}
+          <pre
+            className="jj-log"
+            id="log-sidebar-content"
+            hidden={!showLog}
+            aria-label="jj log output"
+          >
+            {log || (logLoading ? "Loading…" : "")}
+          </pre>
+        </aside>
       </div>
       <footer className="statusbar">
         <span

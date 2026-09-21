@@ -1,14 +1,15 @@
-# Fold
+# jj-stamp
 
 Minimal, keyboard-first review of `@` in a real Jujutsu workspace. Diff rendering uses Pierre Diffs; selected lines move through `jj-hunk-tool`.
 
 ## Use
 
-- **Drag directly on code** (or line numbers) to select a range. Shift-click extends it.
+- **Drag directly on code** (or line numbers) to select a range. Shift-click extends it. Selected changes have a strong blue fill, a bright gutter marker, and outlined range edges; included context is tinted more softly and is never squashed.
 - **`s`** queues selected changed lines **from `@` into `@-`**. They disappear immediately; real squashes run one at a time in the background. Keep selecting while the queue drains. No confirmation dialog or target picker.
 - **`u`** undoes the last app squash once the queue is empty, provided the repository is unchanged.
 - **Escape** clears the selection. **`r`** refreshes.
-- The left sidebar lists files with **`+ / −` counts**; the header shows totals for the whole working-copy change.
+- The left sidebar lists files with **`+ / −` counts**. The header shows working-copy totals, the change ID, and the commit ID; hover an ID to see its full value.
+- Both sidebars have **collapse / expand buttons**. Collapsed sidebars leave a narrow rail with the expand button; their state is remembered locally.
 - The **right-hand panel** shows actual `jj log` output. **`l`** toggles it; **`f`** focuses the diff.
 - **Split / Stacked** switches between side-by-side and unified diffs. The layout preference is saved locally. In split view, dragging selects the aligned rows in **both columns**, regardless of where the drag starts. Use Stacked view to select an individual addition or deletion. Switching layout preserves the exact selection.
 - **↑ 10 / ↓ 10** reveal ten more context lines above or below the hunk (or the remaining lines at a file boundary).
@@ -47,7 +48,7 @@ To use a different **trusted** repository:
 JJ_REPO=/absolute/path/to/workspace PORT=8001 npm start
 ```
 
-Only server configuration chooses the repository. Reset is disabled for user repositories. Run one Fold process per repository, and use separate data directories/services for independent configured repositories.
+Only server configuration chooses the repository. Reset is disabled for user repositories. Run one jj-stamp process per repository, and use separate data directories/services for independent configured repositories.
 
 ### Production
 
@@ -75,7 +76,7 @@ This is a single-user, trusted-repository app, **not public multi-tenant hosting
 - Reads/writes serialize. Stale requests, target overrides, and replayed operations are refused. No interactive tools or automatic mutation retries.
 - Undo reverts one attributed operation with `jj op revert`, never `jj op restore`.
 - Ambiguous failures leave a durable recovery guard. Inspect `jj op log` before proceeding; see `server/README.md` for recovery details.
-- **Avoid concurrent edits or jj commands while squashing/undoing.** The in-process queue cannot lock external processes. A race may be detected only after a mutation, not prevented. Never run two Fold instances against one repository.
+- **Avoid concurrent edits or jj commands while squashing/undoing.** The in-process queue cannot lock external processes. A race may be detected only after a mutation, not prevented. Never run two jj-stamp instances against one repository.
 - Unsupported tool formats (binary, renames/copies, mode changes, no final newline, ambiguous paths) are read-only. Conflicted repositories are rejected.
 - Diffs load one file at a time; very large files are not virtualized yet.
 

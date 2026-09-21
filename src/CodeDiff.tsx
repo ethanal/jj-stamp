@@ -48,7 +48,21 @@ function deepElementAt(x: number, y: number): Element | null {
 const separatorCSS = `
 [data-code] { padding-top: 0; padding-bottom: 0; }
 [data-line], [data-column-number] { cursor: default; user-select: none; touch-action: none; }
-[data-line][data-fold-selected], [data-column-number][data-fold-selected] { background: #29415a; }
+[data-line][data-fold-selected], [data-column-number][data-fold-selected] { background: #16466b; }
+[data-line][data-fold-context-selected], [data-column-number][data-fold-context-selected] { background: #172f46; }
+[data-fold-in-range] {
+  --selection-top: transparent;
+  --selection-bottom: transparent;
+  box-shadow: inset 0 1px var(--selection-top), inset 0 -1px var(--selection-bottom);
+}
+[data-fold-selection-start] { --selection-top: #72b8e6; }
+[data-fold-selection-end] { --selection-bottom: #72b8e6; }
+[data-column-number][data-fold-in-range] {
+  color: #b7defb;
+  box-shadow: inset 3px 0 #79c9ff, inset 0 1px var(--selection-top), inset 0 -1px var(--selection-bottom);
+}
+[data-column-number][data-fold-selected] { color: #e3f3ff; font-weight: 500; }
+[data-line][data-fold-in-range] { box-shadow: inset 0 1px var(--selection-top), inset 0 -1px var(--selection-bottom), inset -1px 0 #386990; }
 [data-separator="line-info-basic"] { height: 25px; background: #20262e; }
 [data-separator-wrapper] { font-size: 11px; }
 [data-gutter] [data-separator-wrapper] { display: flex !important; flex-direction: row; width: max-content; align-items: center; background: #20262e; }
@@ -117,14 +131,35 @@ export function CodeDiff({
   const paint = useCallback(() => {
     const shadow = container.current?.shadowRoot;
     if (!shadow) return;
+    const { file, selections, range, style } = current.current;
     const keys = new Set<string>();
-    for (const hunk of current.current.file.hunks)
-      for (const row of hunk.rows) {
-        if (current.current.selections[hunk.id]?.includes(row.index))
+    for (const hunk of file.hunks) {
+      const selected = new Set(selections[hunk.id] ?? []);
+      for (const row of hunk.rows)
+        if (selected.has(row.index))
           keys.add(
             `${row.raw[0]}:${row.raw[0] === "-" ? row.oldLine : row.newLine}`,
           );
-      }
+    }
+    const axis = style === "split" ? 1 : 0;
+    const start =
+      range &&
+      instance.current?.getLineIndex(range.start, range.side ?? "additions")?.[
+        axis
+      ];
+    const end =
+      range &&
+      instance.current?.getLineIndex(
+        range.end,
+        range.endSide ?? range.side ?? "additions",
+      )?.[axis];
+    const low = start == null || end == null ? Infinity : Math.min(start, end);
+    const high =
+      start == null || end == null ? -Infinity : Math.max(start, end);
+    const indexOf = (row: HTMLElement) => {
+      const indices = row.dataset.lineIndex?.split(",").map(Number);
+      return indices?.[axis] ?? indices?.[0] ?? NaN;
+    };
     shadow
       .querySelectorAll<HTMLElement>("[data-line], [data-column-number]")
       .forEach((row) => {
@@ -134,14 +169,53 @@ export function CodeDiff({
             : row.dataset.lineType === "change-addition"
               ? "+"
               : "";
-        row.toggleAttribute(
-          "data-fold-selected",
+        const selected =
           !!kind &&
-            keys.has(`${kind}:${row.dataset.line ?? row.dataset.columnNumber}`),
-        );
+          keys.has(`${kind}:${row.dataset.line ?? row.dataset.columnNumber}`);
+        const index = indexOf(row);
+        // Context supplies continuous drag feedback but is never part of a squash.
+        const context =
+          !kind &&
+          row.dataset.lineType?.startsWith("context") === true &&
+          index >= low &&
+          index <= high;
+        row.toggleAttribute("data-fold-selected", selected);
+        row.toggleAttribute("data-fold-context-selected", context);
+        row.toggleAttribute("data-fold-in-range", selected || context);
+        row.removeAttribute("data-fold-selection-start");
+        row.removeAttribute("data-fold-selection-end");
       });
+    for (const column of shadow.querySelectorAll<HTMLElement>("[data-code]")) {
+      const gutters = new Map(
+        [...column.querySelectorAll<HTMLElement>("[data-column-number]")].map(
+          (row) => [row.dataset.lineIndex, row],
+        ),
+      );
+      const mark = (row: HTMLElement, edge: "start" | "end") => {
+        row.setAttribute(`data-fold-selection-${edge}`, "");
+        gutters
+          .get(row.dataset.lineIndex)
+          ?.setAttribute(`data-fold-selection-${edge}`, "");
+      };
+      let previous: HTMLElement | null = null;
+      let previousIndex = -Infinity;
+      for (const row of column.querySelectorAll<HTMLElement>("[data-line]")) {
+        const active = row.hasAttribute("data-fold-in-range"),
+          index = indexOf(row);
+        if (!active || index !== previousIndex + 1) {
+          if (previous) mark(previous, "end");
+          previous = null;
+        }
+        if (active) {
+          if (!previous) mark(row, "start");
+          previous = row;
+          previousIndex = index;
+        }
+      }
+      if (previous) mark(previous, "end");
+    }
   }, []);
-  useLayoutEffect(paint, [paint, selections, file, style]);
+  useLayoutEffect(paint, [paint, selections, file, style, range]);
   const fileDiff = useMemo(
     () =>
       parsePatchFiles(file.patch, `${renderKey}:${file.path}`, true)[0]

@@ -17,7 +17,10 @@ app.use("/api", (req, res, next) => {
   if (!req.is("application/json") || req.headers["x-fold-request"] !== "1") {
     res
       .status(403)
-      .json({ error: "Use a same-origin Fold request.", code: "FORBIDDEN" });
+      .json({
+        error: "Use a same-origin jj-stamp request.",
+        code: "FORBIDDEN",
+      });
     return;
   }
   const origin = req.headers.origin;
@@ -66,7 +69,7 @@ if (process.env.NODE_ENV === "production") {
   app.use(vite.middlewares);
 }
 server.listen(port, "0.0.0.0", () =>
-  console.log(`Fold listening on http://localhost:${port}`),
+  console.log(`jj-stamp listening on http://localhost:${port}`),
 );
 
 let shuttingDown = false;

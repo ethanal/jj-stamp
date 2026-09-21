@@ -622,3 +622,179 @@ kbd {
     font-size: 10px;
   }
 }
+/* Sidebar rails retain their own expand controls; toggles never unmount the diff. */
+.workspace {
+  --files-width: 245px;
+  --log-width: min(350px, 25vw);
+  display: grid;
+  grid-template-columns: var(--files-width) minmax(0, 1fr) var(--log-width);
+  grid-template-rows: minmax(0, 1fr);
+}
+.workspace.files-collapsed {
+  --files-width: 30px;
+}
+.workspace.log-collapsed {
+  --log-width: 30px;
+}
+.sidebar {
+  grid-column: 1;
+  grid-row: 1;
+  width: auto;
+  min-width: 0;
+}
+.viewer {
+  grid-column: 2;
+  grid-row: 1;
+  min-height: 0;
+}
+.log-panel {
+  grid-column: 3;
+  grid-row: 1;
+  width: auto;
+  min-width: 0;
+}
+.sidebar-body {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+.sidebar-body[hidden],
+.jj-log[hidden] {
+  display: none;
+}
+.sidebar-toggle {
+  width: 27px;
+  height: 28px;
+  flex-shrink: 0;
+  display: grid;
+  place-items: center;
+  color: #8b949e;
+  margin-left: auto;
+}
+.sidebar-toggle:hover:not(:disabled) {
+  background: #262e38;
+  color: #e0ebf7;
+}
+.log-header .sidebar-toggle {
+  margin-left: 8px;
+}
+.sidebar.is-collapsed .sidebar-heading,
+.log-panel.is-collapsed .log-header {
+  padding-inline: 0;
+  justify-content: center;
+}
+.is-collapsed .sidebar-toggle {
+  margin: 0;
+}
+.rail-label {
+  writing-mode: vertical-rl;
+  font-size: 10px;
+  color: #6e7884;
+  margin: 14px auto;
+  user-select: none;
+}
+.app-name {
+  white-space: nowrap;
+}
+.source-description {
+  min-width: 0;
+}
+.revision-info {
+  display: flex;
+  align-items: center;
+  gap: 15px;
+  flex-shrink: 0;
+  font-size: 10px;
+}
+.revision-info > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.revision-label {
+  color: #6e7884;
+}
+.revision-info code {
+  color: #b5c4d4;
+  cursor: help;
+  user-select: all;
+}
+.commit-totals {
+  flex-shrink: 0;
+}
+@media (max-width: 1100px) {
+  .workspace {
+    --files-width: 215px;
+    --log-width: 235px;
+  }
+}
+@media (max-width: 850px) {
+  .workspace,
+  .workspace.with-log {
+    --files-width: 190px;
+    --log-height: 175px;
+    grid-template-columns: var(--files-width) minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr) var(--log-height);
+  }
+  .workspace.log-collapsed {
+    --log-height: 36px;
+  }
+  .sidebar {
+    grid-column: 1;
+    grid-row: 1 / -1;
+  }
+  .log-panel {
+    grid-column: 2;
+    grid-row: 2;
+  }
+  .log-panel.is-collapsed {
+    flex-direction: row;
+    align-items: center;
+    gap: 9px;
+  }
+  .log-panel.is-collapsed .log-header {
+    width: 30px;
+    border-bottom: 0;
+  }
+  .log-panel.is-collapsed .rail-label {
+    writing-mode: horizontal-tb;
+    margin: 0;
+  }
+  .log-panel .sidebar-toggle svg {
+    transform: rotate(90deg);
+  }
+}
+@media (max-width: 700px) {
+  .topbar {
+    height: auto;
+    min-height: 57px;
+    flex-wrap: wrap;
+    padding-block: 7px;
+    row-gap: 6px;
+  }
+  .revision-info {
+    order: 10;
+    flex-basis: 100%;
+    gap: 18px;
+  }
+}
+@media (max-width: 600px) {
+  .workspace,
+  .workspace.with-log {
+    --files-width: 155px;
+    --log-height: 150px;
+  }
+}
+/* Keep collapsed widths/heights independent of viewport defaults. */
+.workspace.files-collapsed {
+  --files-width: 30px;
+}
+.workspace.log-collapsed {
+  --log-width: 30px;
+}
+@media (max-width: 850px) {
+  .workspace.log-collapsed {
+    --log-height: 36px;
+  }
+}
