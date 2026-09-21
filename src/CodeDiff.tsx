@@ -1,9 +1,11 @@
 import {
+  Component,
   useCallback,
   useEffect,
   useLayoutEffect,
   useMemo,
   useRef,
+  type ReactNode,
   type PointerEvent as ReactPointerEvent,
 } from "react";
 import { FileDiff } from "@pierre/diffs/react";
@@ -47,7 +49,11 @@ function deepElementAt(x: number, y: number): Element | null {
 }
 const separatorCSS = `
 [data-code] { padding-top: 0; padding-bottom: 0; }
-[data-line], [data-column-number] { cursor: default; user-select: none; touch-action: none; }
+[data-line], [data-column-number] { cursor: default; touch-action: none; }
+[data-line] { user-select: text; -webkit-user-select: text; }
+[data-column-number] { user-select: none; }
+:host([data-fold-text-selection]) [data-line] { cursor: text; }
+[data-expand-button] { cursor: pointer; }
 [data-line][data-fold-selected], [data-column-number][data-fold-selected] { background: #16466b; }
 [data-line][data-fold-context-selected], [data-column-number][data-fold-context-selected] { background: #172f46; }
 [data-fold-in-range] {
@@ -77,11 +83,120 @@ const separatorCSS = `
 [data-separator-content] { font-size: 11px; color: #7e8895; }
 `;
 
+const lightCSS = `
+[data-line][data-fold-selected], [data-column-number][data-fold-selected] { background: #c7e4fa; }
+[data-line][data-fold-context-selected], [data-column-number][data-fold-context-selected] { background: #e6f1fb; }
+[data-fold-selection-start] { --selection-top: #3379ad; }
+[data-fold-selection-end] { --selection-bottom: #3379ad; }
+[data-column-number][data-fold-in-range] { color: #235d87; }
+[data-column-number][data-fold-selected] { color: #123e60; }
+[data-separator="line-info-basic"], [data-gutter] [data-separator-wrapper] { background: #eef1f5; }
+[data-separator-content] { color: #566575; }
+`;
+
+// The renderer mutates its shadow DOM in a child layout effect. An effect
+// cleanup runs too late; React's snapshot lifecycle precedes those mutations.
+interface ScrollSnapshot {
+  viewport: HTMLElement;
+  top: number;
+  left: number;
+  codeLeft: number;
+  anchors: { line: string; text: string; offset: number }[];
+}
+class StableDiffViewport extends Component<{
+  patch: string;
+  children: ReactNode;
+}> {
+  element: HTMLDivElement | null = null;
+  getSnapshotBeforeUpdate(
+    previous: Readonly<{ patch: string }>,
+  ): ScrollSnapshot | null {
+    if (previous.patch === this.props.patch) return null;
+    const viewport = this.element?.closest<HTMLElement>(".viewer-scroll");
+    const shadow = this.element?.querySelector("diffs-container")?.shadowRoot;
+    if (!viewport || !shadow) return null;
+    const top = viewport.getBoundingClientRect().top;
+    // Squash changes the old side; surviving new-side coordinates stay stable.
+    // Retain fallback anchors in case the first visible hunk disappears.
+    const anchors = [...shadow.querySelectorAll<HTMLElement>("[data-line]")]
+      .filter(
+        (row) =>
+          row.dataset.lineType !== "change-deletion" &&
+          !row.closest("[data-deletions]") &&
+          row.getBoundingClientRect().bottom > top,
+      )
+      .map((row) => ({
+        line: row.dataset.line!,
+        text: row.textContent ?? "",
+        offset: row.getBoundingClientRect().top - top,
+      }));
+    return {
+      viewport,
+      top: viewport.scrollTop,
+      left: viewport.scrollLeft,
+      codeLeft: Math.max(
+        0,
+        ...[...shadow.querySelectorAll<HTMLElement>("[data-code]")].map(
+          (code) => code.scrollLeft,
+        ),
+      ),
+      anchors,
+    };
+  }
+  componentDidUpdate(
+    _previous: unknown,
+    _state: unknown,
+    snapshot: ScrollSnapshot | null,
+  ) {
+    if (!snapshot) return;
+    const { viewport, anchors } = snapshot;
+    const shadow = this.element?.querySelector("diffs-container")?.shadowRoot;
+    const rows = new Map(
+      [...(shadow?.querySelectorAll<HTMLElement>("[data-line]") ?? [])]
+        .filter(
+          (row) =>
+            row.dataset.lineType !== "change-deletion" &&
+            !row.closest("[data-deletions]"),
+        )
+        .map((row) => [row.dataset.line, row]),
+    );
+    let top = snapshot.top;
+    for (const anchor of anchors) {
+      const row = rows.get(anchor.line);
+      if (!row || row.textContent !== anchor.text) continue;
+      top =
+        viewport.scrollTop +
+        row.getBoundingClientRect().top -
+        viewport.getBoundingClientRect().top -
+        anchor.offset;
+      break;
+    }
+    viewport.scrollTop = top;
+    viewport.scrollLeft = snapshot.left;
+    shadow?.querySelectorAll<HTMLElement>("[data-code]").forEach((code) => {
+      code.scrollLeft = snapshot.codeLeft;
+    });
+  }
+  render() {
+    return (
+      <div
+        ref={(element) => {
+          this.element = element;
+        }}
+        style={{ overflowAnchor: "none" }}
+      >
+        {this.props.children}
+      </div>
+    );
+  }
+}
+
 export function CodeDiff({
   file,
   version,
-  renderKey,
+  renderKey: _renderKey,
   style,
+  theme = "dark",
   selections,
   contextDisabled,
   range,
@@ -95,6 +210,7 @@ export function CodeDiff({
   version: string;
   renderKey: string;
   style: "unified" | "split";
+  theme?: "light" | "dark";
   selections: Selections;
   contextDisabled: boolean;
   range: SelectedLineRange | null;
@@ -218,11 +334,29 @@ export function CodeDiff({
   useLayoutEffect(paint, [paint, selections, file, style, range]);
   const fileDiff = useMemo(
     () =>
-      parsePatchFiles(file.patch, `${renderKey}:${file.path}`, true)[0]
+      parsePatchFiles(file.patch, `${file.path}:${file.patch}`, true)[0]
         ?.files[0],
-    [file.patch, file.path, renderKey],
+    [file.patch, file.path],
   );
   useEffect(() => () => stop.current?.(), []);
+  useEffect(() => {
+    const setTextCursor = (event: KeyboardEvent) => {
+      container.current?.toggleAttribute(
+        "data-fold-text-selection",
+        event.shiftKey,
+      );
+    };
+    const reset = () =>
+      container.current?.removeAttribute("data-fold-text-selection");
+    document.addEventListener("keydown", setTextCursor);
+    document.addEventListener("keyup", setTextCursor);
+    window.addEventListener("blur", reset);
+    return () => {
+      document.removeEventListener("keydown", setTextCursor);
+      document.removeEventListener("keyup", setTextCursor);
+      window.removeEventListener("blur", reset);
+    };
+  }, []);
 
   const select = useCallback((anchor: Point, end: Point) => {
     if (!instance.current) return;
@@ -244,7 +378,9 @@ export function CodeDiff({
   }, []);
   const pointerDown = useCallback(
     (event: ReactPointerEvent<HTMLDivElement>) => {
-      if (event.button !== 0 || current.current.disabled) return;
+      // Shift-drag must not preventDefault, focus, or emit squash selections.
+      if (event.shiftKey || event.button !== 0 || current.current.disabled)
+        return;
       const path = event.nativeEvent.composedPath();
       const element = path.find((item) => item instanceof Element) as
         Element | undefined;
@@ -253,11 +389,7 @@ export function CodeDiff({
       event.preventDefault();
       root.current?.focus({ preventScroll: true });
       stop.current?.();
-      const previous = current.current.range;
-      const anchor: Point =
-        event.shiftKey && previous
-          ? { line: previous.start, side: previous.side ?? "additions" }
-          : point;
+      const anchor = point;
       select(anchor, point);
       current.current.onDragging(true);
       const pointerId = event.pointerId;
@@ -320,8 +452,8 @@ export function CodeDiff({
   );
   const options = useMemo(
     () => ({
-      theme: "github-dark",
-      themeType: "dark" as const,
+      theme: theme === "light" ? "github-light" : "github-dark",
+      themeType: theme,
       diffStyle: style,
       diffIndicators: "classic" as const,
       disableFileHeader: true,
@@ -332,6 +464,7 @@ export function CodeDiff({
       lineHoverHighlight: "line" as const,
       unsafeCSS:
         separatorCSS +
+        (theme === "light" ? lightCSS : "") +
         (contextDisabled
           ? "[data-expand-button], [data-unmodified-lines] { opacity: .35; cursor: wait; }"
           : ""),
@@ -381,14 +514,23 @@ export function CodeDiff({
           });
       },
     }),
-    [file.path, version, loadFile, onError, style, contextDisabled, paint],
+    [
+      file.path,
+      version,
+      loadFile,
+      onError,
+      style,
+      theme,
+      contextDisabled,
+      paint,
+    ],
   );
   return (
     <div
       className="code-surface"
       ref={root}
       tabIndex={0}
-      aria-label={`Diff for ${file.path}. Drag code to select lines; press s to squash.`}
+      aria-label={`Diff for ${file.path}. Drag code to select lines; Shift-drag to select text; press s to squash.`}
       onPointerDown={pointerDown}
       onClickCapture={(event) => {
         if (
@@ -407,9 +549,18 @@ export function CodeDiff({
         }
       }}
     >
-      {fileDiff && (
-        <FileDiff fileDiff={fileDiff} options={options} selectedLines={null} />
-      )}
+      <StableDiffViewport patch={file.patch}>
+        {/* A changed patch starts with contracted context. Mere theme, layout,
+            version, and queue updates keep the expanded renderer intact. */}
+        {fileDiff && (
+          <FileDiff
+            key={file.patch}
+            fileDiff={fileDiff}
+            options={options}
+            selectedLines={null}
+          />
+        )}
+      </StableDiffViewport>
     </div>
   );
 }
