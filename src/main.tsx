@@ -8,7 +8,7 @@ import {
 } from "react";
 import { createRoot } from "react-dom/client";
 import type { FileDiffLoadedFiles, SelectedLineRange } from "@pierre/diffs";
-import type { RepoState, Selections } from "./types";
+import type { LogRow, RepoState, Selections } from "./types";
 import { CodeDiff } from "./CodeDiff";
 import { ChangedFilesTree } from "./ChangedFilesTree";
 import { refsFromSelection, specsForRefs, type RowRef } from "./optimistic";
@@ -112,9 +112,9 @@ function App() {
   const source = queued.confirmed?.source ?? state?.source;
   useEffect(() => {
     document.title = source
-      ? `jj-stamp ${source.changeId.slice(0, 8)}: ${source.description}`
+      ? `${state?.repo.path ?? "jj-stamp"} — ${source.changeId.slice(0, 8)}: ${source.description}`
       : "jj-stamp";
-  }, [source?.changeId, source?.description]);
+  }, [source?.changeId, source?.description, state?.repo.path]);
   const [activePath, setActivePath] = useState("");
   const [range, setRange] = useState<SelectedLineRange | null>(null);
   const [picked, setPicked] = useState<RowRef[]>([]);
@@ -122,7 +122,7 @@ function App() {
   const [busy, setBusy] = useState("");
   const [localError, setError] = useState("");
   const [notice, setNotice] = useState("");
-  const [log, setLog] = useState("");
+  const [log, setLog] = useState<LogRow[]>([]);
   const [logLoading, setLogLoading] = useState(false);
   const [showFiles, setShowFiles] = useState(() => readExpanded("files"));
   const [showLog, setShowLog] = useState(() => readExpanded("log"));
@@ -214,9 +214,9 @@ function App() {
     // Don't put graph reads in front of a burst of interactive squash requests.
     const timer = setTimeout(() => {
       setLogLoading(true);
-      api<{ version: string; output: string }>("log")
+      api<{ version: string; rows: LogRow[] }>("log")
         .then((result) => {
-          if (!cancelled) setLog(result.output);
+          if (!cancelled) setLog(result.rows);
         })
         .catch((error) => {
           if (!cancelled) setError(error.message);
@@ -282,7 +282,7 @@ function App() {
     if (!current.view.parent) {
       setError(
         current.view.squashUnavailable ||
-          "The working copy needs one mutable parent.",
+          "The reviewed change needs one mutable parent.",
       );
       return;
     }
@@ -321,31 +321,37 @@ function App() {
       setBusy("");
     }
   }, [queue, dragging, replace]);
-  const reset = useCallback(async () => {
-    const current = queue.getSnapshot();
-    if (
-      lock.current ||
-      current.pending ||
-      current.recovering ||
-      !current.confirmed?.repo.demo
-    )
-      return;
-    lock.current = true;
-    setBusy("resetting");
-    setError("");
-    try {
-      const result = await api<{ state: RepoState }>("reset", {
-        version: current.confirmed.version,
-      });
-      replace(result.state);
-      setNotice("Fresh demo");
-    } catch (error) {
-      setError((error as Error).message);
-    } finally {
-      lock.current = false;
-      setBusy("");
-    }
-  }, [queue, replace]);
+  const selectRevision = useCallback(
+    async (changeId: string) => {
+      const current = queue.getSnapshot();
+      if (
+        lock.current ||
+        dragging ||
+        current.pending ||
+        current.recovering ||
+        !current.confirmed ||
+        current.confirmed.source.changeId === changeId
+      )
+        return;
+      lock.current = true;
+      setBusy("switching change");
+      setError("");
+      try {
+        const result = await api<{ state: RepoState }>("revision", {
+          version: current.confirmed.version,
+          changeId,
+        });
+        replace(result.state);
+        setActivePath(result.state.files[0]?.path ?? "");
+      } catch (error) {
+        setError((error as Error).message);
+      } finally {
+        lock.current = false;
+        setBusy("");
+      }
+    },
+    [queue, dragging, replace],
+  );
   useEffect(() => {
     const key = (event: KeyboardEvent) => {
       if (
@@ -405,13 +411,17 @@ function App() {
   return (
     <div className="app">
       <header className="topbar">
-        <span className="app-name">jj-stamp</span>
-        <span className="divider">/</span>
-        <span>{state?.repo.name ?? "…"}</span>
+        <span
+          className="repo-path"
+          aria-label="Repository path"
+          title={state?.repo.path}
+        >
+          {state?.repo.path ?? "Opening repository…"}
+        </span>
         <span className="source-description" title={source?.description}>
           {source?.description}
         </span>
-        <div className="revision-info" aria-label="Working copy revision">
+        <div className="revision-info" aria-label="Reviewed revision">
           <span>
             <span className="revision-label">change</span>
             <code aria-label="Current change ID" title={source?.changeId}>
@@ -426,11 +436,11 @@ function App() {
           </span>
         </div>
         <span className="commit-totals">
-          <span>@</span>
+          <span>change</span>
           <Counts
             additions={additions}
             deletions={deletions}
-            label="Working copy line counts"
+            label="Change line counts"
           />
         </span>
         <button
@@ -482,22 +492,22 @@ function App() {
               )}
             </div>
             <div className="sidebar-footer">
-              <span>@ → @-</span>
-              {state?.repo.demo && (
-                <button
-                  onClick={reset}
-                  disabled={idleActionDisabled}
-                  title="Create a fresh demo repository; keep the old one on disk"
-                >
-                  reset demo
-                </button>
-              )}
+              <span title={source?.changeId}>
+                {source?.changeId.slice(0, 8) ?? "…"}
+              </span>
+              <span aria-hidden="true">→</span>
+              <code
+                aria-label="Squash destination change ID"
+                title={state?.parent?.changeId}
+              >
+                {state?.parent?.changeId.slice(0, 8) ?? "—"}
+              </code>
             </div>
           </div>
         </aside>
         <main className="viewer">
           <div className="file-bar">
-            <span>{file?.path ?? "Working copy"}</span>
+            <span>{file?.path ?? "Reviewed change"}</span>
             <div className="file-bar-tools">
               {file && (
                 <Counts additions={file.additions} deletions={file.deletions} />
@@ -547,6 +557,11 @@ function App() {
               </button>
             </div>
           )}
+          {state?.squashUnavailable && (
+            <div className="error squash-unavailable" role="alert">
+              {state.squashUnavailable}
+            </div>
+          )}
           <div className="viewer-scroll" ref={scroll}>
             {!state ? (
               <div className="empty">
@@ -556,7 +571,9 @@ function App() {
               </div>
             ) : !file ? (
               <div className="empty">
-                {queued.pending ? "All changes queued." : "No changes in @."}
+                {queued.pending
+                  ? "All changes queued."
+                  : "No changes in this revision."}
                 {state.canUndo && !queued.pending && (
                   <button onClick={undo} disabled={working}>
                     undo <kbd>u</kbd>
@@ -622,7 +639,42 @@ function App() {
             hidden={!showLog}
             aria-label="jj log output"
           >
-            {log || (logLoading ? "Loading…" : "")}
+            {log.length
+              ? log.map((row, index) => (
+                  <span
+                    className="log-row"
+                    key={row.revision?.commitId ?? `graph-${index}`}
+                  >
+                    <span aria-hidden="true">{row.graph}</span>
+                    {row.revision && (
+                      <>
+                        <button
+                          className="log-change"
+                          aria-label={`Review change ${row.revision.changeId}`}
+                          aria-pressed={
+                            row.revision.changeId === source?.changeId
+                          }
+                          title={`${row.revision.changeId}\n${row.revision.description}${row.mutable ? "" : "\nImmutable change"}`}
+                          disabled={
+                            !row.mutable || idleActionDisabled || dragging
+                          }
+                          onClick={() =>
+                            void selectRevision(row.revision!.changeId)
+                          }
+                        >
+                          {row.revision.changeId.slice(0, 8)}
+                        </button>{" "}
+                        <span title={row.revision.description}>
+                          {row.revision.description || "(no description)"}
+                        </span>
+                      </>
+                    )}
+                    {"\n"}
+                  </span>
+                ))
+              : logLoading
+                ? "Loading…"
+                : ""}
           </pre>
         </aside>
       </div>
@@ -655,10 +707,11 @@ function App() {
               !count || !state?.parent || working || dragging || queued.halted
             }
             title={
-              state?.squashUnavailable ?? "Queue selected lines from @ into @-"
+              state?.squashUnavailable ??
+              "Queue selected lines into this change’s immediate parent"
             }
           >
-            <kbd>s</kbd> squash → @-
+            <kbd>s</kbd> squash → parent
           </button>
           <button
             onClick={undo}

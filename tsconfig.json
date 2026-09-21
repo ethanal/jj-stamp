@@ -12,5 +12,5 @@
     "noEmit": true,
     "types": ["node"]
   },
-  "include": ["src", "server", "web.ts", "vite.config.ts", "scripts", "tests"]
+  "include": ["src", "server", "vite.config.ts", "scripts", "tests", "cli.ts"]
 }

@@ -22,8 +22,14 @@ export interface Revision {
   commitId: string;
   description: string;
 }
+export interface LogRow {
+  graph: string;
+  revision?: Revision;
+  mutable?: boolean;
+  isWorkingCopy?: boolean;
+}
 export interface RepoState {
-  repo: { name: string; path: string; demo: boolean };
+  repo: { name: string; path: string };
   version: string;
   source: Revision;
   parent: Revision | null;

@@ -22,7 +22,7 @@ const previewSchema = z
   .strict();
 
 /** Factory lets integration tests use isolated real repositories. */
-export function createApi(service = new ReviewService()): express.Router {
+export function createApi(service: ReviewService): express.Router {
   const router = express.Router();
   router.use((_req, res, next) => {
     res.setHeader("Cache-Control", "no-store");
@@ -34,6 +34,16 @@ export function createApi(service = new ReviewService()): express.Router {
   });
   router.get("/log", async (_req, res) => {
     res.json(await service.getLog());
+  });
+  router.post("/revision", async (req, res) => {
+    const input = z
+      .object({
+        version,
+        changeId: z.string().regex(/^[k-z]{1,64}$/),
+      })
+      .strict()
+      .parse(req.body);
+    res.json(await service.selectRevision(input));
   });
   router.post("/file", async (req, res) => {
     const input = z
@@ -62,10 +72,6 @@ export function createApi(service = new ReviewService()): express.Router {
   router.post("/undo", async (req, res) => {
     const input = z.object({ version }).strict().parse(req.body);
     res.json(await service.undo(input.version));
-  });
-  router.post("/reset", async (req, res) => {
-    const input = z.object({ version }).strict().parse(req.body);
-    res.json(await service.reset(input.version));
   });
   router.use(((error: unknown, _req, res, _next) => {
     if (error instanceof ApiError) {
@@ -98,6 +104,3 @@ export function createApi(service = new ReviewService()): express.Router {
   }) as express.ErrorRequestHandler);
   return router;
 }
-const service = new ReviewService();
-export const drainApi = () => service.drain();
-export default createApi(service);

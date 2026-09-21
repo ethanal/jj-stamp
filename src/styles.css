@@ -69,12 +69,13 @@ kbd {
   border-bottom: 1px solid var(--border);
   font-size: 12px;
 }
-.app-name {
+.repo-path {
   color: #e6edf3;
   font-weight: 500;
-}
-.divider {
-  color: #505964;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .source-description {
   color: var(--muted);
@@ -371,9 +372,6 @@ kbd {
     padding: 9px;
     gap: 5px;
   }
-  .sidebar-footer button {
-    font-size: 9px;
-  }
   .statusbar {
     padding: 5px 9px;
     gap: 4px;
@@ -659,9 +657,6 @@ kbd {
   margin: 14px auto;
   user-select: none;
 }
-.app-name {
-  white-space: nowrap;
-}
 .source-description {
   min-width: 0;
 }
@@ -762,4 +757,22 @@ kbd {
   .workspace.log-collapsed {
     --log-height: 36px;
   }
+}
+/* Revision IDs are keyboard-accessible controls; the graph itself comes from jj. */
+.log-change {
+  color: #9ac3e5;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  border-radius: 2px;
+}
+.log-change:hover:not(:disabled),
+.log-change[aria-pressed="true"] {
+  color: #e6f2ff;
+  background: #27435c;
+}
+.log-change:disabled {
+  opacity: 0.55;
+}
+.sidebar-footer code {
+  color: #9ac3e5;
 }

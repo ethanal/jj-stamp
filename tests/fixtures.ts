@@ -1,6 +1,6 @@
 import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { jj } from "./process.ts";
+import { jj } from "../server/process.ts";
 
 const notifications = `import type { Preferences } from './preferences';
 
@@ -115,7 +115,7 @@ describe('notification delivery', () => {
 });
 `;
 
-/** Every reset creates a new repo. Old demo repositories are deliberately retained. */
+/** Test-only generated repository; callers explicitly pass its path to ReviewService. */
 export async function createDemo(dataDir: string): Promise<string> {
   await mkdir(dataDir, { recursive: true });
   const root = await mkdtemp(path.join(dataDir, "demo-"));

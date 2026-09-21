@@ -9,14 +9,23 @@ import { chromium, expect, type Locator } from "@playwright/test";
 import { createApi } from "../server/api.ts";
 import { ReviewService } from "../server/service.ts";
 import { jj } from "../server/process.ts";
+import { createDemo } from "./fixtures.ts";
 
-// A real browser and real jj; never use the user-facing demo repository.
+// A real browser and real jj; only isolated, disposable fixture repositories.
 const dataDir = await mkdtemp(path.join(tmpdir(), "fold-browser-"));
-const service = new ReviewService({ dataDir });
+const repoPath = await createDemo(dataDir);
+let service = new ReviewService({ dataDir, repoPath });
+let apiRouter = createApi(service);
+async function reviewWorkingCopy() {
+  // Simulate restarting the CLI for a new change between fixture scenarios.
+  await service.drain();
+  service = new ReviewService({ dataDir, repoPath });
+  apiRouter = createApi(service);
+}
 const initial = await service.getState();
 const app = express();
 const server = createServer(app);
-app.use("/api", createApi(service));
+app.use("/api", (req, res, next) => apiRouter(req, res, next));
 const vite = await createVite({
   server: { middlewareMode: true, hmr: false },
   appType: "spa",
@@ -93,11 +102,18 @@ try {
   await page.goto(`http://127.0.0.1:${address.port}`);
   await expect(page.locator(".file-bar")).toContainText("src/notifications.ts");
   await expect(page.getByRole("checkbox")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "reset demo" })).toHaveCount(0);
   await expect(codeLine(21)).toBeVisible();
   await expect(page).toHaveTitle(
-    `jj-stamp ${initial.source.changeId.slice(0, 8)}: ${initial.source.description}`,
+    `${initial.repo.path} — ${initial.source.changeId.slice(0, 8)}: ${initial.source.description}`,
   );
-  await expect(page.locator(".app-name")).toHaveText("jj-stamp");
+  await expect(page.getByLabel("Repository path")).toHaveText(
+    initial.repo.path,
+  );
+  await expect(page.getByLabel("Repository path")).toHaveAttribute(
+    "title",
+    initial.repo.path,
+  );
   await expect(page.getByLabel("Current change ID")).toHaveText(
     initial.source.changeId.slice(0, 8),
   );
@@ -118,6 +134,51 @@ try {
     "true",
   );
   await expect(treeRow("src/notifications.ts")).toContainText("+2−2");
+  const reviewChange = (changeId: string) =>
+    page.getByRole("button", {
+      name: `Review change ${changeId}`,
+      exact: true,
+    });
+  await expect(reviewChange(initial.source.changeId)).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  );
+  await expect(page.getByLabel("Squash destination change ID")).toHaveAttribute(
+    "title",
+    initial.parent!.changeId,
+  );
+  await codeLine(21).click();
+  const selectedParent = page.waitForResponse((response) =>
+    response.url().endsWith("/api/revision"),
+  );
+  await reviewChange(initial.parent!.changeId).click();
+  const parentResponse = await selectedParent;
+  assert.equal(parentResponse.status(), 200, await parentResponse.text());
+  const parentState = (await parentResponse.json()).state;
+  await expect(page.getByLabel("Current change ID")).toHaveAttribute(
+    "title",
+    initial.parent!.changeId,
+  );
+  await expect(page.getByLabel("Squash destination change ID")).toHaveAttribute(
+    "title",
+    parentState.parent.changeId,
+  );
+  await expect(page.getByRole("status")).toContainText(
+    "Drag code to select lines",
+  );
+  await expect(reviewChange(initial.parent!.changeId)).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  );
+  await reviewChange(initial.source.changeId).click();
+  await expect(page.getByLabel("Current change ID")).toHaveAttribute(
+    "title",
+    initial.source.changeId,
+  );
+  await expect(codeLine(21)).toBeVisible();
+  console.log(
+    "✓ Click a mutable graph change, display its unique parent, clear old selection, and switch back",
+  );
   const fileCounts = treeRow("tests/notifications.test.ts").locator(
     '[data-item-section="decoration"]',
   );
@@ -201,7 +262,7 @@ try {
   await expect(page.locator("#files-sidebar-content")).toBeVisible();
   await expect(page.getByLabel("jj log output")).toBeVisible();
   console.log(
-    "✓ jj-stamp branding, full revision IDs on hover, persistent sidebar rails, selection retained across collapse",
+    "✓ Full repository path, full revision IDs on hover, persistent sidebar rails, selection retained across collapse",
   );
   await drag(codeLine(21, "change-deletion"), codeLine(21));
   await expect(
@@ -253,7 +314,7 @@ try {
     "✓ Drag actual code (not gutter) → s → immediate @ to @- squash → u undo",
   );
 
-  await expect(page.getByLabel("Working copy line counts")).toHaveText("+8−5");
+  await expect(page.getByLabel("Change line counts")).toHaveText("+8−5");
   await expect(treeRow("src/notifications.ts")).toContainText("+2−2");
   await page.getByRole("button", { name: "Split", exact: true }).click();
   await expect(page.locator('[data-diff-type="split"]')).toHaveCount(1);
@@ -325,9 +386,19 @@ try {
   await expect(
     page.getByRole("complementary", { name: "Revision graph" }),
   ).toBeVisible();
-  const actualLog = (await jj(initial.repo.path, ["log", "--limit", "100"]))
-    .stdout;
-  await expect(page.getByLabel("jj log output")).toHaveText(actualLog);
+  const actualLog = await service.getLog();
+  const graphText = actualLog.rows
+    .map(
+      (row) =>
+        row.graph +
+        (row.revision
+          ? `${row.revision.changeId.slice(0, 8)} ${row.revision.description || "(no description)"}`
+          : "") +
+        "\n",
+    )
+    .join("");
+  await expect(page.getByLabel("jj log output")).toHaveText(graphText);
+  await expect(page.locator('.log-change[aria-pressed="true"]')).toHaveCount(1);
   const previousMutations = mutations.length;
   await page.keyboard.press("s");
   await page.waitForTimeout(150);
@@ -341,7 +412,7 @@ try {
   await expect(page.getByLabel("jj log output")).toBeVisible();
   await expect(page.locator(".code-surface")).toBeVisible();
   console.log(
-    "✓ Right-side raw jj log, independent of diff, and guarded empty selection",
+    "✓ Clickable real jj graph, active change, and guarded empty selection",
   );
 
   await treeRow("src/notifications.ts").click();
@@ -376,6 +447,7 @@ try {
     filename,
     [...base.slice(0, 70), ...extra, ...base.slice(70)].join("\n") + "\n",
   );
+  await reviewWorkingCopy();
   await page.keyboard.press("r");
   await expect(treeRow("src/long.ts")).toBeVisible();
   await treeRow("src/long.ts").click();
@@ -450,8 +522,10 @@ try {
   await codeLine(queueLines[0].newLine!).click();
   await page.keyboard.press("s");
   await expect(page.getByRole("status")).toContainText("1 queued");
+  for (const button of await page.locator(".log-change").all())
+    await expect(button).toBeDisabled();
   await expect(codeLine(queueLines[0].newLine!)).toHaveCount(0);
-  await expect(page.getByLabel("Working copy line counts")).toHaveText("+39−0");
+  await expect(page.getByLabel("Change line counts")).toHaveText("+39−0");
   await expect(treeRow("src/long.ts")).toContainText("+39−0");
   assert.equal(
     (await service.getState()).files.find(
@@ -463,7 +537,7 @@ try {
   await page.keyboard.press("s");
   await expect(page.getByRole("status")).toContainText("2 queued");
   await expect(codeLine(queueLines[1].newLine!)).toHaveCount(0);
-  await expect(page.getByLabel("Working copy line counts")).toHaveText("+38−0");
+  await expect(page.getByLabel("Change line counts")).toHaveText("+38−0");
   assert.equal(queuedRequests.length, 1, "only one mutation may be in flight");
   await expect(
     page
@@ -534,14 +608,14 @@ try {
     await page.keyboard.press("s");
   }
   await expect(page.getByRole("status")).toContainText("3 queued");
-  await expect(page.getByLabel("Working copy line counts")).toHaveText("+34−0");
+  await expect(page.getByLabel("Change line counts")).toHaveText("+34−0");
   releaseFailure();
   await expect(page.getByRole("alert")).toContainText(
     "Injected queue failure",
     { timeout: 15000 },
   );
   await expect(page.getByRole("status")).toContainText("Queue stopped");
-  await expect(page.getByLabel("Working copy line counts")).toHaveText("+36−0");
+  await expect(page.getByLabel("Change line counts")).toHaveText("+36−0");
   await expect(treeRow("src/long.ts")).toContainText("+36−0");
   assert.equal(
     failureRequests,
@@ -625,14 +699,20 @@ try {
   ]);
   const described = await refreshState();
   await expect(page).toHaveTitle(
-    `jj-stamp ${described.source.changeId.slice(0, 8)}: Updated commit title`,
+    `${initial.repo.path} — ${described.source.changeId.slice(0, 8)}: Updated commit title`,
   );
   await jj(initial.repo.path, ["new", "-m", "Next change"]);
+  const stillReviewed = await refreshState();
+  assert.equal(stillReviewed.source.changeId, described.source.changeId);
+  await expect(page).toHaveTitle(
+    `${initial.repo.path} — ${described.source.changeId.slice(0, 8)}: Updated commit title`,
+  );
+  await reviewWorkingCopy();
   const next = await refreshState();
   assert.notEqual(next.source.changeId, described.source.changeId);
   await expect(page.locator(".file-tree [role=treeitem]")).toHaveCount(0);
   await expect(page).toHaveTitle(
-    `jj-stamp ${next.source.changeId.slice(0, 8)}: Next change`,
+    `${initial.repo.path} — ${next.source.changeId.slice(0, 8)}: Next change`,
   );
   console.log(
     "✓ Page title follows the short change ID and commit title on refresh",
@@ -687,6 +767,33 @@ try {
   await expect(treeRow("other/one.txt")).toContainText("+1−0");
   console.log(
     "✓ Nested paths, duplicate names, single active file, read-only rows, whole-file squash/undo, and fallback reveal",
+  );
+  // A merge can be reviewed, but there is no single safe squash destination.
+  const left = (
+    await jj(repoPath, ["log", "--no-graph", "-r", "@", "-T", "change_id"])
+  ).stdout.trim();
+  await jj(repoPath, ["new", "@-", "-m", "Other branch"]);
+  await jj(repoPath, ["new", left, "@", "-m", "Two-parent merge"]);
+  const merge = (
+    await jj(repoPath, ["log", "--no-graph", "-r", "@", "-T", "change_id"])
+  ).stdout.trim();
+  await refreshState();
+  await reviewChange(merge).click();
+  await expect(page.getByLabel("Current change ID")).toHaveAttribute(
+    "title",
+    merge,
+  );
+  await expect(page.locator(".squash-unavailable")).toContainText(
+    "exactly one immediate parent",
+  );
+  await expect(
+    page.getByRole("button", { name: "s squash → parent" }),
+  ).toBeDisabled();
+  await expect(page.getByLabel("Squash destination change ID")).toHaveText("—");
+  await reviewChange(left).click();
+  await expect(page.locator(".squash-unavailable")).toHaveCount(0);
+  console.log(
+    "✓ Two-parent change shows an error and disables squashing; another mutable change remains selectable",
   );
   assert(mutations.every((endpoint) => endpoint === "/api/squash-lines"));
   // Fixture edits intentionally race an outstanding read-only graph refresh.

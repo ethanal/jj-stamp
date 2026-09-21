@@ -1,8 +1,6 @@
 import { createHash, randomBytes } from "node:crypto";
 import { mkdir, readFile, realpath, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
-import { createDemo } from "./demo.ts";
 import { parseFile, parseListing, ranges, assertExactPreview } from "./diff.ts";
 import type { Hunk, Row } from "./diff.ts";
 import { jj, run, ProcessError } from "./process.ts";
@@ -22,6 +20,17 @@ export interface Revision {
   commitId: string;
   description: string;
 }
+export interface LogRow {
+  /** The graph prefix or connector line emitted by jj, preserved verbatim. */
+  graph: string;
+  revision?: Revision;
+  mutable?: boolean;
+  isWorkingCopy?: boolean;
+}
+export interface RevisionSelection {
+  version: string;
+  changeId: string;
+}
 export interface ReviewHunk {
   id: string;
   header: string;
@@ -36,7 +45,7 @@ export interface ReviewFile {
   hunks: ReviewHunk[];
 }
 export interface State {
-  repo: { name: string; path: string; demo: boolean };
+  repo: { name: string; path: string };
   version: string;
   source: Revision;
   targets: Revision[];
@@ -79,7 +88,6 @@ interface Plan extends Preview {
 }
 interface Active {
   path: string;
-  demo: boolean;
 }
 interface Undo {
   operation: string;
@@ -103,17 +111,14 @@ interface Operation {
   attributes: string;
 }
 export interface ServiceOptions {
-  dataDir?: string;
-  repoPath?: string;
+  dataDir: string;
+  repoPath: string;
+  revision?: string;
   toolRunner?: typeof run;
   jjRunner?: typeof jj;
 }
 const hash = (value: string) =>
   createHash("sha256").update(value).digest("hex");
-const projectRoot = path.resolve(
-  path.dirname(fileURLToPath(import.meta.url)),
-  "..",
-);
 const revisionTemplate =
   'json(change_id) ++ "\\t" ++ json(commit_id) ++ "\\t" ++ json(description.first_line()) ++ "\\n"';
 
@@ -152,13 +157,19 @@ export class ReviewService {
   private fileCache = new Map<string, ReviewFile[]>();
   private jjRunner: typeof jj;
   readonly dataDir: string;
-  private repoPath?: string;
+  private readonly repoPath: string;
+  private readonly requestedRevision: string;
+  private sourceChangeId?: string;
+  private initialization?: Promise<void>;
   private toolRunner: typeof run;
-  constructor(options: ServiceOptions = {}) {
+  constructor(options: ServiceOptions) {
+    if (!options?.repoPath || !options?.dataDir)
+      throw new Error("ReviewService requires explicit repoPath and dataDir.");
     this.toolRunner = options.toolRunner ?? run;
     this.jjRunner = options.jjRunner ?? jj;
-    this.dataDir = options.dataDir ?? path.join(projectRoot, ".data");
-    this.repoPath = options.repoPath ?? process.env.JJ_REPO;
+    this.dataDir = path.resolve(options.dataDir);
+    this.repoPath = path.resolve(options.repoPath);
+    this.requestedRevision = options.revision ?? "@";
   }
   private serial<T>(task: () => Promise<T>): Promise<T> {
     const result = this.queue.then(task);
@@ -178,31 +189,72 @@ export class ReviewService {
   private saveJournal() {
     return atomicJSON(this.journalPath, this.journal);
   }
-  private async init(): Promise<void> {
-    if (this.active) return;
-    await mkdir(this.dataDir, { recursive: true });
-    const manifestPath = path.join(this.dataDir, "active-repo.json");
-    const manifest = await readJSON<Active>(manifestPath);
-    const active: Active = this.repoPath
-      ? { path: path.resolve(this.repoPath), demo: false }
-      : (manifest ?? { path: await createDemo(this.dataDir), demo: true });
-    if (typeof active.path !== "string" || typeof active.demo !== "boolean")
-      throw new Error("Invalid active repository manifest.");
-    const root = (await this.jjRunner(active.path, ["root"])).stdout.trim();
-    active.path = await realpath(root);
-    // A demo claim must be within our dedicated data directory, never a user repo.
-    if (
-      active.demo &&
-      (!path.basename(active.path).startsWith("demo-") ||
-        path.dirname(active.path) !== (await realpath(this.dataDir)))
-    ) {
-      throw new Error(
-        "Demo repository manifest points outside the demo directory.",
+  private init(): Promise<void> {
+    // Memoize even failures: retrying initialization must never reinterpret @ or
+    // a moving bookmark after an error (including a corrupt recovery journal).
+    return (this.initialization ??= this.initialize());
+  }
+  private async initialize(): Promise<void> {
+    const root = await realpath(
+      (await this.jjRunner(this.repoPath, ["root"])).stdout.trim(),
+    );
+    let requested: Revision[];
+    try {
+      if (!this.requestedRevision.trim()) throw new Error("Empty revision.");
+      requested = await this.revisions(this.requestedRevision, root);
+    } catch (error) {
+      if (!(error instanceof ProcessError) && this.requestedRevision.trim())
+        throw error;
+      throw new ApiError(
+        400,
+        "INVALID_REVISION",
+        "The requested revision cannot be resolved. Choose exactly one visible, non-divergent change.",
       );
     }
-    await atomicJSON(manifestPath, active);
-    this.active = active;
-    this.journal = (await readJSON<Journal>(this.journalPath)) ?? {};
+    if (requested.length !== 1)
+      throw new ApiError(
+        400,
+        "INVALID_REVISION",
+        "The requested revision must resolve to exactly one visible, non-divergent change.",
+      );
+    const source = requested[0];
+    // Resolve by change identity, not a symbol that a bookmark could shadow.
+    // Also reject a hidden commit or one explicitly selected side of divergence.
+    const visible = await this.revisions(
+      this.changeRevset(source.changeId),
+      root,
+    );
+    if (visible.length !== 1 || visible[0].commitId !== source.commitId)
+      throw new ApiError(
+        400,
+        "INVALID_REVISION",
+        "The requested change is hidden, abandoned, divergent, or changed during initialization.",
+      );
+    await mkdir(this.dataDir, { recursive: true });
+    const journal =
+      (await readJSON<Journal>(
+        path.join(this.dataDir, `operations-${hash(root).slice(0, 20)}.json`),
+      )) ?? {};
+    // Publish initialized state only after the durable recovery guard was read.
+    this.journal = journal;
+    this.sourceChangeId = source.changeId;
+    this.active = { path: root };
+  }
+  private changeRevset(changeId: string): string {
+    return `change_id(${JSON.stringify(changeId)})`;
+  }
+  private get sourceRevset(): string {
+    if (!this.sourceChangeId) throw new Error("Repository not initialized");
+    return this.changeRevset(this.sourceChangeId);
+  }
+  private requireSource(sources: Revision[]): Revision {
+    if (sources.length !== 1)
+      throw new ApiError(
+        409,
+        "SOURCE_UNAVAILABLE",
+        "The selected change is abandoned or divergent. Resolve it with jj or start a new review; the source was not switched to the working copy.",
+      );
+    return sources[0];
   }
   private async operation(): Promise<Operation> {
     const output = (
@@ -210,6 +262,8 @@ export class ReviewService {
         "op",
         "log",
         "--no-graph",
+        "--config",
+        "ui.log-word-wrap=false",
         "--limit",
         "1",
         "-T",
@@ -227,11 +281,16 @@ export class ReviewService {
       throw new Error("Cannot read a unique jj operation.");
     return { id, parents, description, attributes };
   }
-  private async revisions(revset: string): Promise<Revision[]> {
+  private async revisions(
+    revset: string,
+    root = this.root,
+  ): Promise<Revision[]> {
     const output = (
-      await this.jjRunner(this.root, [
+      await this.jjRunner(root, [
         "log",
         "--no-graph",
+        "--config",
+        "ui.log-word-wrap=false",
         "-r",
         revset,
         "-T",
@@ -325,24 +384,36 @@ export class ReviewService {
     }
     return files;
   }
-  private async readState(allowConflicts = false): Promise<State> {
+  private async readState(
+    allowConflicts = false,
+    selection: { changeId?: string; requireMutable?: boolean } = {},
+  ): Promise<State> {
     await this.init();
     await this.jjRunner(this.root, ["status"]); // Snapshot BEFORE acquiring the operation token.
     const operation = await this.operation();
     // One live revset evaluation replaces five separate jj processes. Evaluate
     // these even on a diff-cache hit: config-only immutable-head changes do not
     // necessarily create a repository operation.
+    const sourceRevset = selection.changeId
+      ? this.changeRevset(selection.changeId)
+      : this.sourceRevset;
+    const targetRevset = `mutable() & ::${sourceRevset} ~ ${sourceRevset}`;
+    const parentRevset = `${sourceRevset}-`;
+    const contained = (revset: string) =>
+      ` ++ "\\t" ++ json(self.contained_in(${JSON.stringify(revset)}))`;
     const metadata = (
       await this.jjRunner(this.root, [
         "log",
         "--no-graph",
+        "--config",
+        "ui.log-word-wrap=false",
         "-r",
-        "@ | (mutable() & ::@) | @- | conflicts()",
+        `${sourceRevset} | (${targetRevset}) | ${parentRevset} | conflicts()`,
         "-T",
         revisionTemplate.replace(' ++ "\\n"', "") +
-          ' ++ "\\t" ++ json(self.contained_in("@"))' +
-          ' ++ "\\t" ++ json(self.contained_in("mutable() & ::@ ~ @"))' +
-          ' ++ "\\t" ++ json(self.contained_in("@-"))' +
+          contained(sourceRevset) +
+          contained(targetRevset) +
+          contained(parentRevset) +
           ' ++ "\\t" ++ json(self.contained_in("conflicts()"))' +
           ' ++ "\\t" ++ json(self.contained_in("mutable()")) ++ "\\n"',
       ])
@@ -372,21 +443,25 @@ export class ReviewService {
           mutable,
         };
       });
+    const sources = metadata
+      .filter((entry) => entry.source)
+      .map((entry) => entry.revision);
+    const source = this.requireSource(sources);
     if (!allowConflicts && metadata.some((entry) => entry.conflict))
       throw new ApiError(
         409,
         "CONFLICTED_REPO",
         "This repository contains conflicted revisions. Resolve them with jj before reviewing or squashing.",
       );
-    const sources = metadata
-      .filter((entry) => entry.source)
-      .map((entry) => entry.revision);
-    if (sources.length !== 1)
-      throw new Error("Current workspace must resolve to one source revision.");
-    const source = sources[0];
     const mutableSource = metadata.filter(
       (entry) => entry.source && entry.mutable,
     );
+    if (selection.requireMutable && !mutableSource.length)
+      throw new ApiError(
+        409,
+        "IMMUTABLE_SOURCE",
+        "Choose a mutable change. Immutable revisions cannot be selected for squashing.",
+      );
     const targets = mutableSource.length
       ? metadata.filter((entry) => entry.target).map((entry) => entry.revision)
       : [];
@@ -409,7 +484,7 @@ export class ReviewService {
     await this.jjRunner(this.root, ["status"]);
     if (
       (await this.operation()).id !== operation.id ||
-      !same(await this.revisions("@"), sources)
+      !same(this.requireSource(await this.revisions(sourceRevset)), source)
     )
       stale();
     const version = hash(
@@ -429,9 +504,8 @@ export class ReviewService {
       this.journal.undo.afterVersion === version;
     return {
       repo: {
-        name: this.active!.demo ? "orbit" : path.basename(this.root),
+        name: path.basename(this.root),
         path: this.root,
-        demo: this.active!.demo,
       },
       source,
       targets,
@@ -450,14 +524,114 @@ export class ReviewService {
   getState(): Promise<State> {
     return this.serial(() => this.readState());
   }
-  getLog(): Promise<{ version: string; output: string }> {
+  selectRevision(input: RevisionSelection): Promise<{ state: State }> {
+    return this.serial(async () => {
+      if (
+        !input ||
+        typeof input.changeId !== "string" ||
+        !/^[k-z]{1,64}$/.test(input.changeId) ||
+        Object.keys(input).some(
+          (key) => key !== "version" && key !== "changeId",
+        )
+      )
+        throw new ApiError(
+          400,
+          "INVALID_REQUEST",
+          "Supply a change ID and the current state version.",
+        );
+      const before = await this.readState();
+      this.requireVersion(before, input.version);
+      this.assertNotPending();
+      // Unlike the CLI's initial expression, API input is an identity/prefix,
+      // never an arbitrary revset or a bookmark that could shadow a change ID.
+      const choices = await this.revisions(this.changeRevset(input.changeId));
+      if (choices.length !== 1)
+        throw new ApiError(
+          400,
+          "INVALID_REVISION",
+          "Choose exactly one visible, non-divergent change.",
+        );
+      // Read and validate the candidate without publishing it: invalid,
+      // immutable, conflicted, or stale choices must not poison this session.
+      const state = await this.readState(false, {
+        changeId: choices[0].changeId,
+        requireMutable: true,
+      });
+      this.requireVersion(await this.readState(), before.version);
+      if (state.operation !== before.operation) stale();
+      // A configuration-only immutability change on an unrelated candidate
+      // might not affect the old source's version. Recheck the candidate too.
+      this.requireVersion(
+        await this.readState(false, {
+          changeId: state.source.changeId,
+          requireMutable: true,
+        }),
+        state.version,
+      );
+      this.sourceChangeId = state.source.changeId;
+      this.plans.clear();
+      // Keep the repository-scoped journal. canUndo is only true when its exact
+      // attributed operation AND selected-source state version still match.
+      return { state };
+    });
+  }
+  getLog(): Promise<{ version: string; output: string; rows: LogRow[] }> {
     return this.serial(async () => {
       const before = await this.readState();
-      // Deliberately use jj's configured, real graph output, not an app template.
+      // Preserve the original configured graph/template for API compatibility.
       const output = (await this.jjRunner(this.root, ["log", "--limit", "100"]))
         .stdout;
+      const configuredRevset = (
+        await this.jjRunner(this.root, ["config", "get", "revsets.log"])
+      ).stdout.trim();
+      // jj renders every node, branch and connector. Only the metadata after a
+      // random delimiter is machine-readable; descriptions never supply graph.
+      const marker = `jj-stamp-${randomBytes(16).toString("hex")}:`;
+      const template =
+        JSON.stringify(marker) +
+        " ++ " +
+        revisionTemplate.replace(' ++ "\\n"', "") +
+        ' ++ "\\t" ++ json(self.contained_in("mutable()"))' +
+        ' ++ "\\t" ++ json(current_working_copy) ++ "\\n"';
+      const rendered = (
+        await this.jjRunner(this.root, [
+          "log",
+          "--limit",
+          "100",
+          "--config",
+          "ui.log-word-wrap=false",
+          "-r",
+          `latest((${configuredRevset}), 99) | ${this.sourceRevset}`,
+          "-T",
+          template,
+        ])
+      ).stdout;
+      const lines = rendered.split("\n");
+      if (lines.at(-1) === "") lines.pop();
+      const rows = lines.map((line): LogRow => {
+        const index = line.indexOf(marker);
+        if (index === -1) return { graph: line };
+        const [changeId, commitId, description, mutable, isWorkingCopy] = line
+          .slice(index + marker.length)
+          .split("\t")
+          .map((value) => JSON.parse(value));
+        if (
+          !/^[k-z]+$/.test(changeId) ||
+          !/^[0-9a-f]{40,64}$/.test(commitId) ||
+          typeof description !== "string" ||
+          typeof mutable !== "boolean" ||
+          typeof isWorkingCopy !== "boolean"
+        )
+          throw new Error("Unrecognized revision in jj graph.");
+        return {
+          graph: line.slice(0, index),
+          revision: { changeId, commitId, description },
+          mutable,
+          isWorkingCopy,
+        };
+      });
       this.requireVersion(await this.readState(), before.version);
-      return { version: before.version, output };
+      return { version: before.version, output, rows };
     });
   }
   getFile(input: { version: string; path: string }): Promise<FileContents> {
@@ -558,7 +732,7 @@ export class ReviewService {
       throw new ApiError(
         409,
         "RECOVERY_REQUIRED",
-        "A previous history operation did not finish cleanly. Inspect jj op log before doing more work. No automatic retry or rollback was attempted. Demo repositories can be reset.",
+        "A previous history operation did not finish cleanly. Inspect jj op log before doing more work. No automatic retry or rollback was attempted.",
       );
   }
   private async prepare(
@@ -904,27 +1078,6 @@ export class ReviewService {
         state: await this.readState(),
         output: (result.stdout + result.stderr).trim(),
       };
-    });
-  }
-  reset(version: string): Promise<{ state: State }> {
-    return this.serial(async () => {
-      const state = await this.readState(true);
-      this.requireVersion(state, version);
-      if (!this.active!.demo)
-        throw new ApiError(
-          403,
-          "NOT_DEMO",
-          "Reset is available only for the generated demo. Your repository was not modified.",
-        );
-      const root = await createDemo(this.dataDir);
-      this.active = { path: root, demo: true };
-      this.journal = {};
-      this.plans.clear();
-      await atomicJSON(
-        path.join(this.dataDir, "active-repo.json"),
-        this.active,
-      );
-      return { state: await this.readState() };
     });
   }
 }

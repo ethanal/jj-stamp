@@ -27,7 +27,7 @@ function file(
 }
 function state(...files: DiffFile[]): RepoState {
   return {
-    repo: { name: "test", path: "/test", demo: false },
+    repo: { name: "test", path: "/test" },
     version: "v0",
     source: { changeId: "source", commitId: "commit", description: "source" },
     parent: null,

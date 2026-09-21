@@ -25,7 +25,7 @@ function initial(): RepoState {
     "diff --git a/a b/a\n--- a/a\n+++ b/a\n@@ -1,4 +1,4 @@\n before\n-old1\n-old2\n+new1\n+new2\n after\n";
   const parsed = parseFile(patch, "a");
   return {
-    repo: { name: "test", path: "/test", demo: false },
+    repo: { name: "test", path: "/test" },
     version: "v0",
     source: { changeId: "source", commitId: "c0", description: "source" },
     parent: null,

@@ -38,6 +38,10 @@ export function run(
     delete env.JJ_HUNK_TOOL_REVERSE;
     const child = spawn(command, args, {
       cwd,
+      // Terminal signals target the CLI's foreground process group. Isolate
+      // history-writing tools so graceful shutdown can await their completion.
+      // Keep pipes referenced (no unref): run() still waits for every child.
+      detached: process.platform !== "win32",
       stdio: ["ignore", "pipe", "pipe"],
       env,
     });
