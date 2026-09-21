@@ -136,7 +136,62 @@ export function changeSignature(state: RepoState): string {
   return JSON.stringify(keys.sort());
 }
 
-function projectFile(file: DiffFile, selected: Set<string>): DiffFile | null {
+const CONTEXT_LINES = 3;
+
+/** Keep only the context surrounding remaining changes, splitting long gaps. */
+function contractHunk(
+  hunk: Hunk,
+  rows: Row[],
+  oldFirst: number,
+  newFirst: number,
+  suffix: string,
+  reservedIds: Set<string>,
+): Hunk[] {
+  const ranges: { start: number; end: number }[] = [];
+  const oldOffsets = [0],
+    newOffsets = [0];
+  for (let index = 0; index < rows.length; index++) {
+    const kind = rows[index].raw[0];
+    oldOffsets.push(oldOffsets[index] + (kind === "+" ? 0 : 1));
+    newOffsets.push(newOffsets[index] + (kind === "-" ? 0 : 1));
+    if (kind === " ") continue;
+    const start = Math.max(0, index - CONTEXT_LINES);
+    const end = Math.min(rows.length, index + CONTEXT_LINES + 1);
+    const previous = ranges.at(-1);
+    if (previous && start <= previous.end) previous.end = end;
+    else ranges.push({ start, end });
+  }
+  return ranges.map(({ start, end }, part) => {
+    const oldLength = oldOffsets[end] - oldOffsets[start];
+    const newLength = newOffsets[end] - newOffsets[start];
+    // Empty sides anchor immediately BEFORE the first position, as unified
+    // diffs require. Count trimmed context on both sides, not just row offsets.
+    const oldStart = oldFirst + oldOffsets[start] - (oldLength ? 0 : 1);
+    const newStart = newFirst + newOffsets[start] - (newLength ? 0 : 1);
+    let id = hunk.id;
+    if (part) {
+      let serial = part;
+      do id = `${hunk.id}:optimistic:${serial++}`;
+      while (reservedIds.has(id));
+      reservedIds.add(id);
+    }
+    return {
+      ...hunk,
+      id,
+      header: `@@ -${oldStart},${oldLength} +${newStart},${newLength} @@${suffix}`,
+      rows: rows.slice(start, end).map((row, index) => ({
+        ...row,
+        index: index + 1,
+      })),
+    };
+  });
+}
+
+function projectFile(
+  file: DiffFile,
+  selected: Set<string>,
+  reservedIds: Set<string>,
+): DiffFile | null {
   let delta = 0;
   let movedAdditions = 0;
   const hunks: Hunk[] = [];
@@ -172,11 +227,9 @@ function projectFile(file: DiffFile, selected: Set<string>): DiffFile | null {
       if (raw[0] !== "-") next.newLine = newLine++;
       rows.push(next);
     }
-    if (!rows.some((row) => row.raw[0] === "+" || row.raw[0] === "-")) continue;
-    const oldLength = oldLine - oldFirst,
-      newLength = newLine - newFirst;
-    const header = `@@ -${oldLength ? oldFirst : oldFirst - 1},${oldLength} +${newLength ? newFirst : newFirst - 1},${newLength} @@${match[5]}`;
-    hunks.push({ ...hunk, header, rows });
+    hunks.push(
+      ...contractHunk(hunk, rows, oldFirst, newFirst, match[5], reservedIds),
+    );
   }
   if (!hunks.length) return null;
   const isNew = /^--- \/dev\/null$/m.test(file.patch) && movedAdditions === 0;
@@ -216,9 +269,14 @@ export function projectSquash(state: RepoState, refs: RowRef[]): RepoState {
   specsForRefs(state, refs);
   const selected = checkedKeys(refs);
   const affected = new Set(refs.map((ref) => ref.path));
+  // Synthetic split IDs must not collide with any real or earlier projected ID,
+  // including hunks in unaffected files. Dispatch still maps by exact RowRef.
+  const reservedIds = new Set(
+    state.files.flatMap((file) => file.hunks.map((hunk) => hunk.id)),
+  );
   const files = state.files.flatMap((file) => {
     if (!affected.has(file.path)) return [file];
-    const projected = projectFile(file, selected);
+    const projected = projectFile(file, selected, reservedIds);
     return projected ? [projected] : [];
   });
   return { ...state, files };

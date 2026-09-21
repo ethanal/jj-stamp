@@ -261,3 +261,230 @@ test("duplicate exact source rows and unsupported selection fail closed", () => 
   assert.throws(() => specsForRefs(repo, refs), /unsupported/);
   assert.throws(() => refsFromSelection(repo, { "a-0": [1] }), /unsupported/);
 });
+
+test("context contracts above and below the remaining replacement", () => {
+  const body = Array.from({ length: 25 }, (_, index) => {
+    const line = index + 1;
+    return [1, 13, 25].includes(line)
+      ? `-old ${line}\n+new ${line}`
+      : ` line ${line}`;
+  }).join("\n");
+  const repo = state(file("a", `@@ -1,25 +1,25 @@ section\n${body}`));
+  const refs = refsFromSelection(repo, {
+    "a-0": repo.files[0].hunks[0].rows
+      .filter((row) => /^[+-](?:old|new) (?:1|25)$/.test(row.raw))
+      .map((row) => row.index),
+  });
+  const projected = projectSquash(repo, refs);
+  const [hunk] = projected.files[0].hunks;
+  assert.equal(hunk.header, "@@ -10,7 +10,7 @@ section");
+  assert.deepEqual(
+    hunk.rows.map((row) => row.raw),
+    [
+      " line 10",
+      " line 11",
+      " line 12",
+      "-old 13",
+      "+new 13",
+      " line 14",
+      " line 15",
+      " line 16",
+    ],
+  );
+  assert.deepEqual(
+    specsForRefs(projected, [
+      { path: "a", kind: "-", line: 13, text: "old 13" },
+      { path: "a", kind: "+", line: 13, text: "new 13" },
+    ]),
+    [{ id: "a-0", lines: [4, 5] }],
+  );
+  validatePatches(projected);
+});
+
+test("seven contextualized rows split a hunk, preserving both coordinate systems and later shifts", () => {
+  const before = Array.from({ length: 6 }, (_, i) => ` before ${i}`);
+  const middle = Array.from({ length: 7 }, (_, i) => `+middle ${i}`);
+  const after = Array.from({ length: 6 }, (_, i) => ` after ${i}`);
+  const repo = state(
+    file(
+      "a",
+      [
+        "@@ -10,14 +30,21 @@ section",
+        ...before,
+        "-old",
+        "+new",
+        ...middle,
+        "-old",
+        "+new",
+        ...after,
+        "@@ -40,1 +67,1 @@ later",
+        "-old",
+        "+new",
+      ].join("\n"),
+    ),
+  );
+  const projected = projectSquash(
+    repo,
+    select(repo, "a-0", 9, 10, 11, 12, 13, 14, 15),
+  );
+  const hunks = projected.files[0].hunks;
+  assert.deepEqual(
+    hunks.map((h) => h.header),
+    [
+      "@@ -13,7 +33,7 @@ section",
+      "@@ -21,7 +41,7 @@ section",
+      "@@ -47,1 +67,1 @@ later",
+    ],
+  );
+  assert.equal(hunks[0].id, "a-0");
+  assert.equal(new Set(hunks.map((h) => h.id)).size, 3);
+  assert.deepEqual(
+    hunks.slice(0, 2).map((h) => h.rows.map((r) => r.index)),
+    [
+      [1, 2, 3, 4, 5, 6, 7, 8],
+      [1, 2, 3, 4, 5, 6, 7, 8],
+    ],
+  );
+  assert.ok(!projected.files[0].patch.includes("middle 3"));
+  const remaining = refsFromSelection(projected, {
+    [hunks[0].id]: [4, 5],
+    [hunks[1].id]: [4, 5],
+    "a-1": [1, 2],
+  });
+  assert.deepEqual(remaining, [
+    { path: "a", kind: "-", line: 16, text: "old" },
+    { path: "a", kind: "+", line: 36, text: "new" },
+    { path: "a", kind: "-", line: 24, text: "old" },
+    { path: "a", kind: "+", line: 44, text: "new" },
+    { path: "a", kind: "-", line: 47, text: "old" },
+    { path: "a", kind: "+", line: 67, text: "new" },
+  ]);
+  // Confirmed tool output can have unrelated IDs and body indices. Queue
+  // dispatch must still match exact source coordinates, even with repeated text.
+  const confirmed = structuredClone(projected);
+  confirmed.files[0].hunks.forEach((h, i) => {
+    h.id = `confirmed-${i}`;
+    h.rows.forEach((row) => (row.index += 10));
+  });
+  assert.equal(changeSignature(confirmed), changeSignature(projected));
+  assert.deepEqual(specsForRefs(confirmed, remaining.slice(2, 4)), [
+    { id: "confirmed-1", lines: [14, 15] },
+  ]);
+  const next = projectSquash(projected, remaining.slice(0, 2));
+  assert.equal(next.files[0].hunks.length, 2);
+  assert.deepEqual(specsForRefs(next, remaining.slice(2, 4)), [
+    { id: hunks[1].id, lines: [4, 5] },
+  ]);
+  validatePatches(projected);
+  validatePatches(next);
+});
+
+test("six lines of context keep neighboring changes together; seven split", () => {
+  for (const gap of [5, 6, 7]) {
+    const repo = state(
+      file(
+        "a",
+        `@@ -0,0 +1,${gap + 2} @@\n` +
+          Array.from({ length: gap + 2 }, (_, i) => `+line ${i}`).join("\n"),
+        "new",
+      ),
+    );
+    const projected = projectSquash(
+      repo,
+      select(repo, "a-0", ...Array.from({ length: gap }, (_, i) => i + 2)),
+    );
+    assert.equal(projected.files[0].hunks.length, gap > 6 ? 2 : 1);
+    assert.equal(projected.files[0].additions, 2);
+    validatePatches(projected);
+  }
+});
+
+test("new-file partial squashes trim contextualized edges without losing file existence or coordinates", () => {
+  const repo = state(
+    file(
+      "new.txt",
+      "@@ -0,0 +1,21 @@\n" +
+        Array.from({ length: 21 }, (_, i) => `+line ${i + 1}`).join("\n"),
+      "new",
+    ),
+  );
+  const moved = Array.from({ length: 21 }, (_, i) => i + 1).filter(
+    (i) => i !== 11,
+  );
+  const projected = projectSquash(repo, select(repo, "new.txt-0", ...moved));
+  assert.equal(projected.files[0].hunks[0].header, "@@ -8,6 +8,7 @@");
+  assert.deepEqual(
+    projected.files[0].hunks[0].rows.map((r) => r.raw),
+    [
+      " line 8",
+      " line 9",
+      " line 10",
+      "+line 11",
+      " line 12",
+      " line 13",
+      " line 14",
+    ],
+  );
+  assert.ok(!projected.files[0].patch.includes("/dev/null"));
+  assert.ok(!projected.files[0].patch.includes("new file mode"));
+  assert.deepEqual(select(projected, "new.txt-0", 4), [
+    { path: "new.txt", kind: "+", line: 11, text: "line 11" },
+  ]);
+  validatePatches(projected);
+  assert.deepEqual(
+    projectSquash(projected, select(projected, "new.txt-0", 4)).files,
+    [],
+  );
+});
+
+test("deleted-file separated selections compact remaining deletions rather than inventing context", () => {
+  const repo = state(
+    file(
+      "gone",
+      "@@ -1,21 +0,0 @@\n" +
+        Array.from({ length: 21 }, (_, i) => `-line ${i + 1}`).join("\n"),
+      "deleted",
+    ),
+  );
+  const moved = Array.from({ length: 21 }, (_, i) => i + 1).filter(
+    (i) => ![5, 17].includes(i),
+  );
+  const projected = projectSquash(repo, select(repo, "gone-0", ...moved));
+  assert.equal(projected.files[0].hunks[0].header, "@@ -1,2 +0,0 @@");
+  assert.deepEqual(projected.files[0].hunks[0].rows, [
+    { index: 1, raw: "-line 5", oldLine: 1 },
+    { index: 2, raw: "-line 17", oldLine: 2 },
+  ]);
+  assert.match(projected.files[0].patch, /\+\+\+ \/dev\/null/);
+  validatePatches(projected);
+  const next = projectSquash(projected, select(projected, "gone-0", 1));
+  assert.deepEqual(select(next, "gone-0", 1), [
+    { path: "gone", kind: "-", line: 1, text: "line 17" },
+  ]);
+  validatePatches(next);
+});
+
+test("split hunk IDs avoid existing IDs across files and remain deterministic", () => {
+  const first = file(
+    "a",
+    "@@ -0,0 +1,9 @@\n" +
+      Array.from({ length: 9 }, (_, i) => `+line ${i}`).join("\n"),
+    "new",
+  );
+  const other = file("b", "@@ -1 +1 @@\n-old\n+new");
+  other.hunks[0].id = "a-0:optimistic:1";
+  const repo = state(first, other);
+  const refs = select(repo, "a-0", 2, 3, 4, 5, 6, 7, 8);
+  const projected = projectSquash(repo, refs);
+  assert.deepEqual(projectSquash(repo, refs), projected);
+  const ids = projected.files.flatMap((f) => f.hunks.map((h) => h.id));
+  assert.equal(new Set(ids).size, 3);
+  assert.equal(projected.files[1], other);
+  assert.doesNotThrow(() =>
+    refsFromSelection(projected, {
+      [projected.files[0].hunks[1].id]: [4],
+      [other.hunks[0].id]: [1],
+    }),
+  );
+  validatePatches(projected);
+});
