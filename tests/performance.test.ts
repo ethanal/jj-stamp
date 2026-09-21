@@ -441,3 +441,68 @@ test("cold state subprocess budget stays constant with many files and mutable an
     "warm reads still revalidate live metadata and operation heads",
   );
 });
+
+test("an unavailable-source graph retains the five-process read-only budget and snapshots nothing", async (t) => {
+  const options = await fixture(t);
+  const calls: string[][] = [];
+  let toolCalls = 0;
+  const service = new ReviewService({
+    ...options,
+    jjRunner: (cwd, args) => {
+      calls.push(args);
+      return jj(cwd, args);
+    },
+    toolRunner: (command, args, cwd) => {
+      toolCalls++;
+      return run(command, args, cwd);
+    },
+  });
+  const initial = await service.getState();
+  await jj(options.repoPath, ["abandon", initial.source.changeId]);
+  const operation = (
+    await jj(options.repoPath, [
+      "op",
+      "log",
+      "--ignore-working-copy",
+      "--no-graph",
+      "--limit",
+      "1",
+      "-T",
+      "self.id()",
+    ])
+  ).stdout.trim();
+  await writeFile(
+    path.join(options.repoPath, "unsnapshotted.txt"),
+    "not recorded\n",
+  );
+  calls.length = 0;
+  toolCalls = 0;
+  const graph = await service.getLog({ includeOutput: false });
+  assert.ok(graph.rows.length);
+  assert.notEqual(graph.version, initial.version);
+  assert.equal(calls.length, 5);
+  assert.equal(toolCalls, 0);
+  assert.ok(
+    calls.every(
+      (args) =>
+        args.includes("--ignore-working-copy") ||
+        args.includes("--at-operation"),
+    ),
+  );
+  assert.ok(calls.every((args) => args[0] !== "diff"));
+  assert.equal(
+    (
+      await jj(options.repoPath, [
+        "op",
+        "log",
+        "--ignore-working-copy",
+        "--no-graph",
+        "--limit",
+        "1",
+        "-T",
+        "self.id()",
+      ])
+    ).stdout.trim(),
+    operation,
+  );
+});

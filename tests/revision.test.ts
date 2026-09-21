@@ -652,7 +652,7 @@ test("structured log preserves actual jj graph prefixes, metadata, connector row
       "--config",
       "ui.log-word-wrap=false",
       "-r",
-      `(${reviewLogRevset}) | change_id("${sourceId}")`,
+      `(${reviewLogRevset}) | change_id("${sourceId}") | @`,
       "-T",
       'json(change_id) ++ "\\n"',
     ])
@@ -832,5 +832,286 @@ test("state and graph batch revision author and jj's distinguishing change prefi
   assert.deepEqual(
     (await new ReviewService(options).getState()).source,
     state.source,
+  );
+});
+
+test("leaving an empty working copy can abandon the pinned source while the new @ is healthy; graph permits only explicit recovery", async () => {
+  const options = await fixture();
+  const healthyId = await revisionId(options.repoPath, "@");
+  await jj(options.repoPath, ["new"]);
+  const service = new ReviewService(options);
+  const initial = await service.getState();
+  assert.deepEqual(initial.files, []);
+  await jj(options.repoPath, ["edit", healthyId]);
+  assert.equal(await revisionId(options.repoPath, "@"), healthyId);
+  assert.equal(
+    await revisionId(
+      options.repoPath,
+      `change_id("${initial.source.changeId}")`,
+    ),
+    "",
+    "jj automatically abandoned the empty undescribed working copy",
+  );
+  await assert.rejects(service.getState(), (error: unknown) => {
+    assert.ok(error instanceof ApiError);
+    assert.equal(error.code, "SOURCE_UNAVAILABLE");
+    assert.ok(error.message.includes(initial.source.changeId));
+    assert.match(error.message, /no visible revision/);
+    assert.doesNotMatch(error.message, /divergent/);
+    assert.deepEqual(error.details, {
+      sourceChangeId: initial.source.changeId,
+      sourceStatus: "missing",
+    });
+    return true;
+  });
+  const graph = await service.getLog({ includeOutput: false });
+  assert.notEqual(graph.version, initial.version);
+  assert.ok(
+    graph.rows.some(
+      (row) => row.isWorkingCopy && row.revision?.changeId === healthyId,
+    ),
+  );
+  await rejectsCode(service.getState(), "SOURCE_UNAVAILABLE");
+  await rejectsCode(
+    service.selectRevision({ version: initial.version, changeId: healthyId }),
+    "STALE_STATE",
+  );
+  await rejectsCode(
+    service.selectRevision({
+      version: graph.version,
+      changeId: initial.source.changeId,
+    }),
+    "INVALID_REVISION",
+  );
+  await rejectsCode(service.getState(), "SOURCE_UNAVAILABLE");
+  const selected = (
+    await service.selectRevision({
+      version: graph.version,
+      changeId: healthyId,
+    })
+  ).state;
+  assert.equal(selected.source.changeId, healthyId);
+  assert.equal(selected.canUndo, false);
+  assert.deepEqual(await service.getState(), selected);
+});
+
+test("divergent source diagnostics distinguish multiple revisions and the graph enables explicit recovery without resolving divergence", async () => {
+  const options = await fixture();
+  const service = new ReviewService(options);
+  const initial = await service.getState();
+  const preview = await service.preview({
+    version: initial.version,
+    target: initial.parent!.changeId,
+    selections: selections(initial),
+  });
+  await jj(options.repoPath, [
+    "describe",
+    initial.source.commitId,
+    "-m",
+    "First rewrite",
+  ]);
+  await jj(options.repoPath, [
+    "--at-operation",
+    initial.operation,
+    "describe",
+    initial.source.commitId,
+    "-m",
+    "Second rewrite",
+  ]);
+  await jj(options.repoPath, ["status"]);
+  await assert.rejects(service.getState(), (error: unknown) => {
+    assert.ok(error instanceof ApiError);
+    assert.equal(error.code, "SOURCE_UNAVAILABLE");
+    assert.ok(error.message.includes(initial.source.changeId));
+    assert.match(error.message, /divergent \(2 visible revisions\)/);
+    assert.doesNotMatch(error.message, /abandoned/);
+    assert.equal(error.details?.sourceStatus, "divergent");
+    return true;
+  });
+  const graph = await service.getLog({ includeOutput: false });
+  assert.equal(
+    graph.rows.filter(
+      (row) => row.revision?.changeId === initial.source.changeId,
+    ).length,
+    2,
+  );
+  await rejectsCode(
+    service.selectRevision({
+      version: graph.version,
+      changeId: initial.source.changeId,
+    }),
+    "INVALID_REVISION",
+  );
+  const selected = (
+    await service.selectRevision({
+      version: graph.version,
+      changeId: initial.parent!.changeId,
+    })
+  ).state;
+  assert.equal(selected.source.changeId, initial.parent!.changeId);
+  await rejectsCode(service.squash(preview.token), "STALE_PREVIEW");
+  assert.equal(
+    (
+      await revisionId(
+        options.repoPath,
+        `change_id("${initial.source.changeId}")`,
+        'commit_id ++ "\\n"',
+      )
+    ).split("\n").length,
+    2,
+  );
+});
+
+test("graph access with an unavailable source does not bypass a pending journal", async () => {
+  const options = await fixture();
+  const initial = await new ReviewService(options).getState();
+  const pending = {
+    pending: {
+      beforeOperation: initial.operation,
+      sourceCommit: initial.source.commitId,
+      kind: "squash",
+    },
+  };
+  await writeFile(journalPath(options), JSON.stringify(pending));
+  const service = new ReviewService(options);
+  await service.getState();
+  await jj(options.repoPath, ["abandon", initial.source.changeId]);
+  const graph = await service.getLog({ includeOutput: false });
+  await rejectsCode(
+    service.selectRevision({
+      version: initial.version,
+      changeId: initial.parent!.changeId,
+    }),
+    "STALE_STATE",
+  );
+  await rejectsCode(
+    service.selectRevision({
+      version: graph.version,
+      changeId: initial.parent!.changeId,
+    }),
+    "RECOVERY_REQUIRED",
+  );
+  await rejectsCode(service.getState(), "SOURCE_UNAVAILABLE");
+  assert.deepEqual(
+    JSON.parse(await readFile(journalPath(options), "utf8")),
+    pending,
+  );
+});
+
+test("unavailable-source recovery revalidates history before publishing a candidate", async () => {
+  const options = await fixture();
+  let changeDuringSelection = false;
+  const service = new ReviewService({
+    ...options,
+    toolRunner: async (command, args, cwd) => {
+      const result = await run(command, args, cwd);
+      if (changeDuringSelection && args[0] === "hunks") {
+        changeDuringSelection = false;
+        await jj(cwd, ["new", "-m", "External operation during recovery"]);
+      }
+      return result;
+    },
+  });
+  const initial = await service.getState();
+  await jj(options.repoPath, ["abandon", initial.source.changeId]);
+  const graph = await service.getLog({ includeOutput: false });
+  changeDuringSelection = true;
+  await rejectsCode(
+    service.selectRevision({
+      version: graph.version,
+      changeId: initial.parent!.changeId,
+    }),
+    "STALE_STATE",
+  );
+  assert.equal(changeDuringSelection, false);
+  await rejectsCode(service.getState(), "SOURCE_UNAVAILABLE");
+  const refreshed = await service.getLog({ includeOutput: false });
+  assert.notEqual(refreshed.version, graph.version);
+  assert.equal(
+    (
+      await service.selectRevision({
+        version: refreshed.version,
+        changeId: initial.parent!.changeId,
+      })
+    ).state.source.changeId,
+    initial.parent!.changeId,
+  );
+});
+
+test("clean source above resolved ancestor conflicts and an empty parent is available; conflicted source can be explicitly left via graph", async () => {
+  const options = await fixture();
+  const base = await revisionId(options.repoPath, "@");
+  await jj(options.repoPath, ["new", "-m", "Left branch"]);
+  await writeFile(path.join(options.repoPath, "conflict.txt"), "left\n");
+  const left = await revisionId(options.repoPath, "@", "commit_id");
+  await jj(options.repoPath, ["new", base, "-m", "Right branch"]);
+  await writeFile(path.join(options.repoPath, "conflict.txt"), "right\n");
+  await jj(options.repoPath, ["new", left, "@", "-m", "Conflicted merge"]);
+  const conflictId = await revisionId(options.repoPath, "@");
+  const service = new ReviewService(options);
+  await rejectsCode(service.getState(), "CONFLICTED_SOURCE");
+  await jj(options.repoPath, ["new", "-m", "Resolved descendant"]);
+  await writeFile(path.join(options.repoPath, "conflict.txt"), "resolved\n");
+  await jj(options.repoPath, ["new", "-m", "Empty parent"]);
+  await jj(options.repoPath, ["new", "-m", "Healthy source"]);
+  await writeFile(path.join(options.repoPath, "healthy.txt"), "review me\n");
+  const healthy = await revisionId(options.repoPath, "@");
+  const graph = await service.getLog({ includeOutput: false });
+  await rejectsCode(service.getState(), "CONFLICTED_SOURCE");
+  const state = (
+    await service.selectRevision({ version: graph.version, changeId: healthy })
+  ).state;
+  assert.equal(state.parent!.description, "Empty parent");
+  assert.ok(!state.targets.some((target) => target.changeId === conflictId));
+  assert.equal(state.squashUnavailable, undefined);
+  await rejectsCode(
+    service.selectRevision({ version: state.version, changeId: conflictId }),
+    "CONFLICTED_SOURCE",
+  );
+  assert.deepEqual(
+    await service.getState(),
+    state,
+    "a conflicted candidate is not published",
+  );
+  const result = await service.squashLines({
+    version: state.version,
+    selections: selections(state),
+  });
+  assert.equal(result.state.source.changeId, healthy);
+  assert.deepEqual(result.state.files, []);
+});
+
+test("unavailable-source graph includes a healthy working copy outside mine() for explicit recovery", async () => {
+  const options = await fixture();
+  const healthy = await revisionId(options.repoPath, "@");
+  await jj(options.repoPath, ["new"]);
+  const service = new ReviewService(options);
+  const initial = await service.getState();
+  await jj(options.repoPath, ["edit", healthy]);
+  await jj(options.repoPath, [
+    "config",
+    "set",
+    "--repo",
+    "user.email",
+    "different-user@example.com",
+  ]);
+  const graph = await service.getLog({ includeOutput: false });
+  const workingCopy = graph.rows.find((row) => row.isWorkingCopy);
+  assert.equal(workingCopy?.revision?.changeId, healthy);
+  assert.equal(workingCopy?.mutable, true);
+  assert.ok(
+    !graph.rows.some(
+      (row) => row.revision?.changeId === initial.source.changeId,
+    ),
+  );
+  await rejectsCode(service.getState(), "SOURCE_UNAVAILABLE");
+  assert.equal(
+    (
+      await service.selectRevision({
+        version: graph.version,
+        changeId: healthy,
+      })
+    ).state.source.changeId,
+    healthy,
   );
 });

@@ -70,7 +70,17 @@ type RevisionView = Pick<
   State,
   "source" | "targets" | "parent" | "squashUnavailable"
 >;
+interface UnavailableView {
+  unavailable: {
+    changeId: string;
+    reason: "missing" | "divergent";
+    revisions: Revision[];
+  };
+}
+type ReviewView = RevisionView | UnavailableView;
 interface ViewSelection {
+  allowUnavailable?: boolean;
+  allowConflicts?: boolean;
   changeId?: string;
   requireMutable?: boolean;
 }
@@ -274,14 +284,19 @@ export class ReviewService {
     if (!this.sourceChangeId) throw new Error("Repository not initialized");
     return this.changeRevset(this.sourceChangeId);
   }
-  private requireSource(sources: Revision[]): Revision {
-    if (sources.length !== 1)
+  private requireView(view: ReviewView): RevisionView {
+    if ("unavailable" in view) {
+      const { changeId, reason, revisions } = view.unavailable;
       throw new ApiError(
         409,
         "SOURCE_UNAVAILABLE",
-        "The selected change is abandoned or divergent. Resolve it with jj or start a new review; the source was not switched to the working copy.",
+        reason === "missing"
+          ? `Selected change ${changeId} has no visible revision (it may have been abandoned). Explicitly choose another change in the revision graph, or resolve it with jj and refresh. The source was not switched to the working copy.`
+          : `Selected change ${changeId} is divergent (${revisions.length} visible revisions). Resolve its divergence with jj and refresh, or explicitly choose another change in the revision graph. The source was not switched to the working copy.`,
+        { sourceChangeId: changeId, sourceStatus: reason },
       );
-    return sources[0];
+    }
+    return view;
   }
   private async operation(): Promise<Operation> {
     const output = (
@@ -463,7 +478,7 @@ export class ReviewService {
     selections = [{}],
     allowConflicts = false,
     snapshot = true,
-  }: ViewOptions = {}): Promise<RevisionView[]> {
+  }: ViewOptions = {}): Promise<ReviewView[]> {
     const revsets = selections.map((selection) => {
       const source = selection.changeId
         ? this.changeRevset(selection.changeId)
@@ -544,9 +559,21 @@ export class ReviewService {
           "INVALID_REVISION",
           "Choose exactly one visible, non-divergent change.",
         );
-      const source = this.requireSource(sources);
+      if (sources.length !== 1) {
+        const unavailable: UnavailableView = {
+          unavailable: {
+            changeId: selection.changeId ?? this.sourceChangeId!,
+            reason: sources.length ? "divergent" : "missing",
+            revisions: sources,
+          },
+        };
+        if (!selection.allowUnavailable) this.requireView(unavailable);
+        return unavailable;
+      }
+      const source = sources[0];
       if (
         !allowConflicts &&
+        !selection.allowConflicts &&
         metadata.some((entry) => entry.source && entry.conflict)
       )
         throw new ApiError(
@@ -594,7 +621,7 @@ export class ReviewService {
       };
     });
   }
-  private version(view: RevisionView, operation: string): string {
+  private version(view: ReviewView, operation: string): string {
     return hash(JSON.stringify([this.root, operation, view]));
   }
   private state(
@@ -616,7 +643,7 @@ export class ReviewService {
     };
   }
   private async validateViews(
-    views: RevisionView[],
+    views: ReviewView[],
     operation: string,
     options: ViewOptions = {},
   ): Promise<void> {
@@ -630,19 +657,20 @@ export class ReviewService {
   private async readState(allowConflicts = false): Promise<State> {
     await this.init();
     const views = await this.readViews({ allowConflicts });
+    const view = this.requireView(views[0]);
     // The pinned diff does not depend on the operation query. Overlap these
     // reads, but drain BOTH even on failure before releasing the serial queue.
     // Metadata and the operation head are still rechecked in order below.
     const [operationResult, filesResult] = await Promise.allSettled([
       this.operation(),
-      this.files(views[0].source.commitId),
+      this.files(view.source.commitId),
     ]);
     if (operationResult.status === "rejected") throw operationResult.reason;
     if (filesResult.status === "rejected") throw filesResult.reason;
     const operation = operationResult.value;
     const files = filesResult.value;
     await this.validateViews(views, operation.id, { allowConflicts });
-    return this.state(views[0], operation.id, files);
+    return this.state(view, operation.id, files);
   }
   /** Wait for all accepted requests before a graceful service shutdown. */
   async drain(): Promise<void> {
@@ -670,7 +698,7 @@ export class ReviewService {
       // Resolve both identities and their live eligibility in one snapshot.
       // The candidate is not published until its diff and BOTH views validate.
       const selections = [
-        {},
+        { allowUnavailable: true, allowConflicts: true },
         { changeId: input.changeId, requireMutable: true },
       ];
       const views = await this.readViews({ selections });
@@ -681,9 +709,10 @@ export class ReviewService {
       )
         stale();
       this.assertNotPending();
-      const files = await this.files(views[1].source.commitId);
+      const candidate = this.requireView(views[1]);
+      const files = await this.files(candidate.source.commitId);
       await this.validateViews(views, operation.id, { selections });
-      const state = this.state(views[1], operation.id, files);
+      const state = this.state(candidate, operation.id, files);
       this.sourceChangeId = state.source.changeId;
       this.plans.clear();
       // Keep the repository-scoped journal. canUndo is only true when its exact
@@ -696,7 +725,14 @@ export class ReviewService {
   ): Promise<{ version: string; output: string; rows: LogRow[] }> {
     return this.serial(async () => {
       await this.init(false);
-      const views = await this.readViews({ snapshot: false });
+      // The graph remains a read-only recovery path when the pinned source is
+      // absent, divergent or conflicted. Its version still identifies that old
+      // source and its live availability; selection never silently follows @.
+      const viewOptions: ViewOptions = {
+        snapshot: false,
+        selections: [{ allowUnavailable: true, allowConflicts: true }],
+      };
+      const views = await this.readViews(viewOptions);
       const operation = await this.operation();
       // Bound the graph by relevant history, not an arbitrary entry count.
       // Preserve the configured text template for compatibility callers.
@@ -727,7 +763,7 @@ export class ReviewService {
           "--config",
           "ui.log-word-wrap=false",
           "-r",
-          `(${reviewLogRevset}) | ${this.sourceRevset}`,
+          `(${reviewLogRevset}) | ${this.sourceRevset} | @`,
           "--at-operation",
           operation.id,
           "-T",
@@ -770,7 +806,7 @@ export class ReviewService {
           isWorkingCopy,
         };
       });
-      await this.validateViews(views, operation.id, { snapshot: false });
+      await this.validateViews(views, operation.id, viewOptions);
       return { version: this.version(views[0], operation.id), output, rows };
     });
   }
