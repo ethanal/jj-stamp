@@ -12,7 +12,7 @@ async function fixture(t: test.TestContext) {
     path.join(os.tmpdir(), "jj-stamp-performance-"),
   );
   t.after(() => rm(dataDir, { recursive: true, force: true }));
-  return { dataDir, repoPath: await createDemo(dataDir) };
+  return { repoPath: await createDemo(dataDir) };
 }
 
 // Count processes instead of asserting wall-clock timings on shared CI hosts.

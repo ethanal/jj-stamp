@@ -125,7 +125,10 @@ try:
     assert not (Path(package) / "lib" / "node_modules").exists()
     process.send_signal(signal.SIGTERM)
     assert process.wait(timeout=15) == 0
-    print("Installed CLI, bundled runtime tools, browser assets, preview, squash, undo, revision selection and shutdown passed")
+    # Review, squash, undo and shutdown must not create backend app state.
+    assert not (root / "state" / "jj-stamp").exists()
+    assert not (home / ".local" / "state" / "jj-stamp").exists()
+    print("Installed CLI, bundled runtime tools, browser assets, preview, squash, undo, stateless operation, revision selection and shutdown passed")
 finally:
     selector.close()
     if process.poll() is None:

@@ -39,7 +39,6 @@ for (let i = 0; i < runs; i++) {
     await jj(repoPath, ["status"]);
     let calls = 0;
     const service = new ReviewService({
-      dataDir,
       repoPath,
       jjRunner: (cwd, args) => {
         calls++;

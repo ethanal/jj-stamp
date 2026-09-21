@@ -1,6 +1,5 @@
 import { spawn } from "node:child_process";
 import { access } from "node:fs/promises";
-import { homedir } from "node:os";
 import path from "node:path";
 import { parseArgs } from "node:util";
 import { ReviewService } from "./server/service.ts";
@@ -95,16 +94,8 @@ async function main() {
       throw error;
     }
   }
-  const stateRoot = process.env.XDG_STATE_HOME;
-  const dataDir = path.join(
-    stateRoot && path.isAbsolute(stateRoot)
-      ? stateRoot
-      : path.join(homedir(), ".local", "state"),
-    "jj-stamp",
-  );
   const service = new ReviewService({
     repoPath,
-    dataDir,
     revision: positionals[0] ?? "@",
   });
   // Resolve and validate before advertising a URL or opening an empty browser.

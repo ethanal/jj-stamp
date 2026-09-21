@@ -1,11 +1,13 @@
 import assert from "node:assert/strict";
 import { spawn, type ChildProcess } from "node:child_process";
+import { createHash } from "node:crypto";
 import {
   access,
   chmod,
   mkdir,
   mkdtemp,
   readFile,
+  readdir,
   rm,
   writeFile,
 } from "node:fs/promises";
@@ -52,7 +54,9 @@ async function sandbox(t: TestContext) {
   const children: ReturnType<typeof launch>[] = [];
   const bin = path.join(root, "bin");
   const opened = path.join(root, "opened-urls");
+  const home = path.join(root, "home");
   await mkdir(bin);
+  await mkdir(home);
   await writeFile(
     path.join(bin, "xdg-open"),
     '#!/bin/sh\nprintf "%s\\n" "$1" >> "$JJ_STAMP_TEST_OPENED"\n',
@@ -61,6 +65,7 @@ async function sandbox(t: TestContext) {
   const env = {
     ...process.env,
     PATH: `${bin}${path.delimiter}${process.env.PATH}`,
+    HOME: home,
     XDG_STATE_HOME: path.join(root, "state"),
     JJ_STAMP_TEST_OPENED: opened,
   };
@@ -82,10 +87,20 @@ async function sandbox(t: TestContext) {
   });
   return {
     root,
+    home,
     bin,
     opened,
     blockedGroups,
     releaseGates,
+    async assertNoAppState() {
+      for (const directory of [
+        path.join(root, "state"),
+        path.join(home, ".local", "state", "jj-stamp"),
+        path.join(root, "relative-state"),
+      ]) {
+        assert.equal(await exists(directory), false, directory);
+      }
+    },
     start(args: string[], cwd = root, overrides: NodeJS.ProcessEnv = {}) {
       const child = launch(args, cwd, { ...env, ...overrides });
       children.push(child);
@@ -273,7 +288,7 @@ test(
     }
     assert.equal(await exists(invoked), false);
     assert.equal(await exists(box.opened), false);
-    assert.equal(await exists(path.join(box.root, "state")), false);
+    await box.assertNoAppState();
   },
 );
 
@@ -452,6 +467,7 @@ test(
     );
     await cli.stop("SIGINT");
     await assert.rejects(request(url, "/api/state"));
+    await box.assertNoAppState();
   },
 );
 
@@ -585,6 +601,7 @@ test(
     const ephemeral = box.start([...args, "--port", "0"]);
     assert.notEqual(new URL(await ephemeral.url()).port, String(DEFAULT_PORT));
     await ephemeral.stop("SIGTERM");
+    await box.assertNoAppState();
   },
 );
 
@@ -615,6 +632,176 @@ test(
       await new Promise<void>((resolve, reject) =>
         occupied.close((error) => (error ? reject(error) : resolve())),
       );
+    }
+  },
+);
+
+for (const stateHome of ["absolute", "unset", "relative"] as const) {
+  test(
+    `squash and undo write no app state with ${stateHome} XDG_STATE_HOME; restart forgets undo but preserves jj history`,
+    { timeout: 60_000 },
+    async (t) => {
+      const box = await sandbox(t);
+      const repo = await createDemo(box.root);
+      const overrides = {
+        XDG_STATE_HOME:
+          stateHome === "absolute"
+            ? path.join(box.root, "state")
+            : stateHome === "relative"
+              ? "relative-state"
+              : undefined,
+      };
+      const args = ["-R", repo, "--no-open", "--port", "0"];
+      const cli = box.start(args, box.root, overrides);
+      const url = await cli.url();
+      const post = async (route: string, body: unknown) => {
+        const response = await request(url, route, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-Fold-Request": "1",
+          },
+          body: JSON.stringify(body),
+        });
+        assert.equal(response.status, 200, response.body);
+        return JSON.parse(response.body);
+      };
+      const response = await request(url, "/api/state");
+      assert.equal(response.status, 200, response.body);
+      const initial: State = JSON.parse(response.body);
+      const hunk = initial.files[0].hunks[0];
+      const selections = [
+        {
+          id: hunk.id,
+          lines: hunk.rows
+            .filter((row) => /^[+-]/.test(row.raw))
+            .map((row) => row.index),
+        },
+      ];
+      await box.assertNoAppState();
+      const squashed: State = (
+        await post("/api/squash-lines", {
+          version: initial.version,
+          selections,
+        })
+      ).state;
+      assert.equal(squashed.canUndo, true);
+      assert.notEqual(squashed.source.commitId, initial.source.commitId);
+      await box.assertNoAppState();
+      const undone: State = (
+        await post("/api/undo", {
+          version: squashed.version,
+        })
+      ).state;
+      assert.equal(undone.canUndo, false);
+      assert.equal(undone.source.commitId, initial.source.commitId);
+      await box.assertNoAppState();
+      // Use a different selection so this statelessness check does not need
+      // jj to recreate the identical commit object immediately after undo.
+      const nextHunk = undone.files
+        .flatMap((file) => file.hunks)
+        .find((candidate) => candidate.id !== hunk.id);
+      assert.ok(nextHunk);
+      const reapplied: State = (
+        await post("/api/squash-lines", {
+          version: undone.version,
+          selections: [
+            {
+              id: nextHunk.id,
+              lines: nextHunk.rows
+                .filter((row) => /^[+-]/.test(row.raw))
+                .map((row) => row.index),
+            },
+          ],
+        })
+      ).state;
+      assert.equal(reapplied.canUndo, true);
+      await cli.stop("SIGTERM");
+      await box.assertNoAppState();
+
+      const restarted = box.start(args, box.root, overrides);
+      const restartedUrl = await restarted.url();
+      const refreshed = await request(restartedUrl, "/api/state");
+      assert.equal(refreshed.status, 200, refreshed.body);
+      const current: State = JSON.parse(refreshed.body);
+      assert.equal(current.canUndo, false);
+      assert.deepEqual(current.source, reapplied.source);
+      assert.deepEqual(current.parent, reapplied.parent);
+      assert.equal(current.operation, reapplied.operation);
+      assert.deepEqual(current.files, reapplied.files);
+      const unavailable = await request(restartedUrl, "/api/undo", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Fold-Request": "1",
+        },
+        body: JSON.stringify({ version: current.version }),
+      });
+      assert.equal(unavailable.status, 409, unavailable.body);
+      assert.equal(JSON.parse(unavailable.body).code, "UNDO_UNAVAILABLE");
+      await restarted.stop("SIGTERM");
+      await box.assertNoAppState();
+    },
+  );
+}
+
+test(
+  "legacy app journals are ignored and preserved, including corrupt files",
+  { timeout: 45_000 },
+  async (t) => {
+    const box = await sandbox(t);
+    const repo = await createDemo(box.root);
+    const file = `operations-${createHash("sha256").update(repo).digest("hex").slice(0, 20)}.json`;
+    const legacyDirectories = [
+      path.join(box.root, "state", "jj-stamp"),
+      path.join(box.home, ".local", "state", "jj-stamp"),
+    ];
+    const legacy =
+      "{corrupt legacy journal: must not be read, replaced or removed\n";
+    for (const directory of legacyDirectories) {
+      await mkdir(directory, { recursive: true });
+      await writeFile(path.join(directory, file), legacy);
+    }
+    for (const stateHome of [path.join(box.root, "state"), undefined]) {
+      const cli = box.start(
+        ["-R", repo, "--no-open", "--port", "0"],
+        box.root,
+        { XDG_STATE_HOME: stateHome },
+      );
+      const url = await cli.url();
+      const response = await request(url, "/api/state");
+      assert.equal(response.status, 200, response.body);
+      const state: State = JSON.parse(response.body);
+      assert.equal(state.canUndo, false);
+      const hunk = state.files[0].hunks[0];
+      const mutation = await request(url, "/api/squash-lines", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Fold-Request": "1",
+        },
+        body: JSON.stringify({
+          version: state.version,
+          selections: [
+            {
+              id: hunk.id,
+              lines: hunk.rows
+                .filter((row) => /^[+-]/.test(row.raw))
+                .map((row) => row.index),
+            },
+          ],
+        }),
+      });
+      assert.equal(mutation.status, 200, mutation.body);
+      assert.equal(JSON.parse(mutation.body).state.canUndo, true);
+      await cli.stop("SIGTERM");
+      for (const directory of legacyDirectories) {
+        assert.deepEqual(await readdir(directory), [file]);
+        assert.equal(
+          await readFile(path.join(directory, file), "utf8"),
+          legacy,
+        );
+      }
     }
   },
 );

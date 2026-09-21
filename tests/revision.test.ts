@@ -11,7 +11,7 @@ import {
   type ServiceOptions,
   type State,
 } from "../server/service.ts";
-import { jj, run } from "../server/process.ts";
+import { jj, run, ProcessError } from "../server/process.ts";
 import { createDemo } from "./fixtures.ts";
 
 async function fixture() {
@@ -38,20 +38,41 @@ const selections = (state: State) =>
         .map((row) => row.index),
     })),
   );
-const journalPath = (options: ServiceOptions) =>
+const legacyJournalPath = (options: { dataDir: string; repoPath: string }) =>
   path.join(
     options.dataDir,
     `operations-${createHash("sha256").update(options.repoPath).digest("hex").slice(0, 20)}.json`,
   );
 
+function postWriteFailureService(repoPath: string) {
+  return new ReviewService({
+    repoPath,
+    toolRunner: async (command, args, cwd) => {
+      const result = await run(command, args, cwd);
+      if (args[0] === "squash") {
+        throw new ProcessError(
+          command,
+          args,
+          {
+            ...result,
+            stderr: "Simulated failure after a real history rewrite",
+          },
+          23,
+        );
+      }
+      return result;
+    },
+  });
+}
+
 // Run against actual jj and jj-hunk-tool, including non-working-copy rewrites.
-test("non-@ ancestor is resolved once and follows its change through full squash, restart, undo and workspace moves", async () => {
+test("non-@ ancestor is resolved once and follows its change through full squash, process-local undo and workspace moves", async () => {
   const options = await fixture();
   const workingCopyId = await revisionId(options.repoPath, "@");
   const selectedId = await revisionId(options.repoPath, "@-");
   let resolutions = 0;
   const service = new ReviewService({
-    ...options,
+    repoPath: options.repoPath,
     revision: "@-",
     jjRunner: (cwd, args) => {
       if (args[0] === "log" && args[args.indexOf("-r") + 1] === "@-")
@@ -91,13 +112,22 @@ test("non-@ ancestor is resolved once and follows its change through full squash
   assert.equal(result.state.canUndo, true);
   assert.equal(await revisionId(options.repoPath, "@"), workingCopyId);
   assert.equal(
-    (await new ReviewService(options).getState()).canUndo,
+    (await new ReviewService({ repoPath: options.repoPath }).getState())
+      .canUndo,
     false,
     "another source cannot undo this review's squash",
   );
-  const restarted = new ReviewService({ ...options, revision: selectedId });
-  assert.equal((await restarted.getState()).canUndo, true);
-  const undone = await restarted.undo(result.state.version);
+  const restarted = new ReviewService({
+    repoPath: options.repoPath,
+    revision: selectedId,
+  });
+  const reopened = await restarted.getState();
+  assert.equal(reopened.canUndo, false);
+  assert.equal(reopened.operation, result.state.operation);
+  assert.deepEqual(reopened.source, result.state.source);
+  await rejectsCode(restarted.undo(reopened.version), "UNDO_UNAVAILABLE");
+  assert.equal((await restarted.getState()).operation, result.state.operation);
+  const undone = await service.undo(result.state.version);
   assert.equal(undone.state.source.commitId, initial.source.commitId);
   assert.deepEqual(undone.state.files, initial.files);
   assert.deepEqual(undone.state.targets, initial.targets);
@@ -108,12 +138,14 @@ test("non-@ ancestor is resolved once and follows its change through full squash
   assert.equal(resolutions, 1);
   assert.notEqual(await revisionId(options.repoPath, "@-"), selectedId);
   assert.equal("demo" in moved.repo, false);
-  assert.ok(!(await readdir(options.dataDir)).includes("active-repo.json"));
+  assert.deepEqual(await readdir(options.dataDir), [
+    path.basename(options.repoPath),
+  ]);
 });
 
 test("default @ is a one-time choice, not a moving source", async () => {
   const options = await fixture();
-  const service = new ReviewService(options);
+  const service = new ReviewService({ repoPath: options.repoPath });
   const initial = await service.getState();
   await jj(options.repoPath, ["new", "-m", "Unrelated workspace"]);
   const moved = await service.getState();
@@ -154,7 +186,7 @@ test("bookmark expressions resolve once; later movement and change-ID-like bookm
   const options = await fixture();
   await jj(options.repoPath, ["bookmark", "create", "review-me", "-r", "@-"]);
   const service = new ReviewService({
-    ...options,
+    repoPath: options.repoPath,
     revision: 'bookmarks("review-me")',
   });
   const initial = await service.getState();
@@ -197,7 +229,7 @@ test("empty, absent, invalid, option-like and multi-revision expressions are rej
     'bookmarks("missing")',
   ]) {
     await rejectsCode(
-      new ReviewService({ ...options, revision }).getState(),
+      new ReviewService({ repoPath: options.repoPath, revision }).getState(),
       "INVALID_REVISION",
     );
   }
@@ -217,7 +249,7 @@ test("empty, absent, invalid, option-like and multi-revision expressions are rej
 
 test("external abandonment refuses cached source, pending preview and hidden initial commit instead of falling back to @", async () => {
   const options = await fixture();
-  const service = new ReviewService(options);
+  const service = new ReviewService({ repoPath: options.repoPath });
   const initial = await service.getState();
   const preview = await service.preview({
     version: initial.version,
@@ -231,20 +263,21 @@ test("external abandonment refuses cached source, pending preview and hidden ini
   await rejectsCode(service.squash(preview.token), "STALE_PREVIEW");
   await rejectsCode(
     new ReviewService({
-      ...options,
+      repoPath: options.repoPath,
       revision: initial.source.commitId,
     }).getState(),
     "INVALID_REVISION",
   );
   assert.notEqual(
-    (await new ReviewService(options).getState()).source.changeId,
+    (await new ReviewService({ repoPath: options.repoPath }).getState()).source
+      .changeId,
     initial.source.changeId,
   );
 });
 
 test("external divergence rejects cached source and even an explicitly selected divergent commit", async () => {
   const options = await fixture();
-  const service = new ReviewService(options);
+  const service = new ReviewService({ repoPath: options.repoPath });
   const initial = await service.getState();
   await jj(options.repoPath, [
     "describe",
@@ -276,13 +309,16 @@ test("external divergence rejects cached source and even an explicitly selected 
   await rejectsCode(service.getState(), "SOURCE_UNAVAILABLE");
   await rejectsCode(
     new ReviewService({
-      ...options,
+      repoPath: options.repoPath,
       revision: initial.source.changeId,
     }).getState(),
     "INVALID_REVISION",
   );
   await rejectsCode(
-    new ReviewService({ ...options, revision: commits[0] }).getState(),
+    new ReviewService({
+      repoPath: options.repoPath,
+      revision: commits[0],
+    }).getState(),
     "INVALID_REVISION",
   );
 });
@@ -292,7 +328,7 @@ test("initial read becoming stale does not re-resolve @ on re-entry", async () =
   const original = await revisionId(options.repoPath, "@");
   let moved = false;
   const service = new ReviewService({
-    ...options,
+    repoPath: options.repoPath,
     toolRunner: async (command, args, cwd) => {
       const result = await run(command, args, cwd);
       if (args[0] === "hunks" && !moved) {
@@ -307,29 +343,44 @@ test("initial read becoming stale does not re-resolve @ on re-entry", async () =
   assert.notEqual(await revisionId(options.repoPath, "@"), original);
 });
 
-test("failed initialization cannot skip a corrupt journal on re-entry", async () => {
+test("corrupt legacy journal is ignored on initialization and later reads", async () => {
   const options = await fixture();
-  await writeFile(journalPath(options), "{broken");
-  const service = new ReviewService(options);
-  await assert.rejects(service.getState(), SyntaxError);
-  await writeFile(journalPath(options), "{}");
+  const legacyPath = legacyJournalPath(options);
+  await writeFile(legacyPath, "{broken");
+  const entries = (await readdir(options.dataDir)).sort();
+  const service = new ReviewService({ repoPath: options.repoPath });
+  const initial = await service.getState();
+  assert.equal(initial.canUndo, false);
+  await service.preview({
+    version: initial.version,
+    target: initial.parent!.changeId,
+    selections: [selections(initial)[0]],
+  });
+  assert.equal((await service.getState()).operation, initial.operation);
+  const restarted = new ReviewService({ repoPath: options.repoPath });
+  assert.deepEqual(await restarted.getState(), initial);
+  assert.equal(await readFile(legacyPath, "utf8"), "{broken");
   await jj(options.repoPath, [
     "new",
     "-m",
-    "Workspace moved after init failure",
+    "Workspace moved after initialization",
   ]);
-  await assert.rejects(
-    service.getState(),
-    SyntaxError,
-    "only a new service may reinitialize after journal recovery",
-  );
+  // Creating another change can lengthen jj's distinguishing prefix, while
+  // the selected change and immutable commit identity remain pinned.
+  const { changeIdPrefix: _oldPrefix, ...initialIdentity } = initial.source;
+  const { changeIdPrefix: _newPrefix, ...currentIdentity } = (
+    await service.getState()
+  ).source;
+  assert.deepEqual(currentIdentity, initialIdentity);
   assert.equal(
-    (await new ReviewService(options).getState()).source.description,
-    "Workspace moved after init failure",
+    (await new ReviewService({ repoPath: options.repoPath }).getState()).source
+      .description,
+    "Workspace moved after initialization",
   );
+  assert.deepEqual((await readdir(options.dataDir)).sort(), entries);
 });
 
-test("initial conflicts do not clear identity or the durable recovery journal", async () => {
+test("initial conflicts do not clear pinned identity; legacy pending journals have no effect", async () => {
   const options = await fixture();
   const original = await revisionId(options.repoPath, "@");
   await jj(options.repoPath, ["new", "-m", "Left"]);
@@ -346,42 +397,43 @@ test("initial conflicts do not clear identity or the durable recovery journal", 
       kind: "squash",
     },
   };
-  await writeFile(journalPath(options), JSON.stringify(pending));
-  const service = new ReviewService(options);
+  await writeFile(legacyJournalPath(options), JSON.stringify(pending));
+  const service = new ReviewService({ repoPath: options.repoPath });
   await rejectsCode(service.getState(), "CONFLICTED_SOURCE");
   await jj(options.repoPath, ["edit", original]);
   await rejectsCode(service.getState(), "CONFLICTED_SOURCE");
   await jj(options.repoPath, ["abandon", conflictId]);
   await rejectsCode(service.getState(), "SOURCE_UNAVAILABLE");
   assert.deepEqual(
-    JSON.parse(await readFile(journalPath(options), "utf8")),
+    JSON.parse(await readFile(legacyJournalPath(options), "utf8")),
     pending,
   );
-  const restarted = new ReviewService(options);
+  const restarted = new ReviewService({ repoPath: options.repoPath });
   const state = await restarted.getState();
-  await rejectsCode(
-    restarted.squashLines({
-      version: state.version,
-      selections: selections(state),
-    }),
-    "RECOVERY_REQUIRED",
+  assert.equal(state.canUndo, false);
+  await restarted.preview({
+    version: state.version,
+    target: state.parent!.changeId,
+    selections: [selections(state)[0]],
+  });
+  assert.equal((await restarted.getState()).operation, state.operation);
+  assert.deepEqual(
+    JSON.parse(await readFile(legacyJournalPath(options), "utf8")),
+    pending,
   );
 });
 
-test("service construction requires both repository and journal directory", () => {
+test("service construction requires only an explicit repository, not a state directory", () => {
   assert.throws(
-    () => new ReviewService({ dataDir: "/tmp" } as ServiceOptions),
-    /explicit repoPath and dataDir/,
+    () => new ReviewService({} as ServiceOptions),
+    /explicit repoPath/,
   );
-  assert.throws(
-    () => new ReviewService({ repoPath: process.cwd() } as ServiceOptions),
-    /explicit repoPath and dataDir/,
-  );
+  assert.doesNotThrow(() => new ReviewService({ repoPath: process.cwd() }));
 });
 
 test("explicit selection switches to a mutable ancestor, invalidates previews and remains pinned through later rewrites", async () => {
   const options = await fixture();
-  const service = new ReviewService(options);
+  const service = new ReviewService({ repoPath: options.repoPath });
   const original = await service.getState();
   const preview = await service.preview({
     version: original.version,
@@ -435,7 +487,7 @@ test("explicit selection switches to a mutable ancestor, invalidates previews an
 
 test("invalid and immutable choices retain source and previews; source prefixes use identity rather than bookmarks", async () => {
   const options = await fixture();
-  const service = new ReviewService(options);
+  const service = new ReviewService({ repoPath: options.repoPath });
   const original = await service.getState();
   const preview = await service.preview({
     version: original.version,
@@ -475,14 +527,14 @@ test("invalid and immutable choices retain source and previews; source prefixes 
 
 test("selection is serialized, and undo stays scoped to its exact selected source and repository operation", async () => {
   const options = await fixture();
-  const service = new ReviewService(options);
+  const service = new ReviewService({ repoPath: options.repoPath });
   const initial = await service.getState();
   const result = await service.squashLines({
     version: initial.version,
     selections: [selections(initial)[0]],
   });
   assert.equal(result.state.canUndo, true);
-  const journal = await readFile(journalPath(options), "utf8");
+  const entries = (await readdir(options.dataDir)).sort();
   const other = (
     await service.selectRevision({
       version: result.state.version,
@@ -491,7 +543,7 @@ test("selection is serialized, and undo stays scoped to its exact selected sourc
   ).state;
   assert.equal(other.canUndo, false);
   await rejectsCode(service.undo(other.version), "UNDO_UNAVAILABLE");
-  assert.equal(await readFile(journalPath(options), "utf8"), journal);
+  assert.deepEqual((await readdir(options.dataDir)).sort(), entries);
   const responses = await Promise.allSettled([
     service.selectRevision({
       version: other.version,
@@ -518,18 +570,17 @@ test("selection is serialized, and undo stays scoped to its exact selected sourc
   );
 });
 
-test("pending recovery journal prevents explicit source switching", async () => {
+test("in-process pending recovery prevents source switching, but restart forgets it without rewriting history", async () => {
   const options = await fixture();
-  const original = await new ReviewService(options).getState();
-  const pending = {
-    pending: {
-      beforeOperation: original.operation,
-      sourceCommit: original.source.commitId,
-      kind: "squash",
-    },
-  };
-  await writeFile(journalPath(options), JSON.stringify(pending));
-  const service = new ReviewService(options);
+  const service = postWriteFailureService(options.repoPath);
+  const original = await service.getState();
+  await rejectsCode(
+    service.squashLines({
+      version: original.version,
+      selections: [selections(original)[0]],
+    }),
+    "PARTIAL_FAILURE",
+  );
   const state = await service.getState();
   await rejectsCode(
     service.selectRevision({
@@ -539,15 +590,23 @@ test("pending recovery journal prevents explicit source switching", async () => 
     "RECOVERY_REQUIRED",
   );
   assert.deepEqual(await service.getState(), state);
-  assert.deepEqual(
-    JSON.parse(await readFile(journalPath(options), "utf8")),
-    pending,
-  );
+  const restarted = new ReviewService({ repoPath: options.repoPath });
+  assert.deepEqual(await restarted.getState(), state);
+  assert.equal(state.canUndo, false);
+  const switched = await restarted.selectRevision({
+    version: state.version,
+    changeId: state.parent!.changeId,
+  });
+  assert.equal(switched.state.operation, state.operation);
+  assert.equal(switched.state.canUndo, false);
+  assert.deepEqual(await readdir(options.dataDir), [
+    path.basename(options.repoPath),
+  ]);
 });
 
 test("selecting a mutable merge exposes no destination and refuses squash", async () => {
   const options = await fixture();
-  const service = new ReviewService(options);
+  const service = new ReviewService({ repoPath: options.repoPath });
   const initial = await service.getState();
   await jj(options.repoPath, [
     "new",
@@ -589,7 +648,7 @@ test("selection becoming stale leaves the prior source active", async () => {
   const chosenCommit = await revisionId(options.repoPath, "@-", "commit_id");
   let moved = false;
   const service = new ReviewService({
-    ...options,
+    repoPath: options.repoPath,
     toolRunner: async (command, args, cwd) => {
       const result = await run(command, args, cwd);
       if (args[0] === "hunks" && args.includes(chosenCommit) && !moved) {
@@ -619,7 +678,7 @@ test("structured log preserves actual jj graph prefixes, metadata, connector row
     "-m",
     'Review <script> "quoted"\ttab\nsecond line',
   ]);
-  const service = new ReviewService(options);
+  const service = new ReviewService({ repoPath: options.repoPath });
   const initial = await service.getState();
   await jj(options.repoPath, [
     "new",
@@ -676,7 +735,7 @@ test("structured log preserves actual jj graph prefixes, metadata, connector row
 
 test("review graph ignores the default revset and includes selected revisions outside its filter", async () => {
   const options = await fixture();
-  const service = new ReviewService(options);
+  const service = new ReviewService({ repoPath: options.repoPath });
   const initial = await service.getState();
   await jj(options.repoPath, [
     "config",
@@ -718,7 +777,10 @@ test("review graph ignores the default revset and includes selected revisions ou
 test("divergent API choices cannot poison an unrelated selected source", async () => {
   const options = await fixture();
   const divergentId = await revisionId(options.repoPath, "@");
-  const service = new ReviewService({ ...options, revision: "@--" });
+  const service = new ReviewService({
+    repoPath: options.repoPath,
+    revision: "@--",
+  });
   const initial = await service.getState();
   await jj(options.repoPath, [
     "describe",
@@ -753,7 +815,10 @@ test("a mutable sibling can be selected and uses its own immediate parent", asyn
   );
   const siblingId = await revisionId(options.repoPath, "@");
   const siblingParent = await revisionId(options.repoPath, "@-");
-  const service = new ReviewService({ ...options, revision: originalId });
+  const service = new ReviewService({
+    repoPath: options.repoPath,
+    revision: originalId,
+  });
   const original = await service.getState();
   assert.notEqual(original.parent!.changeId, siblingParent);
   assert.ok(!original.targets.some((target) => target.changeId === siblingId));
@@ -801,7 +866,7 @@ test("state and graph batch revision author and jj's distinguishing change prefi
   );
   let toolCalls = 0;
   const service = new ReviewService({
-    ...options,
+    repoPath: options.repoPath,
     toolRunner: (command, args, cwd) => {
       toolCalls++;
       return run(command, args, cwd);
@@ -830,7 +895,7 @@ test("state and graph batch revision author and jj's distinguishing change prefi
     "revision metadata uses existing jj queries, never the hunk tool",
   );
   assert.deepEqual(
-    (await new ReviewService(options).getState()).source,
+    (await new ReviewService({ repoPath: options.repoPath }).getState()).source,
     state.source,
   );
 });
@@ -839,7 +904,7 @@ test("leaving an empty working copy can abandon the pinned source while the new 
   const options = await fixture();
   const healthyId = await revisionId(options.repoPath, "@");
   await jj(options.repoPath, ["new"]);
-  const service = new ReviewService(options);
+  const service = new ReviewService({ repoPath: options.repoPath });
   const initial = await service.getState();
   assert.deepEqual(initial.files, []);
   await jj(options.repoPath, ["edit", healthyId]);
@@ -897,7 +962,7 @@ test("leaving an empty working copy can abandon the pinned source while the new 
 
 test("divergent source diagnostics distinguish multiple revisions and the graph enables explicit recovery without resolving divergence", async () => {
   const options = await fixture();
-  const service = new ReviewService(options);
+  const service = new ReviewService({ repoPath: options.repoPath });
   const initial = await service.getState();
   const preview = await service.preview({
     version: initial.version,
@@ -962,19 +1027,17 @@ test("divergent source diagnostics distinguish multiple revisions and the graph 
   );
 });
 
-test("graph access with an unavailable source does not bypass a pending journal", async () => {
+test("graph access with an unavailable source does not bypass in-process pending recovery", async () => {
   const options = await fixture();
-  const initial = await new ReviewService(options).getState();
-  const pending = {
-    pending: {
-      beforeOperation: initial.operation,
-      sourceCommit: initial.source.commitId,
-      kind: "squash",
-    },
-  };
-  await writeFile(journalPath(options), JSON.stringify(pending));
-  const service = new ReviewService(options);
-  await service.getState();
+  const service = postWriteFailureService(options.repoPath);
+  const initial = await service.getState();
+  await rejectsCode(
+    service.squashLines({
+      version: initial.version,
+      selections: [selections(initial)[0]],
+    }),
+    "PARTIAL_FAILURE",
+  );
   await jj(options.repoPath, ["abandon", initial.source.changeId]);
   const graph = await service.getLog({ includeOutput: false });
   await rejectsCode(
@@ -992,17 +1055,33 @@ test("graph access with an unavailable source does not bypass a pending journal"
     "RECOVERY_REQUIRED",
   );
   await rejectsCode(service.getState(), "SOURCE_UNAVAILABLE");
-  assert.deepEqual(
-    JSON.parse(await readFile(journalPath(options), "utf8")),
-    pending,
-  );
+  const beforeRestart = (
+    await jj(options.repoPath, [
+      "op",
+      "log",
+      "--no-graph",
+      "--limit",
+      "1",
+      "-T",
+      "self.id()",
+    ])
+  ).stdout.trim();
+  const restarted = new ReviewService({ repoPath: options.repoPath });
+  const current = await restarted.getState();
+  assert.equal(current.canUndo, false);
+  assert.equal(current.operation, beforeRestart);
+  await restarted.getLog({ includeOutput: false });
+  assert.equal((await restarted.getState()).operation, beforeRestart);
+  assert.deepEqual(await readdir(options.dataDir), [
+    path.basename(options.repoPath),
+  ]);
 });
 
 test("unavailable-source recovery revalidates history before publishing a candidate", async () => {
   const options = await fixture();
   let changeDuringSelection = false;
   const service = new ReviewService({
-    ...options,
+    repoPath: options.repoPath,
     toolRunner: async (command, args, cwd) => {
       const result = await run(command, args, cwd);
       if (changeDuringSelection && args[0] === "hunks") {
@@ -1048,7 +1127,7 @@ test("clean source above resolved ancestor conflicts and an empty parent is avai
   await writeFile(path.join(options.repoPath, "conflict.txt"), "right\n");
   await jj(options.repoPath, ["new", left, "@", "-m", "Conflicted merge"]);
   const conflictId = await revisionId(options.repoPath, "@");
-  const service = new ReviewService(options);
+  const service = new ReviewService({ repoPath: options.repoPath });
   await rejectsCode(service.getState(), "CONFLICTED_SOURCE");
   await jj(options.repoPath, ["new", "-m", "Resolved descendant"]);
   await writeFile(path.join(options.repoPath, "conflict.txt"), "resolved\n");
@@ -1085,7 +1164,7 @@ test("unavailable-source graph includes a healthy working copy outside mine() fo
   const options = await fixture();
   const healthy = await revisionId(options.repoPath, "@");
   await jj(options.repoPath, ["new"]);
-  const service = new ReviewService(options);
+  const service = new ReviewService({ repoPath: options.repoPath });
   const initial = await service.getState();
   await jj(options.repoPath, ["edit", healthy]);
   await jj(options.repoPath, [

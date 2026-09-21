@@ -75,14 +75,9 @@ This is a **single-user local tool**, not a network service. Host and Origin che
 - If a queued job fails, unsent jobs are canceled and the actual repository is reloaded. Completed jobs are not rolled back. Failed mutations are never automatically retried.
 - Do not close the browser with queued work. An accepted request can finish after a disconnection, but unsent browser-local jobs are lost.
 
-Recovery journals are stored outside the workspace and package:
+The backend stores **no application state on disk**. Selected revision, preview tokens, undo information and recovery guards exist only in the running process. Existing `operations-*.json` files from older versions are ignored and are not deleted automatically. Browser appearance preferences remain in `localStorage`.
 
-```text
-$XDG_STATE_HOME/jj-stamp/operations-<repository-hash>.json
-# Default: ~/.local/state/jj-stamp/
-```
-
-An ambiguous history operation leaves a persistent guard that blocks further mutations and revision switching. Inspect `jj op log` and the journal; reconcile history manually before archiving the pending journal and restarting. Do not blindly retry a squash. See [backend notes](server/README.md).
+An ambiguous history operation blocks further mutations and revision switching in that process. Inspect `jj op log` and the current diff before restarting; restarting clears only app bookkeeping, never rolls back history or retries a squash. Undo is available only for operations performed by the current process. Do not blindly repeat a selection after an uncertain result. See [backend notes](server/README.md).
 
 ## Development
 
@@ -113,7 +108,7 @@ npm run test:cli
 nix flake check
 ```
 
-Tests use isolated real jj repositories. They cover exact line squashes, optimistic FIFO/recovery, revision selection and rewrite tracking, immutable/merge guards, stale requests, persisted undo, tree and graph interactions, full-path titles, local HTTP protections, browser launching, and graceful terminal-signal shutdown. Nix checks also exercise installed CLI preview, squash, and undo with an empty ambient `PATH`, verify a standalone installed hunk-tool squash under the same restriction, and run the upstream hunk-tool tests.
+Tests use isolated real jj repositories. They cover exact line squashes, optimistic FIFO/recovery, revision selection and rewrite tracking, immutable/merge guards, stale requests, process-local undo and recovery guards, tree and graph interactions, full-path titles, local HTTP protections, browser launching, and graceful terminal-signal shutdown. Nix checks also exercise installed CLI preview, squash, and undo with an empty ambient `PATH`, verify a standalone installed hunk-tool squash under the same restriction, and run the upstream hunk-tool tests.
 
 `@pierre/trees` is pinned to a beta release; review its API when upgrading.
 
@@ -121,7 +116,7 @@ Tests use isolated real jj repositories. They cover exact line squashes, optimis
 
 - `cli.ts` — arguments, local startup, browser launch, shutdown
 - `server/http.ts`, `server/api.ts` — loopback HTTP boundary and versioned API
-- `server/service.ts`, `server/diff.ts` — revision tracking, exact patches, mutation safety and journals
+- `server/service.ts`, `server/diff.ts` — revision tracking, exact patches and process-local mutation safety
 - `src/main.tsx` — review shell, selectable graph, counts and shortcuts
 - `src/ChangedFilesTree.tsx`, `src/CodeDiff.tsx` — Pierre rendering and selection
 - `src/optimistic.ts`, `src/squash-queue.ts` — speculative UI and sequential dispatch

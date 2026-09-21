@@ -14,12 +14,12 @@ import { createDemo } from "./fixtures.ts";
 // A real browser and real jj; only isolated, disposable fixture repositories.
 const dataDir = await mkdtemp(path.join(tmpdir(), "fold-browser-"));
 const repoPath = await createDemo(dataDir);
-let service = new ReviewService({ dataDir, repoPath });
+let service = new ReviewService({ repoPath });
 let apiRouter = createApi(service);
 async function reviewWorkingCopy() {
   // Simulate restarting the CLI for a new change between fixture scenarios.
   await service.drain();
-  service = new ReviewService({ dataDir, repoPath });
+  service = new ReviewService({ repoPath });
   apiRouter = createApi(service);
 }
 const initial = await service.getState();

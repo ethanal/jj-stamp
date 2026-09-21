@@ -25,7 +25,6 @@ async function fixture(t: TestContext, runner?: typeof run) {
   const root = await createDemo(dataDir);
   const calls: Call[] = [];
   const service = new ReviewService({
-    dataDir,
     repoPath: root,
     editorRunner: async (command, args, cwd) => {
       calls.push({ command, args, cwd });
@@ -186,13 +185,12 @@ test("editor does not snapshot unsaved workspace edits and keeps a non-working-c
 });
 
 test("editor revalidates repository metadata immediately before dispatch", async (t) => {
-  const { root, dataDir } = await fixture(t);
+  const { root } = await fixture(t);
   let race = false;
   let metadataReads = 0;
   let editorCalls = 0;
   const service = new ReviewService({
     repoPath: root,
-    dataDir,
     jjRunner: async (cwd, args) => {
       if (race && args[0] === "log" && ++metadataReads === 3)
         await jj(root, ["describe", "-m", "intervening rewrite"]);
@@ -217,12 +215,11 @@ test("editor revalidates repository metadata immediately before dispatch", async
 });
 
 test("cold editor validation never snapshots jj or invokes the hunk tool", async (t) => {
-  const { root, dataDir, input, state } = await fixture(t);
+  const { root, input, state } = await fixture(t);
   await writeFile(path.join(root, input.path), "unsnapshotted contents\n");
   const commands: string[][] = [];
   const service = new ReviewService({
     repoPath: root,
-    dataDir,
     jjRunner: async (cwd, args) => {
       commands.push(args);
       return jj(cwd, args);

@@ -1,6 +1,12 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, writeFile, appendFile } from "node:fs/promises";
+import {
+  mkdtemp,
+  readFile,
+  readdir,
+  writeFile,
+  appendFile,
+} from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import express from "express";
@@ -15,7 +21,7 @@ import { createDemo } from "./fixtures.ts";
 async function fixture() {
   const dataDir = await mkdtemp(path.join(os.tmpdir(), "fold-backend-"));
   const root = await createDemo(dataDir);
-  const service = new ReviewService({ dataDir, repoPath: root });
+  const service = new ReviewService({ repoPath: root });
   const state = await service.getState();
   return { service, state, dataDir, root: state.repo.path };
 }
@@ -36,7 +42,7 @@ const fileAt = async (root: string, revision: string, file: string) =>
   (await jj(root, ["file", "show", "-r", revision, file])).stdout;
 
 test("explicit fixture uses real jj repository with three files, six hunks, and two mutable targets", async () => {
-  const { service, state, dataDir, root } = await fixture();
+  const { service, state, root } = await fixture();
   assert.equal(state.repo.name, path.basename(state.repo.path));
   assert.equal("demo" in state.repo, false);
   assert.equal(state.source.description, "Polish notification delivery");
@@ -57,13 +63,13 @@ test("explicit fixture uses real jj repository with three files, six hunks, and 
   assert.equal(state.canUndo, false);
   assert.deepEqual(await service.getState(), state);
   assert.deepEqual(
-    await new ReviewService({ dataDir, repoPath: root }).getState(),
+    await new ReviewService({ repoPath: root }).getState(),
     state,
   );
 });
 
-test("full hunk squash rewrites pinned parent, retains other changes, and exact undo survives restart", async () => {
-  const { service, state, root, dataDir } = await fixture();
+test("full hunk squash rewrites pinned parent, retains other changes, and exact undo is process-local", async () => {
+  const { service, state, root } = await fixture();
   const hunk = state.files[0].hunks[0];
   const worktree = await readFile(path.join(root, state.files[0].path), "utf8");
   const preview = await service.preview(
@@ -104,9 +110,14 @@ test("full hunk squash rewrites pinned parent, retains other changes, and exact 
     worktree,
   );
   await rejectsCode(service.squash(preview.token), "STALE_PREVIEW");
-  const restarted = new ReviewService({ dataDir, repoPath: root });
-  assert.equal((await restarted.getState()).canUndo, true);
-  const undone = await restarted.undo(result.state.version);
+  const restarted = new ReviewService({ repoPath: root });
+  const reopened = await restarted.getState();
+  assert.equal(reopened.canUndo, false);
+  assert.equal(reopened.operation, result.state.operation);
+  assert.deepEqual(reopened.files, result.state.files);
+  await rejectsCode(restarted.undo(reopened.version), "UNDO_UNAVAILABLE");
+  assert.equal((await restarted.getState()).operation, result.state.operation);
+  const undone = await service.undo(result.state.version);
   assert.equal(undone.state.canUndo, false);
   assert.equal(undone.state.source.commitId, state.source.commitId);
   assert.deepEqual(undone.state.files, state.files);
@@ -123,7 +134,7 @@ test("full hunk squash rewrites pinned parent, retains other changes, and exact 
     ])
   ).stdout;
   assert.match(op, /revert operation/);
-  await rejectsCode(restarted.undo(undone.state.version), "UNDO_UNAVAILABLE");
+  await rejectsCode(service.undo(undone.state.version), "UNDO_UNAVAILABLE");
 });
 
 test("partial selection moves exactly one added row, not its neighboring addition", async () => {
@@ -327,29 +338,72 @@ test("preview verifier rejects changed path, widened changes and shifted hunk po
   assert.throws(() => assertExactPreview(exact.replace("-1,2", "-2,2"), picks));
 });
 
-test("persistent pending mutation blocks later squashes rather than blindly retrying", async () => {
+test("legacy pending journal is ignored and never rewritten or supplemented", async () => {
   const { state, dataDir, root } = await fixture();
   const { createHash } = await import("node:crypto");
   const name = `operations-${createHash("sha256").update(state.repo.path).digest("hex").slice(0, 20)}.json`;
-  await writeFile(
-    path.join(dataDir, name),
-    JSON.stringify({
-      pending: {
-        beforeOperation: state.operation,
-        sourceCommit: state.source.commitId,
-        kind: "squash",
-      },
-    }),
-  );
-  const restarted = new ReviewService({ dataDir, repoPath: root });
+  const legacy = JSON.stringify({
+    pending: {
+      beforeOperation: state.operation,
+      sourceCommit: state.source.commitId,
+      kind: "squash",
+    },
+  });
+  await writeFile(path.join(dataDir, name), legacy);
+  const entries = (await readdir(dataDir)).sort();
+  const restarted = new ReviewService({ repoPath: root });
   const current = await restarted.getState();
-  assert.equal(current.canUndo, false);
+  assert.deepEqual(current, state);
   const hunk = current.files[0].hunks[0];
-  await rejectsCode(
-    restarted.preview(input(current, [{ id: hunk.id, lines: changes(hunk) }])),
-    "RECOVERY_REQUIRED",
+  const preview = await restarted.preview(
+    input(current, [{ id: hunk.id, lines: changes(hunk) }]),
   );
   assert.equal((await restarted.getState()).operation, current.operation);
+  const result = await restarted.squash(preview.token);
+  assert.equal(result.state.canUndo, true);
+  await restarted.undo(result.state.version);
+  assert.equal(await readFile(path.join(dataDir, name), "utf8"), legacy);
+  assert.deepEqual((await readdir(dataDir)).sort(), entries);
+});
+
+test("review, preview, squash, undo and restart create no application state files", async () => {
+  const dataDir = await mkdtemp(path.join(os.tmpdir(), "fold-no-state-"));
+  const root = await createDemo(dataDir);
+  // Native jj metadata changes are expected; application files anywhere outside
+  // that metadata, and new top-level metadata directories, are not.
+  const files = async () =>
+    (await readdir(dataDir, { recursive: true }))
+      .filter((entry) => !entry.split(path.sep).includes(".jj"))
+      .sort();
+  const before = await files();
+  const metadata = (await readdir(path.join(root, ".jj"))).sort();
+  const assertNoState = async () => {
+    assert.deepEqual(await files(), before);
+    assert.deepEqual((await readdir(path.join(root, ".jj"))).sort(), metadata);
+  };
+  const service = new ReviewService({ repoPath: root });
+  const state = await service.getState();
+  await service.getLog();
+  await service.getFile({ version: state.version, path: state.files[0].path });
+  await assertNoState();
+  const hunk = state.files[0].hunks[0];
+  const preview = await service.preview(
+    input(state, [{ id: hunk.id, lines: changes(hunk) }]),
+  );
+  await assertNoState();
+  const squashed = await service.squash(preview.token);
+  assert.equal(squashed.state.canUndo, true);
+  await assertNoState();
+  const restarted = new ReviewService({ repoPath: root });
+  const reopened = await restarted.getState();
+  assert.equal(reopened.canUndo, false);
+  assert.equal(reopened.operation, squashed.state.operation);
+  await rejectsCode(restarted.squash(preview.token), "STALE_PREVIEW");
+  await rejectsCode(restarted.undo(reopened.version), "UNDO_UNAVAILABLE");
+  await assertNoState();
+  const undone = await service.undo(squashed.state.version);
+  assert.deepEqual(undone.state.files, state.files);
+  await assertNoState();
 });
 
 test("Express API JSON contracts and malformed body validation", async (t) => {
@@ -406,11 +460,10 @@ test("Express API JSON contracts and malformed body validation", async (t) => {
   assert.equal((await service.getState()).repo.path, state.repo.path);
 });
 
-test("nonzero tool exit after real squash leaves durable recovery guard and cannot replay", async () => {
+test("nonzero tool exit after real squash blocks this service, while restart only forgets recovery state", async () => {
   const { dataDir, state, root } = await fixture();
   let squashCalls = 0;
   const service = new ReviewService({
-    dataDir,
     repoPath: root,
     toolRunner: async (command, args, cwd) => {
       const result = await run(command, args, cwd);
@@ -437,26 +490,33 @@ test("nonzero tool exit after real squash leaves durable recovery guard and cann
   assert.equal(squashCalls, 1);
   await rejectsCode(service.squash(preview.token), "STALE_PREVIEW");
   assert.equal(squashCalls, 1);
-  const restarted = new ReviewService({ dataDir, repoPath: root });
-  const after = await restarted.getState();
+  const after = await service.getState();
   assert.notEqual(after.operation, state.operation);
   assert.equal(after.canUndo, false);
   assert.equal(after.files.flatMap((f) => f.hunks).length, 5);
   const nextHunk = after.files[0].hunks[0];
   await rejectsCode(
-    restarted.preview(
+    service.preview(
       input(after, [{ id: nextHunk.id, lines: changes(nextHunk) }]),
     ),
     "RECOVERY_REQUIRED",
   );
+  assert.equal((await service.getState()).operation, after.operation);
+  const restarted = new ReviewService({ repoPath: root });
+  assert.deepEqual(await restarted.getState(), after);
+  await restarted.preview(
+    input(after, [{ id: nextHunk.id, lines: changes(nextHunk) }]),
+  );
+  await rejectsCode(restarted.undo(after.version), "UNDO_UNAVAILABLE");
   assert.equal((await restarted.getState()).operation, after.operation);
+  assert.equal(squashCalls, 1);
+  assert.deepEqual(await readdir(dataDir), [path.basename(root)]);
 });
 
 test("tool failure without mutation consumes token but allows a newly reviewed plan", async () => {
-  const { dataDir, state, root } = await fixture();
+  const { state, root } = await fixture();
   let fail = true;
   const service = new ReviewService({
-    dataDir,
     repoPath: root,
     toolRunner: async (command, args, cwd) => {
       if (args[0] === "squash" && fail) {
@@ -482,9 +542,8 @@ test("tool failure without mutation consumes token but allows a newly reviewed p
 });
 
 test("an intervening external operation during real squash disables attribution and undo", async () => {
-  const { dataDir, state, root } = await fixture();
+  const { state, root } = await fixture();
   const service = new ReviewService({
-    dataDir,
     repoPath: root,
     toolRunner: async (command, args, cwd) => {
       if (args[0] === "squash")
@@ -498,13 +557,13 @@ test("an intervening external operation during real squash disables attribution 
   );
   await rejectsCode(service.squash(preview.token), "HISTORY_CHANGED");
   await rejectsCode(service.squash(preview.token), "STALE_PREVIEW");
-  const after = await new ReviewService({ dataDir, repoPath: root }).getState();
+  const after = await new ReviewService({ repoPath: root }).getState();
   assert.equal(after.canUndo, false);
   assert.notEqual(after.operation, state.operation);
 });
 
 test("unrelated conflicts allow review, squash, and undo; immutable ancestors are never targets", async () => {
-  const { service, state, root, dataDir } = await fixture();
+  const { service, state, root } = await fixture();
   await jj(root, [
     "config",
     "set",
@@ -543,7 +602,7 @@ test("unrelated conflicts allow review, squash, and undo; immutable ancestors ar
     await jj(root, ["log", "-r", "@", "--no-graph", "-T", "change_id"])
   ).stdout.trim();
   await rejectsCode(
-    new ReviewService({ dataDir, repoPath: root }).getState(),
+    new ReviewService({ repoPath: root }).getState(),
     "CONFLICTED_SOURCE",
   );
   const clean = await service.getState();
@@ -621,7 +680,7 @@ test("new descendant conflicts still warn and allow exact undo", async () => {
 });
 
 test("a clean source with a conflicted parent is reviewable but cannot squash into it", async () => {
-  const { root, dataDir, state } = await fixture();
+  const { root, state } = await fixture();
   await jj(root, ["new", state.source.commitId, "-m", "Left"]);
   await writeFile(path.join(root, "conflict.txt"), "left\n");
   const left = (
@@ -635,7 +694,7 @@ test("a clean source with a conflicted parent is reviewable but cannot squash in
   ).stdout.trim();
   await jj(root, ["new", "-m", "Resolved child"]);
   await writeFile(path.join(root, "conflict.txt"), "resolved\n");
-  const service = new ReviewService({ dataDir, repoPath: root });
+  const service = new ReviewService({ repoPath: root });
   const clean = await service.getState();
   assert.equal(clean.parent, null);
   assert.match(clean.squashUnavailable!, /parent contains conflicts/);
@@ -758,7 +817,7 @@ test("immutable immediate parent never falls back to an older candidate", async 
 });
 
 test("merge parents are unavailable rather than selecting any ancestor; file context fails closed", async () => {
-  const { state, root, dataDir } = await fixture();
+  const { state, root } = await fixture();
   await jj(root, ["new", state.source.commitId, "-m", "left"]);
   await writeFile(path.join(root, "left.txt"), "left\n");
   const left = (
@@ -768,7 +827,7 @@ test("merge parents are unavailable rather than selecting any ancestor; file con
   await writeFile(path.join(root, "right.txt"), "right\n");
   await jj(root, ["new", left, "@", "-m", "merge"]);
   await writeFile(path.join(root, "merge.txt"), "merge\n");
-  const service = new ReviewService({ dataDir, repoPath: root });
+  const service = new ReviewService({ repoPath: root });
   const merged = await service.getState();
   assert.equal(merged.parent, null);
   assert.match(merged.squashUnavailable!, /exactly one immediate parent/);
@@ -879,10 +938,9 @@ test("context new/deleted files have null opposite sides and unsupported files a
 });
 
 test("file reads reject working-copy races and graph reads reject recorded-history races", async () => {
-  const { dataDir, state, root } = await fixture();
+  const { state, root } = await fixture();
   for (const action of ["file", "log"] as const) {
     const service = new ReviewService({
-      dataDir,
       repoPath: root,
       jjRunner: async (cwd, args) => {
         const result = await jj(cwd, args);
@@ -918,10 +976,9 @@ test("file reads reject working-copy races and graph reads reject recorded-histo
 });
 
 test("immediate squash retains preview verification and revalidates before mutation", async () => {
-  const { dataDir, state, root } = await fixture();
+  const { state, root } = await fixture();
   let squashCalls = 0;
   const service = new ReviewService({
-    dataDir,
     repoPath: root,
     toolRunner: async (command, args, cwd) => {
       const result = await run(command, args, cwd);
@@ -1051,10 +1108,9 @@ test("file context remains available when the exact parent is immutable", async 
 });
 
 test("immediate squash refuses unsafe internal previews without executing the tool", async () => {
-  const { dataDir, state, root } = await fixture();
+  const { state, root } = await fixture();
   let squashCalls = 0;
   const service = new ReviewService({
-    dataDir,
     repoPath: root,
     toolRunner: async (command, args, cwd) => {
       if (args[0] === "squash") squashCalls++;
@@ -1082,11 +1138,10 @@ test("immediate squash refuses unsafe internal previews without executing the to
   assert.equal((await service.getState()).operation, state.operation);
 });
 
-test("immediate squash preserves durable recovery guard after a post-write tool failure", async () => {
+test("immediate squash preserves in-process recovery guard after a post-write tool failure", async () => {
   const { dataDir, state, root } = await fixture();
   let squashCalls = 0;
   const service = new ReviewService({
-    dataDir,
     repoPath: root,
     toolRunner: async (command, args, cwd) => {
       const result = await run(command, args, cwd);
@@ -1111,23 +1166,30 @@ test("immediate squash preserves durable recovery guard after a post-write tool 
     service.squashLines({ version: state.version, selections }),
     "PARTIAL_FAILURE",
   );
-  const restarted = new ReviewService({ dataDir, repoPath: root });
-  const current = await restarted.getState();
+  const current = await service.getState();
   assert.equal(current.canUndo, false);
   await rejectsCode(
-    restarted.squashLines({ version: current.version, selections }),
+    service.squashLines({ version: current.version, selections }),
     "RECOVERY_REQUIRED",
   );
   assert.equal(squashCalls, 1);
+  const restarted = new ReviewService({ repoPath: root });
+  assert.deepEqual(await restarted.getState(), current);
+  const nextHunk = current.files[0].hunks[0];
+  await restarted.preview(
+    input(current, [{ id: nextHunk.id, lines: changes(nextHunk) }]),
+  );
+  await rejectsCode(restarted.undo(current.version), "UNDO_UNAVAILABLE");
+  assert.equal((await restarted.getState()).operation, current.operation);
+  assert.deepEqual(await readdir(dataDir), [path.basename(root)]);
 });
 
 test("immutable diff cache serves state, log and context without repeating listings or sharing mutable objects", async () => {
-  const { dataDir, root } = await fixture();
+  const { root } = await fixture();
   let listings = 0,
     diffs = 0,
     patches = 0;
   const service = new ReviewService({
-    dataDir,
     repoPath: root,
     toolRunner: async (command, args, cwd) => {
       if (args[0] === "hunks") listings++;
@@ -1186,10 +1248,9 @@ test("immutable diff cache serves state, log and context without repeating listi
 });
 
 test("cached source never hides external operation-only changes or unsnapshotted workspace edits", async () => {
-  const { dataDir, root } = await fixture();
+  const { root } = await fixture();
   let listings = 0;
   const service = new ReviewService({
-    dataDir,
     repoPath: root,
     toolRunner: async (command, args, cwd) => {
       if (args[0] === "hunks") listings++;
@@ -1243,15 +1304,14 @@ test("cached source never hides external operation-only changes or unsnapshotted
   assert.match(edited.files[0].patch, /external unsnapshotted edit/);
   assert.deepEqual(
     edited,
-    await new ReviewService({ dataDir, repoPath: root }).getState(),
+    await new ReviewService({ repoPath: root }).getState(),
   );
 });
 
 test("cached source rechecks configuration-only immutability without an operation change", async () => {
-  const { dataDir, root } = await fixture();
+  const { root } = await fixture();
   let listings = 0;
   const service = new ReviewService({
-    dataDir,
     repoPath: root,
     toolRunner: async (command, args, cwd) => {
       if (args[0] === "hunks") listings++;
@@ -1298,10 +1358,9 @@ test("cached source rechecks configuration-only immutability without an operatio
 });
 
 test("transient hunk listing failures are not retained in the immutable diff cache", async () => {
-  const { dataDir, root } = await fixture();
+  const { root } = await fixture();
   let listings = 0;
   const service = new ReviewService({
-    dataDir,
     repoPath: root,
     toolRunner: async (command, args, cwd) => {
       if (args[0] === "hunks" && ++listings === 1)
@@ -1324,12 +1383,11 @@ test("transient hunk listing failures are not retained in the immutable diff cac
 });
 
 test("direct squash checks one exact preview and lists only the new committed source", async () => {
-  const { dataDir, root } = await fixture();
+  const { root } = await fixture();
   let listings = 0,
     patches = 0,
     squashes = 0;
   const service = new ReviewService({
-    dataDir,
     repoPath: root,
     toolRunner: async (command, args, cwd) => {
       if (args[0] === "hunks") listings++;
@@ -1438,14 +1496,13 @@ test("revision API validates strict versioned identity input and returns the exp
 });
 
 test("missing patch runtime dependency is actionable over HTTP and never retried by reads or restart", async (t) => {
-  const { dataDir, root, state } = await fixture();
+  const { root, state } = await fixture();
   // Exact stderr reproduced with the pinned binary and a PATH containing only
   // jj and jj-hunk-tool: previews work, but _jj-tool cannot launch GNU patch.
   const stderr =
     "Error: failed to run patch\n\nCaused by:\n    No such file or directory (os error 2)\nError: Failed to edit diff\nCaused by: Tool exited with exit status: 1 (run with --debug to see the exact invocation)\nError: jj command failed\n";
   let squashCalls = 0;
   const service = new ReviewService({
-    dataDir,
     repoPath: root,
     toolRunner: async (command, args, cwd) => {
       if (args[0] === "squash") {
@@ -1490,7 +1547,7 @@ test("missing patch runtime dependency is actionable over HTTP and never retried
   assert.deepEqual(await service.getState(), state);
   assert.deepEqual(await (await fetch(`${base}/state`)).json(), state);
   assert.deepEqual(
-    await new ReviewService({ dataDir, repoPath: root }).getState(),
+    await new ReviewService({ repoPath: root }).getState(),
     state,
   );
   assert.equal(
@@ -1501,12 +1558,11 @@ test("missing patch runtime dependency is actionable over HTTP and never retried
 });
 
 test("squash preview process failures expose stdout and stderr without attempting a mutation", async (t) => {
-  const { dataDir, root, state } = await fixture();
+  const { root, state } = await fixture();
   const stdout = "Previewing chosen rows\n";
   const stderr = "Error: selected hunk could not be read\n";
   let squashCalls = 0;
   const service = new ReviewService({
-    dataDir,
     repoPath: root,
     toolRunner: async (command, args, cwd) => {
       if (args[0] === "patch")

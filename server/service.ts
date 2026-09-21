@@ -1,12 +1,5 @@
 import { createHash, randomBytes } from "node:crypto";
-import {
-  lstat,
-  mkdir,
-  readFile,
-  realpath,
-  rename,
-  writeFile,
-} from "node:fs/promises";
+import { lstat, realpath } from "node:fs/promises";
 import path from "node:path";
 import {
   parseFile,
@@ -136,12 +129,16 @@ interface Undo {
   afterVersion: string;
   sourceCommit: string;
   targetCommit: string;
+  targetChangeId: string;
 }
-interface Journal {
+interface SessionHistory {
   undo?: Undo;
   pending?: {
     beforeOperation: string;
     sourceCommit: string;
+    sourceChangeId: string;
+    targetCommit: string;
+    targetChangeId: string;
     kind: "squash" | "undo";
   };
 }
@@ -152,7 +149,6 @@ interface Operation {
   attributes: string;
 }
 export interface ServiceOptions {
-  dataDir: string;
   repoPath: string;
   revision?: string;
   editorRunner?: typeof run;
@@ -166,19 +162,6 @@ export const reviewLogRevset =
 const revisionTemplate =
   'json(change_id) ++ "\\t" ++ json(commit_id) ++ "\\t" ++ json(description.first_line()) ++ "\\t" ++ json(author.name()) ++ "\\t" ++ json(change_id.shortest(8).prefix()) ++ "\\n"';
 
-async function readJSON<T>(file: string): Promise<T | undefined> {
-  try {
-    return JSON.parse(await readFile(file, "utf8")) as T;
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
-    throw error;
-  }
-}
-async function atomicJSON(file: string, value: unknown): Promise<void> {
-  const temp = `${file}.${randomBytes(8).toString("hex")}.tmp`;
-  await writeFile(temp, JSON.stringify(value, null, 2) + "\n", { mode: 0o600 });
-  await rename(temp, file);
-}
 function same(actual: unknown, expected: unknown) {
   return JSON.stringify(actual) === JSON.stringify(expected);
 }
@@ -194,13 +177,12 @@ function stale(): never {
 export class ReviewService {
   private queue: Promise<unknown> = Promise.resolve();
   private active?: Active;
-  private journal: Journal = {};
+  private history: SessionHistory = {};
   private plans = new Map<string, Plan>();
   // Commit IDs pin both the tree and its parent(s). Never cache mutable revsets,
   // workspace snapshots, operation heads, conflicts, or configuration decisions.
   private fileCache = new Map<string, ReviewFile[]>();
   private jjRunner: typeof jj;
-  readonly dataDir: string;
   private readonly repoPath: string;
   private readonly requestedRevision: string;
   private sourceChangeId?: string;
@@ -208,12 +190,11 @@ export class ReviewService {
   private editorRunner: typeof run;
   private toolRunner: typeof run;
   constructor(options: ServiceOptions) {
-    if (!options?.repoPath || !options?.dataDir)
-      throw new Error("ReviewService requires explicit repoPath and dataDir.");
+    if (!options?.repoPath)
+      throw new Error("ReviewService requires explicit repoPath.");
     this.editorRunner = options.editorRunner ?? run;
     this.toolRunner = options.toolRunner ?? run;
     this.jjRunner = options.jjRunner ?? jj;
-    this.dataDir = path.resolve(options.dataDir);
     this.repoPath = path.resolve(options.repoPath);
     this.requestedRevision = options.revision ?? "@";
   }
@@ -226,18 +207,9 @@ export class ReviewService {
     if (!this.active) throw new Error("Repository not initialized");
     return this.active.path;
   }
-  private get journalPath() {
-    return path.join(
-      this.dataDir,
-      `operations-${hash(this.root).slice(0, 20)}.json`,
-    );
-  }
-  private saveJournal() {
-    return atomicJSON(this.journalPath, this.journal);
-  }
   private init(snapshot = true): Promise<void> {
     // Memoize even failures: retrying initialization must never reinterpret @ or
-    // a moving bookmark after an error (including a corrupt recovery journal).
+    // a moving bookmark after an error.
     return (this.initialization ??= this.initialize(snapshot));
   }
   private async initialize(snapshot: boolean): Promise<void> {
@@ -277,13 +249,6 @@ export class ReviewService {
     // Visibility and divergence were checked in the same jj query that resolved
     // the initial expression. Subsequent reads follow only this change identity
     // and revalidate it live; never re-evaluate a moving @ or bookmark.
-    await mkdir(this.dataDir, { recursive: true });
-    const journal =
-      (await readJSON<Journal>(
-        path.join(this.dataDir, `operations-${hash(root).slice(0, 20)}.json`),
-      )) ?? {};
-    // Publish initialized state only after the durable recovery guard was read.
-    this.journal = journal;
     this.sourceChangeId = source.changeId;
     this.active = { path: root };
   }
@@ -653,9 +618,9 @@ export class ReviewService {
       version,
       operation,
       canUndo:
-        !this.journal.pending &&
-        this.journal.undo?.operation === operation &&
-        this.journal.undo.afterVersion === version,
+        !this.history.pending &&
+        this.history.undo?.operation === operation &&
+        this.history.undo.afterVersion === version,
     };
   }
   private async validateViews(
@@ -734,7 +699,7 @@ export class ReviewService {
       const state = this.state(candidate, operation.id, files);
       this.sourceChangeId = state.source.changeId;
       this.plans.clear();
-      // Keep the repository-scoped journal. canUndo is only true when its exact
+      // Keep the process-local history guard. canUndo is only true when its exact
       // attributed operation AND selected-source state version still match.
       return { state };
     });
@@ -1039,7 +1004,7 @@ export class ReviewService {
         target: state.parent.changeId,
       });
       // Direct requests never expose a token or yield the serial queue. Validate
-      // the exact pinned preview once, then snapshot/recheck before journaling.
+      // the exact pinned preview once, then snapshot/recheck before execution.
       this.requireVersion(await this.readState(), state.version);
       return this.executeSquash(
         {
@@ -1058,12 +1023,33 @@ export class ReviewService {
   private requireVersion(state: State, version: string) {
     if (!version || version !== state.version) stale();
   }
+  private pendingError(
+    status: number,
+    code: string,
+    message: string,
+    details: Record<string, unknown> = {},
+  ): ApiError {
+    const pending = this.history.pending;
+    if (!pending) return new ApiError(status, code, message, details);
+    const recoveryAction =
+      "Inspect jj op log --no-pager and reconcile history before restarting. Restarting forgets this in-memory guard and undo state; it does not repair, undo, or retry repository operations. Do not blindly repeat the squash.";
+    return new ApiError(
+      status,
+      code,
+      `${message} Pending ${pending.kind}; before operation: ${pending.beforeOperation}; source commit: ${pending.sourceCommit}; source change: ${pending.sourceChangeId}; target commit: ${pending.targetCommit}; target change: ${pending.targetChangeId}. ${recoveryAction}`,
+      {
+        ...details,
+        pending: structuredClone(pending),
+        recoveryAction,
+      },
+    );
+  }
   private assertNotPending() {
-    if (this.journal.pending)
-      throw new ApiError(
+    if (this.history.pending)
+      throw this.pendingError(
         409,
         "RECOVERY_REQUIRED",
-        "A previous history operation did not finish cleanly. Inspect jj op log before doing more work. No automatic retry or rollback was attempted.",
+        "A previous history operation did not finish cleanly. No automatic retry or rollback was attempted.",
       );
   }
   private async prepare(
@@ -1248,14 +1234,16 @@ export class ReviewService {
       ),
     );
     if ((await this.operation()).id !== before.operation) stale();
-    this.journal = {
+    this.history = {
       pending: {
         beforeOperation: before.operation,
         sourceCommit: plan.source.commitId,
+        sourceChangeId: plan.source.changeId,
+        targetCommit: plan.target.commitId,
+        targetChangeId: plan.target.changeId,
         kind: "squash",
       },
     };
-    await this.saveJournal();
     this.plans.clear();
     let result;
     try {
@@ -1276,7 +1264,17 @@ export class ReviewService {
     } catch (error) {
       return this.failedMutation(error, before.operation);
     }
-    const afterOp = await this.operation();
+    let afterOp: Operation;
+    try {
+      afterOp = await this.operation();
+    } catch (error) {
+      throw this.pendingError(
+        409,
+        "HISTORY_CHANGED",
+        "The tool completed, but its operation could not be attributed. Automatic undo is disabled; do not retry the squash.",
+        { output: result.stdout + result.stderr, cause: String(error) },
+      );
+    }
     if (
       !this.isSquashOperation(
         afterOp,
@@ -1285,39 +1283,55 @@ export class ReviewService {
         plan.target.commitId,
       )
     ) {
-      throw new ApiError(
+      throw this.pendingError(
         409,
         "HISTORY_CHANGED",
-        "The tool completed, but operation history changed unexpectedly. Inspect jj op log. Automatic undo is disabled; do not retry the squash.",
-        { output: result.stdout + result.stderr },
+        "The tool completed, but operation history changed unexpectedly. Automatic undo is disabled; do not retry the squash.",
+        { output: result.stdout + result.stderr, currentOperation: afterOp.id },
       );
     }
-    const after = await this.readState(true);
-    if (after.operation !== afterOp.id)
+    // Positive, live attribution ends mutation uncertainty. Clear only this
+    // process's guard before reads that can snapshot or fail. No history scan,
+    // replay, rollback, or disk bookkeeping is involved.
+    this.history = {};
+    let after: State;
+    let warning: string | undefined;
+    try {
+      // Include warning reads in the post-success boundary, before publishing
+      // undo. The final state validation must cover every repository read.
+      if (
+        (await this.revisions("conflicts()", this.root, false)).some(
+          (revision) => !existingConflicts.has(revision.changeId),
+        )
+      )
+        warning =
+          "The squash created a conflict. Undo this operation or resolve the affected revision with jj before editing it.";
+      after = await this.readState(true);
+      if (after.operation !== afterOp.id)
+        throw new Error("Another operation followed the squash.");
+    } catch (error) {
       throw new ApiError(
         409,
         "HISTORY_CHANGED",
-        "Another operation followed the squash. Inspect jj op log; automatic undo is disabled.",
+        "The squash completed and was attributed, but the repository changed or its updated view could not be validated. Automatic undo is disabled. Inspect jj op log and refresh before reviewing more work; do not retry the completed squash. No retry or rollback was attempted.",
+        {
+          output: result.stdout + result.stderr,
+          completedOperation: afterOp.id,
+          cause: error instanceof Error ? error.message : String(error),
+        },
       );
-    this.journal = {
+    }
+    this.history = {
       undo: {
         operation: afterOp.id,
         beforeOperation: before.operation,
         afterVersion: after.version,
         sourceCommit: plan.source.commitId,
         targetCommit: plan.target.commitId,
+        targetChangeId: plan.target.changeId,
       },
     };
-    await this.saveJournal();
     after.canUndo = true;
-    let warning: string | undefined;
-    if (
-      (await this.revisions("conflicts()")).some(
-        (revision) => !existingConflicts.has(revision.changeId),
-      )
-    )
-      warning =
-        "The squash created a conflict. Undo this operation or resolve the affected revision with jj before editing it.";
     return {
       state: after,
       output: (result.stdout + result.stderr).trim(),
@@ -1348,8 +1362,7 @@ export class ReviewService {
       /* Remain fail-closed. */
     }
     if (current === beforeOperation) {
-      this.journal = {};
-      await this.saveJournal();
+      this.history = {};
     }
     const output =
       error instanceof ProcessError
@@ -1358,14 +1371,14 @@ export class ReviewService {
     const dependencyHint = /failed to run patch/.test(output)
       ? "jj-hunk-tool could not start its required patch executable. Install GNU patch or repair the packaged runtime. "
       : "";
-    throw new ApiError(
+    throw this.pendingError(
       500,
       current === beforeOperation ? "TOOL_FAILED" : "PARTIAL_FAILURE",
       dependencyHint +
         (current === beforeOperation
           ? "The tool failed without a recorded history change. Nothing was automatically retried. Refresh before trying again."
           : "The tool failed and history may have changed. Inspect jj op log before doing anything else. No retry or rollback was attempted."),
-      { output },
+      { output, ...(current ? { currentOperation: current } : {}) },
     );
   }
   undo(version: string): Promise<{ state: State; output: string }> {
@@ -1373,7 +1386,7 @@ export class ReviewService {
       const state = await this.readState(true);
       this.requireVersion(state, version);
       this.assertNotPending();
-      const undo = this.journal.undo;
+      const undo = this.history.undo;
       if (!state.canUndo || !undo)
         throw new ApiError(
           409,
@@ -1393,14 +1406,16 @@ export class ReviewService {
         stale();
       await this.jjRunner(this.root, ["status"]);
       if ((await this.operation()).id !== undo.operation) stale();
-      this.journal = {
+      this.history = {
         pending: {
           beforeOperation: undo.operation,
           sourceCommit: undo.sourceCommit,
+          sourceChangeId: state.source.changeId,
+          targetCommit: undo.targetCommit,
+          targetChangeId: undo.targetChangeId,
           kind: "undo",
         },
       };
-      await this.saveJournal();
       this.plans.clear();
       let result;
       try {
@@ -1414,13 +1429,13 @@ export class ReviewService {
       }
       const after = await this.operation();
       if (!same(after.parents, [undo.operation]))
-        throw new ApiError(
+        throw this.pendingError(
           409,
           "HISTORY_CHANGED",
-          "History changed during undo. Inspect jj op log; no further action was attempted.",
+          "History changed during undo. No further action was attempted.",
+          { currentOperation: after.id },
         );
-      this.journal = {};
-      await this.saveJournal();
+      this.history = {};
       return {
         state: await this.readState(),
         output: (result.stdout + result.stderr).trim(),
