@@ -6,6 +6,7 @@
   makeWrapper,
   jujutsu,
   jj-hunk-tool,
+  patch,
   xdg-utils,
 }:
 
@@ -51,6 +52,7 @@ buildNpmPackage {
           [
             jujutsu
             jj-hunk-tool
+            patch
           ]
           ++ lib.optionals stdenv.hostPlatform.isLinux [ xdg-utils ]
         )

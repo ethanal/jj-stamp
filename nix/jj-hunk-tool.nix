@@ -2,7 +2,9 @@
   lib,
   rustPlatform,
   fetchFromGitHub,
+  makeWrapper,
   jujutsu,
+  patch,
 }:
 
 rustPlatform.buildRustPackage {
@@ -19,7 +21,41 @@ rustPlatform.buildRustPackage {
   };
   cargoHash = "sha256-ncpm8g5In2Ih5cx3AnG2vPfGFy5oMnR012hBKqV4fYw=";
 
-  nativeCheckInputs = [ jujutsu ];
+  nativeBuildInputs = [ makeWrapper ];
+  nativeCheckInputs = [ jujutsu patch ];
+  # Preview only invokes jj; actual mutations also invoke GNU patch through jj's
+  # external diff tool protocol. Supply both even when installed standalone.
+  postFixup = ''
+    wrapProgram "$out/bin/jj-hunk-tool" \
+      --prefix PATH : ${lib.makeBinPath [ jujutsu patch ]}
+  '';
+
+  doInstallCheck = true;
+  installCheckPhase = ''
+    runHook preInstallCheck
+    export HOME="$TMPDIR/installed-check-home"
+    export JJ_CONFIG=""
+    export JJ_USER="Nix check"
+    export JJ_EMAIL="nix-check@example.invalid"
+    mkdir -p "$HOME" "$TMPDIR/installed-check-repo"
+    pushd "$TMPDIR/installed-check-repo"
+    ${lib.getExe jujutsu} git init
+    printf 'before\n' > example.txt
+    ${lib.getExe jujutsu} describe -m parent
+    ${lib.getExe jujutsu} new -m source
+    printf 'after\n' > example.txt
+    hunks=$(PATH= "$out/bin/jj-hunk-tool" hunks)
+    [[ "$hunks" =~ ^([a-f0-9]{7})[[:space:]] ]]
+    hunk="''${BASH_REMATCH[1]}"
+    PATH= "$out/bin/jj-hunk-tool" squash "$hunk" \
+      --use-destination-message --keep-emptied
+    test "$(${lib.getExe jujutsu} file show -r @- example.txt)" = after
+    test -z "$(${lib.getExe jujutsu} diff --git)"
+    test "$(${lib.getExe jujutsu} log --no-graph -r @- -T description)" = parent
+    popd
+    runHook postInstallCheck
+  '';
+
   preCheck = ''
     export HOME="$TMPDIR/home"
     mkdir -p "$HOME"

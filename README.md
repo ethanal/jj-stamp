@@ -32,7 +32,7 @@ Or run without installing, from this checkout:
 nix run . -- --repository /path/to/workspace
 ```
 
-The flake bundles the browser assets, Node.js, `jj`, and `jj-hunk-tool`. The hunk tool is pinned to **`817a3d19cab8ed9bf04ebf64f2f3073fe195d641`** in `nix/jj-hunk-tool.nix`, with fixed source and Cargo dependency hashes; `flake.lock` pins the Nix inputs. The installed wrapper puts its packaged tools ahead of ambient `PATH`, so a different globally installed hunk tool does not replace the tested one.
+The flake bundles the browser assets, Node.js, `jj`, `jj-hunk-tool`, and GNU `patch`. The hunk tool is pinned to **`817a3d19cab8ed9bf04ebf64f2f3073fe195d641`** in `nix/jj-hunk-tool.nix`, with fixed source and Cargo dependency hashes; `flake.lock` pins the Nix inputs. The installed wrapper puts its packaged tools ahead of ambient `PATH`, so a different globally installed hunk tool does not replace the tested one. The standalone Nix hunk-tool package also wraps its `jj` and GNU `patch` dependencies; listing hunks and previewing patches alone do not exercise the external `patch` command required for mutations.
 
 No npm installation or runtime download of assets or bundled tools is needed. Builds may need network access. Your browser and any external helpers configured in jj (for example, signing tools) are not bundled. Linux browser launch uses bundled `xdg-open`; macOS uses system `open`.
 
@@ -88,7 +88,7 @@ npm run build
 npm start -- --repository /path/to/workspace --no-open
 ```
 
-Without Nix, provide Node.js 24+, `jj`, and the **same tested hunk-tool revision** on `PATH`. Install it with Rust/Cargo:
+Without Nix, provide Node.js 24+, `jj`, **GNU `patch` available as `patch`**, and the **same tested hunk-tool revision** on `PATH`. The hunk tool invokes `patch -p1 --silent` when applying a squash, even if preview works without it. Install the hunk tool with Rust/Cargo:
 
 ```sh
 cargo install --git https://github.com/mvzink/jj-hunk-tool \
@@ -96,7 +96,7 @@ cargo install --git https://github.com/mvzink/jj-hunk-tool \
 # Ensure Cargo's bin directory (normally ~/.cargo/bin) is on PATH.
 ```
 
-Do not install a moving branch or rely on `jj-hunk-tool --version` to verify the pin: multiple revisions report `0.1.0`. `cargo install --list` records the git source/revision for this installation. Unlike the Nix wrapper, non-Nix runs use the first `jj` and `jj-hunk-tool` on `PATH`; keeping them compatible is your responsibility. The revision and Cargo lockfile pin source dependencies, not your host Rust compiler or `jj` version.
+Do not install a moving branch or rely on `jj-hunk-tool --version` to verify the pin: multiple revisions report `0.1.0`. `cargo install --list` records the git source/revision for this installation. Unlike the Nix wrapper, non-Nix runs use the first `jj`, `jj-hunk-tool`, and `patch` on `PATH`; keeping them compatible is your responsibility. The revision and Cargo lockfile pin source dependencies, not your host Rust compiler or `jj` version.
 
 `npm run build` typechecks and produces **`dist/cli.cjs`** plus **`dist/client/`**. The CLI is bundled, so it does not need `node_modules` at runtime. `npm run dev -- -R /path/to/workspace` rebuilds and runs it; restart after source edits.
 
@@ -108,7 +108,7 @@ npm run test:cli
 nix flake check
 ```
 
-Tests use isolated real jj repositories. They cover exact line squashes, optimistic FIFO/recovery, revision selection and rewrite tracking, immutable/merge guards, stale requests, persisted undo, tree and graph interactions, full-path titles, local HTTP protections, browser launching, and graceful terminal-signal shutdown. Nix checks also exercise the installed CLI with an empty ambient `PATH` and run the upstream hunk-tool tests.
+Tests use isolated real jj repositories. They cover exact line squashes, optimistic FIFO/recovery, revision selection and rewrite tracking, immutable/merge guards, stale requests, persisted undo, tree and graph interactions, full-path titles, local HTTP protections, browser launching, and graceful terminal-signal shutdown. Nix checks also exercise installed CLI preview, squash, and undo with an empty ambient `PATH`, verify a standalone installed hunk-tool squash under the same restriction, and run the upstream hunk-tool tests.
 
 `@pierre/trees` is pinned to a beta release; review its API when upgrading.
 

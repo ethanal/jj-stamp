@@ -9,6 +9,7 @@ import signal
 import subprocess
 import sys
 import time
+import urllib.error
 import urllib.request
 
 
@@ -32,7 +33,8 @@ run_jj("describe", "-m", "parent")
 run_jj("new", "-m", "review me")
 (repo / "example.txt").write_text("after\n")
 change = run_jj("log", "--no-graph", "-r", "@", "-T", "change_id")
-# Only the Nix wrapper may supply node, jj and jj-hunk-tool.
+# Only the Nix wrappers may supply node, jj, jj-hunk-tool and GNU patch.
+# Listing/preview does not invoke patch: a real mutation below must succeed too.
 env["PATH"] = ""
 env.pop("NODE_PATH", None)
 process = subprocess.Popen([f"{package}/bin/jj-stamp", "--no-open", change],
@@ -61,6 +63,18 @@ try:
         with urllib.request.urlopen(url + path, timeout=10) as response:
             return response.read()
 
+    def post(path, body):
+        request = urllib.request.Request(
+            url + path, data=json.dumps(body).encode(),
+            headers={"Content-Type": "application/json", "X-Fold-Request": "1"},
+            method="POST")
+        try:
+            with urllib.request.urlopen(request, timeout=20) as response:
+                return json.load(response)
+        except urllib.error.HTTPError as error:
+            raise AssertionError(
+                f"{path}: HTTP {error.code}: {error.read().decode()}") from error
+
     html = get("").decode()
     assert '<div id="root">' in html, html
     asset = re.search(r'src="(/assets/[^\"]+\.js)"', html)
@@ -75,20 +89,43 @@ try:
     assert any(row.get("revision", {}).get("changeId") == change and row.get("mutable")
                for row in graph["rows"]), graph
     parent = state["parent"]["changeId"]
-    selection = urllib.request.Request(
-        url + "api/revision",
-        data=json.dumps({"version": state["version"], "changeId": parent}).encode(),
-        headers={"Content-Type": "application/json", "X-Fold-Request": "1"},
-        method="POST")
-    with urllib.request.urlopen(selection, timeout=10) as response:
-        selected = json.load(response)["state"]
+    hunk = state["files"][0]["hunks"][0]
+    changed_lines = [row["index"] for row in hunk["rows"]
+                     if row["raw"].startswith(("+", "-"))]
+    assert len(changed_lines) == 2, hunk
+    preview = post("api/preview", {
+        "version": state["version"], "target": parent,
+        "selections": [{"id": hunk["id"], "lines": changed_lines}],
+    })
+    assert json.loads(get("api/state"))["version"] == state["version"]
+    squashed = post("api/squash", {"token": preview["token"]})["state"]
+    assert squashed["source"]["changeId"] == change, squashed
+    assert squashed["parent"]["changeId"] == parent, squashed
+    assert squashed["parent"]["description"] == "parent", squashed
+    assert squashed["files"] == [], squashed
+    assert squashed["canUndo"], squashed
+    assert run_jj("file", "show", "-r", "@-", "example.txt") == "after"
+    assert (repo / "example.txt").read_text() == "after\n"
+
+    # Verify actual history recovery as well as the successful mutation response.
+    undone = post("api/undo", {"version": squashed["version"]})["state"]
+    assert undone["source"]["commitId"] == state["source"]["commitId"], undone
+    assert undone["parent"]["commitId"] == state["parent"]["commitId"], undone
+    assert not undone["canUndo"], undone
+    assert undone["files"][0]["hunks"], undone
+    assert run_jj("file", "show", "-r", "@-", "example.txt") == "before"
+    assert (repo / "example.txt").read_text() == "after\n"
+
+    selected = post("api/revision", {
+        "version": undone["version"], "changeId": parent,
+    })["state"]
     assert selected["source"]["changeId"] == parent, selected
     assert selected["parent"] is None, selected  # Its immediate parent is root.
     assert "immutable" in selected["squashUnavailable"], selected
     assert not (Path(package) / "lib" / "node_modules").exists()
     process.send_signal(signal.SIGTERM)
     assert process.wait(timeout=15) == 0
-    print("Installed CLI, bundled runtime tools, browser assets, API and shutdown passed")
+    print("Installed CLI, bundled runtime tools, browser assets, preview, squash, undo, revision selection and shutdown passed")
 finally:
     selector.close()
     if process.poll() is None:
