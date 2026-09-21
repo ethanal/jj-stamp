@@ -347,8 +347,22 @@ test("subscriptions and snapshot reads are stable, with safe subscribe/unsubscri
   assert.equal(initialCalls, 1);
   assert.equal(laterCalls, 1);
   stopLater();
+  const idle = queue.getSnapshot();
   queue.clearError();
+  assert.equal(queue.getSnapshot(), idle);
   assert.equal(laterCalls, 1);
+});
+
+test("a broken subscriber cannot interrupt optimistic projection or dispatch", (t) => {
+  const { queue, posts, state } = setup();
+  const logged = t.mock.method(console, "error", () => {});
+  queue.subscribe(() => {
+    throw new Error("observer failed");
+  });
+  assert.doesNotThrow(() => queue.enqueue(refs(state, 2)));
+  assert.equal(posts.length, 1);
+  assert.equal(queue.getSnapshot().pending, 1);
+  assert.equal(logged.mock.callCount(), 1);
 });
 
 test("synchronous transport exceptions are caught and recovered without retry", async () => {

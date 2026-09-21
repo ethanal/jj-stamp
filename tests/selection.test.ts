@@ -89,13 +89,19 @@ test("expanded context endpoints work across multiple original hunks", () => {
     { second: [1, 2] },
   );
 });
-test("context-only and unresolved selections never produce squash specs", () => {
+test("context-only, unresolved, and non-finite selections produce no squash specs", () => {
   assert.deepEqual(
     selectionFromRange(hunks, { start: 1, end: 10 }, getIndex),
     {},
   );
   assert.deepEqual(
     selectionFromRange(hunks, { start: 1000, end: 12 }, getIndex),
+    {},
+  );
+  const nonFinite: GetLineIndexUtility = (line) =>
+    line === 1 ? [-Infinity, -Infinity] : [Infinity, Infinity];
+  assert.deepEqual(
+    selectionFromRange(hunks, { start: 1, end: 2 }, nonFinite),
     {},
   );
 });
@@ -186,17 +192,20 @@ test("editor maps old-side replacement, context, and shifted expanded lines", as
 
 test("editor maps pure deletions to surviving context, including EOF and empty files", async () => {
   const { workingTreeLine } = await import("../src/selection.ts");
-  const deleted = (rows: Hunk["rows"], header = "@@ -10,4 +10,2 @@") =>
+  const deleted = (rows: Hunk["rows"], header: string, line = 11) =>
     workingTreeLine([{ id: "deleted", header, rows }], {
-      line: 11,
+      line,
       side: "deletions",
     });
   const before = { index: 1, raw: " before", oldLine: 10, newLine: 10 };
   const removal = { index: 2, raw: "-gone", oldLine: 11 };
   const after = { index: 3, raw: " after", oldLine: 12, newLine: 11 };
-  assert.equal(deleted([before, removal, after]), 11);
-  assert.equal(deleted([before, removal]), 10);
-  assert.equal(deleted([removal], "@@ -1,11 +0,0 @@"), 1);
+  assert.equal(deleted([before, removal, after], "@@ -10,3 +10,2 @@"), 11);
+  assert.equal(deleted([before, removal], "@@ -10,2 +10,1 @@"), 10);
+  assert.equal(
+    deleted([{ index: 1, raw: "-gone", oldLine: 1 }], "@@ -1,1 +0,0 @@", 1),
+    1,
+  );
 });
 
 test("editor clamps uneven replacements to their last new-side line", async () => {

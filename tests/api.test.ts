@@ -71,6 +71,24 @@ test("malformed error fields use a meaningful fallback and never coerce objects 
   });
 });
 
+test("successful HTTP responses still require valid JSON", async (t) => {
+  t.mock.method(
+    globalThis,
+    "fetch",
+    async () => new Response("not json", { status: 200 }),
+  );
+  await assert.rejects(api("state"), (error: unknown) => {
+    assert.ok(error instanceof RequestError);
+    assert.equal(error.message, "Invalid JSON response from state.");
+    assert.equal(error.status, 200);
+    assert.equal(error.output, "not json");
+    assert.deepEqual(errorDetails(error), [
+      { label: "Request", code: undefined, output: "not json" },
+    ]);
+    return true;
+  });
+});
+
 test("API successes and network errors keep their normal behavior", async (t) => {
   const fetch = t.mock.method(
     globalThis,

@@ -81,6 +81,21 @@ test("exact row references reject context, stale indices, duplicates and wrong s
     { ...refs[0], kind: "+" as const },
   ])
     assert.throws(() => specsForRefs(repo, [altered]), /no longer match/);
+
+  for (const invalidIndex of [0, 1.5]) {
+    const malformed = structuredClone(repo);
+    malformed.files[0].hunks[0].rows[1].index = invalidIndex;
+    assert.throws(
+      () => specsForRefs(malformed, [refs[0]]),
+      /invalid or ambiguous tool index/,
+    );
+  }
+  const ambiguous = structuredClone(repo);
+  ambiguous.files[0].hunks[0].rows[2].index = 2;
+  assert.throws(
+    () => specsForRefs(ambiguous, [refs[0]]),
+    /invalid or ambiguous tool index/,
+  );
 });
 
 test("projection removes selected deletions, contextualizes additions and renumbers all rows", () => {

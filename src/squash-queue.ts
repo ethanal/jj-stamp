@@ -93,6 +93,7 @@ export class SquashQueue {
 
   clearError(): void {
     // Dismissing a message is not permission to resume or retry a failed mutation.
+    if (!this.snapshot.error && !this.snapshot.errorDetails.length) return;
     this.publish({ error: "", errorDetails: [] });
   }
 

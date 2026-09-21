@@ -14,16 +14,16 @@ const key = (ref: RowRef): string =>
 
 function rowRef(path: string, row: Row): RowRef {
   const kind = row.raw[0];
-  const line = kind === "+" ? row.newLine : row.oldLine;
-  if (
-    (kind !== "+" && kind !== "-") ||
-    !Number.isSafeInteger(line) ||
-    line! < 1
-  )
+  if (kind !== "+" && kind !== "-")
     throw new Error(
       "Selection must identify a changed row with valid source coordinates.",
     );
-  return { path, kind, line: line!, text: row.raw.slice(1) };
+  const line = kind === "+" ? row.newLine : row.oldLine;
+  if (line === undefined || !Number.isSafeInteger(line) || line < 1)
+    throw new Error(
+      "Selection must identify a changed row with valid source coordinates.",
+    );
+  return { path, kind, line, text: row.raw.slice(1) };
 }
 
 function checkedKeys(refs: RowRef[]): Set<string> {

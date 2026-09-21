@@ -118,24 +118,20 @@ function hasNativeSelection(root: HTMLElement, event: ClipboardEvent): boolean {
   const selected = (selection: Selection | null | undefined) =>
     selection != null &&
     (!selection.isCollapsed || selection.toString().length > 0);
+  const selectedInShadow = (node: EventTarget): boolean => {
+    const shadow = (node as Element).shadowRoot as
+      | (ShadowRoot & { getSelection?: () => Selection | null })
+      | null
+      | undefined;
+    return !!shadow && selected(shadow.getSelection?.());
+  };
   if (selected(root.ownerDocument.getSelection())) return true;
   // Chromium exposes ShadowRoot.getSelection; other browsers use document's
-  // selection. Check event-path roots too, including nested shadow editors.
-  const nodes = [root, ...event.composedPath(), ...root.querySelectorAll("*")];
-  for (const node of nodes) {
-    const shadow = (node as Element).shadowRoot;
-    if (
-      shadow &&
-      selected(
-        (
-          shadow as ShadowRoot & {
-            getSelection?: () => Selection | null;
-          }
-        ).getSelection?.(),
-      )
-    )
-      return true;
-  }
+  // selection. Check likely event-path roots before scanning nested hosts.
+  for (const node of [root, ...event.composedPath()])
+    if (selectedInShadow(node)) return true;
+  for (const node of root.querySelectorAll("*"))
+    if (selectedInShadow(node)) return true;
   return false;
 }
 

@@ -41,7 +41,7 @@ export async function api<T>(route: string, body?: unknown): Promise<T> {
         },
   );
   const text = await response.text();
-  let value;
+  let value: unknown;
   try {
     value = JSON.parse(text);
   } catch {
@@ -54,14 +54,19 @@ export async function api<T>(route: string, body?: unknown): Promise<T> {
       text || undefined,
     );
   }
-  if (!response.ok)
+  if (!response.ok) {
+    const payload =
+      typeof value === "object" && value !== null
+        ? (value as Record<string, unknown>)
+        : {};
     throw new RequestError(
-      typeof value?.error === "string" && value.error
-        ? value.error
+      typeof payload.error === "string" && payload.error
+        ? payload.error
         : `Request failed (HTTP ${response.status}).`,
       response.status,
-      typeof value?.code === "string" ? value.code : undefined,
-      typeof value?.output === "string" ? value.output : undefined,
+      typeof payload.code === "string" ? payload.code : undefined,
+      typeof payload.output === "string" ? payload.output : undefined,
     );
-  return value;
+  }
+  return value as T;
 }

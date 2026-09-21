@@ -331,6 +331,11 @@ test("DOM adapter excludes old columns and deletion rows and retains blank code"
 
 test("shadow-root native selection and shadow-focused editable input keep native copy", () => {
   const { root, document, dispatch } = eventHost();
+  let subtreeScans = 0;
+  root.querySelectorAll = (() => {
+    subtreeScans++;
+    return [];
+  }) as unknown as typeof root.querySelectorAll;
   installCopySelectionHandler(root, () => defaultSelection);
   Object.defineProperty(root, "shadowRoot", {
     configurable: true,
@@ -342,6 +347,7 @@ test("shadow-root native selection and shadow-focused editable input keep native
     },
   });
   assert.equal(dispatch().event.defaultPrevented, false);
+  assert.equal(subtreeScans, 0, "event-path shadow roots avoid a subtree scan");
   Object.defineProperty(root, "shadowRoot", { value: null });
   document.activeElement = {
     shadowRoot: { activeElement: { matches: () => true } },

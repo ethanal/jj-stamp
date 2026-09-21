@@ -16,7 +16,13 @@ export function selectionFromRange(
   const endSide = range.endSide ?? side;
   const start = getIndex(range.start, side)?.[axis];
   const end = getIndex(range.end, endSide)?.[axis];
-  if (start === undefined || end === undefined) return {};
+  if (
+    start === undefined ||
+    end === undefined ||
+    !Number.isFinite(start) ||
+    !Number.isFinite(end)
+  )
+    return {};
   const low = Math.min(start, end),
     high = Math.max(start, end);
   const selections: Selections = {};
