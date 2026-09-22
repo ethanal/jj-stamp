@@ -69,6 +69,14 @@ A snapshot following a squash in `jj op log` alone cannot determine which case o
 
 Initialization failures are memoized. Retrying cannot reinterpret the original `@` or another moving revision expression. Repair the underlying problem and restart the process.
 
+## Timing diagnostics
+
+`jj-stamp --trace` opts into one completed-operation JSON line on stderr, prefixed `[jj-stamp timing]`. The initial startup state read is included. Embedders can supply `ServiceOptions.onTiming(record)` instead; no tracing is enabled by default. This adds no subprocesses, retries, or safety-check changes.
+
+Each record has a service-local increasing `id`, stable operation `name` (`state`, `revision`, `graph`, `log`, `editor`, `file`, `squash-lines`, `preview`, `squash`, or `undo`), `queueMs`, `durationMs`, `ok`, and `subprocesses`. Durations use a monotonic clock in milliseconds. `queueMs` measures waiting for the serial queue; `durationMs` excludes that wait and observer execution. Each subprocess has an allowlisted command `name`, `startMs` relative to task start, `durationMs`, and `ok`, in invocation order. Log labels distinguish metadata, graph and conflict queries, and whether they allow a working-copy snapshot (`snapshot`), ignore it (`recorded`), or use a captured operation (`pinned`). Overlapping subprocess durations must not be added to infer task duration. A handled subprocess failure can appear in an otherwise successful operation.
+
+Only service-launched jj, hunk-tool and editor calls are measured (including injected runners); nested child commands and the CLI's preflight version probes are not separately instrumented. Traces contain no arguments, cwd, revision IDs, file paths, output, or error messages. Observers run after the task and all its subprocesses finish; thrown exceptions and rejected observer promises are ignored and never change mutation results. Async observers are not awaited; observers should be fast because synchronous observer work delays subsequent queued requests. Correlation relies on the existing queue draining every parallel child, even on failure, before starting the next task.
+
 ## Tests
 
 `tests/recovery.test.ts` reproduces snapshots after successful attribution, snapshots during post-success validation, post-success rendering failures, and conservative session guards for snapshots before attribution, unreadable operation metadata and nonzero exits. It verifies process-local undo, restart without app bookkeeping or history changes, ignored/untouched legacy journals, disabled undo after attribution races, useful diagnostic identities, and no automatic mutation replay.

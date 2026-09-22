@@ -121,6 +121,30 @@ Tests use isolated real jj repositories. They cover exact line squashes, optimis
 
 `@pierre/trees` is pinned to a beta release; review its API when upgrading.
 
+## Performance diagnostics
+
+Run a newly built version with tracing enabled, reproduce a few slow change switches and squashes, then stop normally with Ctrl-C:
+
+```sh
+jj-stamp --trace -R /path/to/workspace 2> /tmp/jj-stamp-trace.log
+```
+
+Each `[jj-stamp timing]` line is a JSON record for one completed backend request (including startup). It contains the operation name, time waiting in the shared queue, execution time, success/failure, and the start offset/duration of every service-launched subprocess. Timings are milliseconds. Nested commands inside `jj-hunk-tool` are included in that tool's duration, not listed separately. Parallel spans overlap; don't sum them to estimate request wall time. Browser rendering, network transfer, and JSON response serialization are outside these backend timings.
+
+Trace records contain no repository paths, revision IDs, command arguments, file contents, or subprocess output. Ordinary errors on stderr can still contain sensitive details. To share only the diagnostic records:
+
+```sh
+grep '^\[jj-stamp timing\] ' /tmp/jj-stamp-trace.log > /tmp/jj-stamp-timings.log
+```
+
+Send that timings file, your OS and `jj --version`, and roughly how long the UI appeared stuck. Tracing is off by default and does not change validation, caching, or mutation behavior. Keep logs outside the reviewed workspace so logging itself does not create working-copy changes.
+
+The isolated benchmark also measures cold/cached revision switches, squash, undo, and graph refreshes, with optional per-command breakdowns:
+
+```sh
+npm run benchmark -- --runs 3 --extra-files 50 --trace
+```
+
 ## Source
 
 - `cli.ts` — arguments, local startup, browser launch, shutdown

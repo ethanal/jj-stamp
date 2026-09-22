@@ -805,3 +805,48 @@ test(
     }
   },
 );
+
+test(
+  "built CLI --trace logs startup and requests without repository data",
+  { timeout: 30_000 },
+  async (t) => {
+    const box = await sandbox(t);
+    const repo = await createDemo(box.root);
+    const cli = box.start(["-R", repo, "--no-open", "--port", "0", "--trace"]);
+    const url = await cli.url();
+    const response = await fetch(new URL("api/graph", url));
+    assert.equal(response.status, 200);
+    await response.json();
+    await cli.stop("SIGTERM");
+    const prefix = "[jj-stamp timing] ";
+    const lines = cli.stderr.trim().split("\n");
+    assert.ok(
+      lines.every((line) => line.startsWith(prefix)),
+      cli.diagnostics(),
+    );
+    const records = lines.map((line) => JSON.parse(line.slice(prefix.length)));
+    assert.deepEqual(
+      records.map(({ name }) => name),
+      ["state", "graph"],
+    );
+    assert.deepEqual(
+      records.map(({ id }) => id),
+      [1, 2],
+    );
+    assert.deepEqual(
+      records.map(({ subprocesses }) => subprocesses.length),
+      [8, 5],
+    );
+    assert.ok(
+      records.every(
+        (record) => record.ok && record.durationMs > 0 && record.queueMs >= 0,
+      ),
+    );
+    assert.ok(!cli.stderr.includes(repo));
+    assert.doesNotMatch(
+      cli.stderr,
+      /Polish notification|change_id|commit_id|--no-graph/,
+    );
+    await box.assertNoAppState();
+  },
+);

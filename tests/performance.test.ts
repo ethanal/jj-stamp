@@ -506,3 +506,62 @@ test("an unavailable-source graph retains the five-process read-only budget and 
     operation,
   );
 });
+
+test("direct squash and its graph refresh have explicit subprocess budgets", async (t) => {
+  const options = await fixture(t);
+  const calls: Array<{ command: string; args: string[] }> = [];
+  const service = new ReviewService({
+    ...options,
+    jjRunner: (cwd, args) => {
+      calls.push({ command: "jj", args });
+      return jj(cwd, args);
+    },
+    toolRunner: (command, args, cwd) => {
+      calls.push({ command, args });
+      return run(command, args, cwd);
+    },
+  });
+  const initial = await service.getState();
+  const hunk = initial.files[0].hunks[0];
+  calls.length = 0;
+  const result = await service.squashLines({
+    version: initial.version,
+    selections: [
+      {
+        id: hunk.id,
+        lines: hunk.rows
+          .filter((row) => /^[+-]/.test(row.raw))
+          .map((row) => row.index),
+      },
+    ],
+  });
+  assert.equal(result.state.canUndo, true);
+  // Baseline includes initial validation, exact preview, pre-execution
+  // revalidation, conflict/attribution reads, and the rewritten source diff.
+  // Tool-internal jj/patch processes are additional, not counted here.
+  assert.equal(calls.length, 20);
+  assert.equal(
+    calls.filter((call) => call.command === "jj" && call.args[0] === "log")
+      .length,
+    8,
+  );
+  assert.equal(
+    calls.filter((call) => call.command === "jj" && call.args[0] === "op")
+      .length,
+    8,
+  );
+  assert.equal(
+    calls.filter((call) => call.command === "jj" && call.args[0] === "diff")
+      .length,
+    1,
+  );
+  assert.deepEqual(
+    calls
+      .filter((call) => call.command === "jj-hunk-tool")
+      .map((call) => call.args[0]),
+    ["patch", "squash", "hunks"],
+  );
+  calls.length = 0;
+  await service.getLog({ includeOutput: false });
+  assert.equal(calls.length, 5);
+});

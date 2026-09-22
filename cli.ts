@@ -19,6 +19,7 @@ Options:
       --port PORT        Loopback port (default: ${DEFAULT_PORT}, free port if occupied)
                          Use 0 to always choose an available port
       --no-open          Print the URL without launching a browser
+      --trace            Write backend timing JSON to stderr (no arguments/output)
   -h, --help             Show this help
   -V, --version          Show version
 
@@ -57,6 +58,7 @@ async function main() {
       repository: { type: "string", short: "R" },
       port: { type: "string" },
       "no-open": { type: "boolean", default: false },
+      trace: { type: "boolean", default: false },
     },
   });
   if (values.help) {
@@ -97,6 +99,11 @@ async function main() {
   const service = new ReviewService({
     repoPath,
     revision: positionals[0] ?? "@",
+    onTiming: values.trace
+      ? (record) => {
+          console.error(`[jj-stamp timing] ${JSON.stringify(record)}`);
+        }
+      : undefined,
   });
   // Resolve and validate before advertising a URL or opening an empty browser.
   const state = await service.getState();

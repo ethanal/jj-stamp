@@ -19,6 +19,14 @@ import {
 } from "./revision.ts";
 import type { Revision } from "./revision.ts";
 
+import { ServiceTiming, jjTimingName, toolTimingName } from "./timing.ts";
+import type { OperationName, TimingObserver } from "./timing.ts";
+
+export type {
+  OperationTiming,
+  SubprocessTiming,
+  TimingObserver,
+} from "./timing.ts";
 export { ApiError } from "./errors.ts";
 export type { Revision } from "./revision.ts";
 export interface LogRow {
@@ -143,6 +151,7 @@ export interface ServiceOptions {
   editorRunner?: typeof run;
   toolRunner?: typeof run;
   jjRunner?: typeof jj;
+  onTiming?: TimingObserver;
 }
 const hash = (value: string) =>
   createHash("sha256").update(value).digest("hex");
@@ -189,17 +198,30 @@ export class ReviewService {
   private initialization?: Promise<void>;
   private readonly editorRunner: typeof run;
   private readonly toolRunner: typeof run;
+  private readonly timing?: ServiceTiming;
   constructor(options: ServiceOptions) {
     if (!options?.repoPath)
       throw new Error("ReviewService requires explicit repoPath.");
     this.editorRunner = options.editorRunner ?? run;
     this.toolRunner = options.toolRunner ?? run;
     this.jjRunner = options.jjRunner ?? jj;
+    if (options.onTiming) {
+      this.timing = new ServiceTiming(options.onTiming);
+      this.jjRunner = this.timing.wrap(this.jjRunner, (_cwd, args) =>
+        jjTimingName(args),
+      );
+      this.toolRunner = this.timing.wrap(this.toolRunner, (_command, args) =>
+        toolTimingName(args),
+      );
+      this.editorRunner = this.timing.wrap(this.editorRunner, () => "nvim");
+    }
     this.repoPath = path.resolve(options.repoPath);
     this.requestedRevision = options.revision ?? "@";
   }
-  private serial<T>(task: () => Promise<T>): Promise<T> {
-    const result = this.queue.then(task);
+  private serial<T>(name: OperationName, task: () => Promise<T>): Promise<T> {
+    const result = this.queue.then(
+      this.timing ? this.timing.task(name, task) : task,
+    );
     this.queue = result.catch(() => undefined);
     return result;
   }
@@ -615,10 +637,10 @@ export class ReviewService {
     await this.queue;
   }
   getState(): Promise<State> {
-    return this.serial(() => this.readState());
+    return this.serial("state", () => this.readState());
   }
   selectRevision(input: RevisionSelection): Promise<{ state: State }> {
-    return this.serial(async () => {
+    return this.serial("revision", async () => {
       if (
         !input ||
         typeof input.changeId !== "string" ||
@@ -661,7 +683,8 @@ export class ReviewService {
   getLog(
     options: { includeOutput?: boolean } = {},
   ): Promise<{ version: string; output: string; rows: LogRow[] }> {
-    return this.serial(async () => {
+    const name = options.includeOutput === false ? "graph" : "log";
+    return this.serial(name, async () => {
       await this.init(false);
       // The graph remains a read-only recovery path when the pinned source is
       // absent, divergent or conflicted. Its version still identifies that old
@@ -736,7 +759,7 @@ export class ReviewService {
     path: string;
     line: number;
   }): Promise<{ ok: true }> {
-    return this.serial(async () => {
+    return this.serial("editor", async () => {
       if (
         !input ||
         Object.keys(input).some(
@@ -808,7 +831,7 @@ export class ReviewService {
     });
   }
   getFile(input: { version: string; path: string }): Promise<FileContents> {
-    return this.serial(async () => {
+    return this.serial("file", async () => {
       const before = await this.readState();
       this.requireVersion(before, input.version);
       const file = before.files.find((file) => file.path === input.path);
@@ -855,7 +878,7 @@ export class ReviewService {
   squashLines(
     input: SquashLinesInput,
   ): Promise<{ state: State; output: string; warning?: string }> {
-    return this.serial(async () => {
+    return this.serial("squash-lines", async () => {
       // Reject target overrides even when called directly rather than via HTTP.
       if (
         Object.keys(input).some(
@@ -1042,7 +1065,7 @@ export class ReviewService {
     };
   }
   preview(input: PreviewInput): Promise<Preview> {
-    return this.serial(async () =>
+    return this.serial("preview", async () =>
       this.previewInternal(input, await this.readState()),
     );
   }
@@ -1071,7 +1094,7 @@ export class ReviewService {
   squash(
     token: string,
   ): Promise<{ state: State; output: string; warning?: string }> {
-    return this.serial(() => this.squashInternal(token));
+    return this.serial("squash", () => this.squashInternal(token));
   }
   private async squashInternal(
     token: string,
@@ -1251,7 +1274,7 @@ export class ReviewService {
     );
   }
   undo(version: string): Promise<{ state: State; output: string }> {
-    return this.serial(async () => {
+    return this.serial("undo", async () => {
       const state = await this.readState(true);
       this.requireVersion(state, version);
       this.assertNotPending();
