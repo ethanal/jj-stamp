@@ -109,6 +109,7 @@ function App() {
     }
   });
   const lock = useRef(false);
+  const [focusRefreshPending, setFocusRefreshPending] = useState(false);
   const scroll = useRef<HTMLDivElement>(null);
   const fileSections = useRef(new Map<string, HTMLElement>());
   const scrollToFile = useCallback((path: string) => {
@@ -166,26 +167,88 @@ function App() {
     },
     [queue, clear],
   );
-  const refresh = useCallback(async () => {
-    const current = queue.getSnapshot();
-    if (lock.current || current.pending || current.recovering) return;
-    lock.current = true;
-    setBusy("refreshing");
-    setError("");
-    setNotice("");
-    try {
-      replace(await api<RepoState>("state"));
-    } catch (error) {
-      setError(error);
-      setGraphRefresh((value) => value + 1);
-    } finally {
-      lock.current = false;
-      setBusy("");
-    }
-  }, [queue, replace]);
+  const refresh = useCallback(
+    async (automatic = false) => {
+      const current = queue.getSnapshot();
+      if (
+        lock.current ||
+        current.pending ||
+        current.recovering ||
+        (automatic && current.halted)
+      )
+        return;
+      lock.current = true;
+      setBusy("refreshing");
+      if (!automatic) {
+        setError("");
+        setNotice("");
+      }
+      try {
+        const next = await api<RepoState>("state");
+        // A focus check must not reset the view/selection or dismiss diagnostics
+        // when nothing changed. Halted queues require explicit user recovery.
+        if (!automatic || next.version !== current.confirmed?.version)
+          replace(next);
+      } catch (error) {
+        setError(error);
+        setGraphRefresh((value) => value + 1);
+      } finally {
+        lock.current = false;
+        setBusy("");
+      }
+    },
+    [queue, replace],
+  );
   useEffect(() => {
     void refresh();
   }, [refresh]);
+  useEffect(() => {
+    const onFocus = () => {
+      if (document.visibilityState !== "visible") {
+        setFocusRefreshPending(false);
+      } else {
+        setFocusRefreshPending(true);
+      }
+    };
+    window.addEventListener("focus", onFocus);
+    document.addEventListener("visibilitychange", onFocus);
+    return () => {
+      window.removeEventListener("focus", onFocus);
+      document.removeEventListener("visibilitychange", onFocus);
+    };
+  }, []);
+  useEffect(() => {
+    if (!focusRefreshPending) return;
+    if (queued.halted) {
+      setFocusRefreshPending(false);
+      return;
+    }
+    // Coalesce focus/visibility events and wait for the user's selection and
+    // optimistic work to finish. Never replace a diff underneath a drag.
+    if (
+      busy ||
+      dragging ||
+      range ||
+      queued.pending ||
+      queued.recovering ||
+      document.visibilityState !== "visible"
+    )
+      return;
+    const timer = setTimeout(() => {
+      setFocusRefreshPending(false);
+      void refresh(true);
+    }, 100);
+    return () => clearTimeout(timer);
+  }, [
+    focusRefreshPending,
+    busy,
+    dragging,
+    range,
+    queued.pending,
+    queued.recovering,
+    queued.halted,
+    refresh,
+  ]);
   useEffect(() => {
     try {
       localStorage.setItem("jj-stamp.diff-style", style);
@@ -447,7 +510,7 @@ function App() {
           </span>
         </RevisionHeading>
         <button
-          onClick={refresh}
+          onClick={() => void refresh()}
           disabled={idleActionDisabled}
           title="Refresh (r)"
         >
