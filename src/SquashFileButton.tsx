@@ -22,7 +22,7 @@ export function SquashFileButton({
       disabled={disabled || !!reason || !(file.additions + file.deletions)}
       onClick={() => onSquash(file.path)}
     >
-      squash → parent
+      squash
     </button>
   );
 }

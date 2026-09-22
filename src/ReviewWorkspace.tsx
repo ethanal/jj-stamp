@@ -652,7 +652,7 @@ export function ReviewStatusBar({
       </span>
       <div className="shortcuts">
         <button onClick={onSquash} disabled={!canSquash} title={squashTitle}>
-          <kbd>s</kbd> squash → parent
+          <kbd>s</kbd> squash
         </button>
         <button
           onClick={onUndo}

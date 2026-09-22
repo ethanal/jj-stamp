@@ -333,9 +333,17 @@ try {
   await expect(oneFile).toHaveAttribute("aria-pressed", "false");
   await expect(page.locator(".file-diff-section")).toHaveCount(3);
 
+  for (const button of await page.locator(".squash-file").all()) {
+    await expect(button).toHaveText("squash");
+  }
+  await expect(
+    page.getByRole("button", { name: "s squash", exact: true }),
+  ).toBeVisible();
   const sidebarSquash = page.locator(".file-tree-squash");
   await treeRow(unsupportedPath).hover();
   await expect(sidebarSquash).toBeDisabled();
+  await expect(sidebarSquash).toHaveText("squash");
+  await expect(sidebarSquash.locator("svg")).toHaveCount(0);
   await expect(sidebarSquash).toHaveAttribute(
     "title",
     unsupportedFile.unsupported!,

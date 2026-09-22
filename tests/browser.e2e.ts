@@ -945,9 +945,7 @@ try {
   await expect(page.locator(".squash-unavailable")).toContainText(
     "exactly one immediate parent",
   );
-  await expect(
-    page.getByRole("button", { name: "s squash → parent" }),
-  ).toBeDisabled();
+  await expect(page.getByRole("button", { name: "s squash" })).toBeDisabled();
   await expect(page.getByLabel("Squash destination change ID")).toHaveText("—");
   await reviewChange(left).click();
   await expect(page.locator(".squash-unavailable")).toHaveCount(0);
