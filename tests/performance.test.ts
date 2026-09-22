@@ -536,19 +536,19 @@ test("direct squash and its graph refresh have explicit subprocess budgets", asy
     ],
   });
   assert.equal(result.state.canUndo, true);
-  // Baseline includes initial validation, exact preview, pre-execution
-  // revalidation, conflict/attribution reads, and the rewritten source diff.
+  // One private capture + preview/conflict baseline + final metadata/op
+  // validation, attribution, and the fully validated rewritten source diff.
   // Tool-internal jj/patch processes are additional, not counted here.
-  assert.equal(calls.length, 20);
+  assert.equal(calls.length, 15);
   assert.equal(
     calls.filter((call) => call.command === "jj" && call.args[0] === "log")
       .length,
-    8,
+    6,
   );
   assert.equal(
     calls.filter((call) => call.command === "jj" && call.args[0] === "op")
       .length,
-    8,
+    5,
   );
   assert.equal(
     calls.filter((call) => call.command === "jj" && call.args[0] === "diff")
@@ -561,6 +561,23 @@ test("direct squash and its graph refresh have explicit subprocess budgets", asy
       .map((call) => call.args[0]),
     ["patch", "squash", "hunks"],
   );
+  const conflictReads = calls.filter((call) =>
+    call.args.includes("conflicts()"),
+  );
+  assert.equal(conflictReads.length, 2);
+  for (const { args } of conflictReads) {
+    assert.ok(args.includes("--ignore-working-copy"));
+    assert.equal(args[args.indexOf("-T") + 1], 'change_id ++ "\\n"');
+  }
+  const squashIndex = calls.findIndex(
+    (call) => call.command === "jj-hunk-tool" && call.args[0] === "squash",
+  );
+  assert.deepEqual(
+    calls.slice(squashIndex - 2, squashIndex).map((call) => call.args[0]),
+    ["log", "op"],
+    "final live metadata and operation checks immediately precede the mutation",
+  );
+  assert.ok(!calls[squashIndex - 2].args.includes("--ignore-working-copy"));
   calls.length = 0;
   await service.getLog({ includeOutput: false });
   assert.equal(calls.length, 5);

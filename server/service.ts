@@ -361,6 +361,27 @@ export class ReviewService {
       return revision;
     });
   }
+  /** Warnings compare identities only, not display metadata or shortest IDs.
+   * The final live metadata check covers edits made during this recorded read. */
+  private async conflictChangeIds(): Promise<Set<string>> {
+    const output = (
+      await this.jjRunner(this.root, [
+        "log",
+        "--no-graph",
+        "--ignore-working-copy",
+        "--config",
+        "ui.log-word-wrap=false",
+        "-r",
+        "conflicts()",
+        "-T",
+        'change_id ++ "\\n"',
+      ])
+    ).stdout;
+    const ids = output.trim() ? output.trim().split("\n") : [];
+    if (ids.some((id) => !/^[k-z]{32}$/.test(id)))
+      throw new Error("Unrecognized conflict change identity.");
+    return new Set(ids);
+  }
   private async files(
     source: string,
     reconcileHunks = true,
@@ -467,6 +488,10 @@ export class ReviewService {
         : this.sourceRevset;
       return [source, `mutable() & ::${source} ~ ${source}`, `${source}-`];
     });
+    const metadataRevset = revsets
+      .flat()
+      .map((revset) => `(${revset})`)
+      .join(" | ");
     const contained = (revset: string) =>
       ` ++ "\\t" ++ json(self.contained_in(${JSON.stringify(revset)}))`;
     const rows = (
@@ -477,14 +502,14 @@ export class ReviewService {
         "--config",
         "ui.log-word-wrap=false",
         "-r",
-        revsets
-          .flat()
-          .map((revset) => `(${revset})`)
-          .join(" | "),
+        metadataRevset,
         "-T",
         revisionFieldsTemplate +
           revsets.flat().map(contained).join("") +
-          ' ++ "\\t" ++ json(self.contained_in("conflicts()"))' +
+          // Every output row is already in metadataRevset. Intersect before
+          // membership testing so an empty/sparse conflicts() does not walk
+          // all visible history. Preserve configured conflicts() aliases.
+          contained(`(${metadataRevset}) & conflicts()`) +
           ' ++ "\\t" ++ json(self.contained_in("mutable()")) ++ "\\n"',
       ])
     ).stdout
@@ -611,10 +636,12 @@ export class ReviewService {
     if ((await this.operation()).id !== operation || !same(current, views))
       stale();
   }
-  private async readState(
+  /** Capture pinned inputs for work that will perform its own final validation.
+   * Never publish this state or authorize a mutation without revalidating it. */
+  private async captureState(
     allowConflicts = false,
     snapshot = true,
-  ): Promise<State> {
+  ): Promise<{ state: State; views: ReviewView[] }> {
     await this.init(snapshot);
     const views = await this.readViews({ allowConflicts, snapshot });
     const view = this.requireView(views[0]);
@@ -629,8 +656,18 @@ export class ReviewService {
     if (filesResult.status === "rejected") throw filesResult.reason;
     const operation = operationResult.value;
     const files = filesResult.value;
-    await this.validateViews(views, operation.id, { allowConflicts, snapshot });
-    return this.state(view, operation.id, files);
+    return { state: this.state(view, operation.id, files), views };
+  }
+  private async readState(
+    allowConflicts = false,
+    snapshot = true,
+  ): Promise<State> {
+    const { state, views } = await this.captureState(allowConflicts, snapshot);
+    await this.validateViews(views, state.operation, {
+      allowConflicts,
+      snapshot,
+    });
+    return state;
   }
   /** Wait for all accepted requests before a graceful service shutdown. */
   async drain(): Promise<void> {
@@ -890,7 +927,7 @@ export class ReviewService {
           "INVALID_REQUEST",
           "Squash destination is always the immediate parent; no target override is accepted.",
         );
-      const state = await this.readState();
+      const { state } = await this.captureState();
       this.requireVersion(state, input.version);
       this.assertNotPending();
       if (!state.parent)
@@ -903,9 +940,8 @@ export class ReviewService {
         ...input,
         target: state.parent.changeId,
       });
-      // Direct requests never expose a token or yield the serial queue. Validate
-      // the exact pinned preview once, then snapshot/recheck before execution.
-      await this.revalidateVersion(state.version);
+      // Keep pinned inputs private until executeSquash validates them after
+      // BOTH the exact preview and the conflict baseline have been read.
       return this.executeSquash(
         {
           ...preview,
@@ -927,10 +963,13 @@ export class ReviewService {
     version: string,
     allowConflicts = false,
     snapshot = true,
-  ): Promise<State> {
-    const state = await this.readState(allowConflicts, snapshot);
-    this.requireVersion(state, version);
-    return state;
+  ): Promise<void> {
+    // Diff bytes are already pinned to immutable commit IDs. Recheck live
+    // eligibility/configuration once, then the operation LAST; loading and
+    // validating another complete state here only repeats the same checks.
+    const [view] = await this.readViews({ allowConflicts, snapshot });
+    const operation = await this.operation();
+    if (!version || this.version(view, operation.id) !== version) stale();
   }
   private pendingError(
     status: number,
@@ -1066,7 +1105,7 @@ export class ReviewService {
   }
   preview(input: PreviewInput): Promise<Preview> {
     return this.serial("preview", async () =>
-      this.previewInternal(input, await this.readState()),
+      this.previewInternal(input, (await this.captureState()).state),
     );
   }
   private async previewInternal(
@@ -1107,7 +1146,7 @@ export class ReviewService {
         "STALE_PREVIEW",
         "This preview expired or was already used. Refresh and preview your selection again.",
       );
-    const before = await this.readState();
+    const { state: before } = await this.captureState();
     this.requireVersion(before, plan.version);
     const check = await this.prepare(before, {
       version: plan.version,
@@ -1120,7 +1159,6 @@ export class ReviewService {
       check.command !== plan.command
     )
       stale();
-    await this.revalidateVersion(before.version);
     return this.executeSquash(plan, before);
   }
   private async executeSquash(
@@ -1129,12 +1167,10 @@ export class ReviewService {
   ): Promise<{ state: State; output: string; warning?: string }> {
     // Compare change identities: rebasing an existing conflict changes its
     // commit ID, but does not mean this squash introduced that conflict.
-    const existingConflicts = new Set(
-      (await this.revisions("conflicts()")).map(
-        (revision) => revision.changeId,
-      ),
-    );
-    if ((await this.operation()).id !== before.operation) stale();
+    const existingConflicts = await this.conflictChangeIds();
+    // Snapshot/revalidate after all preparatory reads. This catches edits and
+    // configuration changes during both preview and conflict enumeration.
+    await this.revalidateVersion(before.version);
     this.history = {
       pending: {
         beforeOperation: before.operation,
@@ -1192,8 +1228,8 @@ export class ReviewService {
       // Include warning reads in the post-success boundary, before publishing
       // undo. The final state validation must cover every repository read.
       if (
-        (await this.revisions("conflicts()", this.root, false)).some(
-          (revision) => !existingConflicts.has(revision.changeId),
+        [...(await this.conflictChangeIds())].some(
+          (changeId) => !existingConflicts.has(changeId),
         )
       )
         warning =

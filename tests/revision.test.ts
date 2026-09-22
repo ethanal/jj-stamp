@@ -149,7 +149,16 @@ test("default @ is a one-time choice, not a moving source", async () => {
   const initial = await service.getState();
   await jj(options.repoPath, ["new", "-m", "Unrelated workspace"]);
   const moved = await service.getState();
-  assert.deepEqual(moved.source, initial.source);
+  // A new change can lengthen jj's distinguishing prefix without changing
+  // the selected revision. Compare identity/content and check the LIVE prefix.
+  assert.deepEqual(moved.source, {
+    ...initial.source,
+    changeIdPrefix: await revisionId(
+      options.repoPath,
+      initial.source.commitId,
+      "change_id.shortest(8).prefix()",
+    ),
+  });
   const hunk = initial.files[0].hunks[0];
   await rejectsCode(
     service.squashLines({
