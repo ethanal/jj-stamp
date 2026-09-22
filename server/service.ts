@@ -11,7 +11,13 @@ import {
 import type { FileDiff, Hunk, Row, RevisionListing } from "./diff.ts";
 import { editorExpression, resolveEditorPath } from "./editor.ts";
 import { ApiError } from "./errors.ts";
-import { jj, processOutput, run, ProcessError } from "./process.ts";
+import {
+  jj,
+  processOutput,
+  processFailureOutput,
+  run,
+  ProcessError,
+} from "./process.ts";
 import {
   parseRevisionRecord,
   revisionFieldsTemplate,
@@ -1294,7 +1300,7 @@ export class ReviewService {
     }
     const output =
       error instanceof ProcessError
-        ? processOutput(error.result)
+        ? processFailureOutput(error, error.cwd ?? this.root)
         : String(error);
     const dependencyHint = /failed to run patch/.test(output)
       ? "jj-hunk-tool could not start its required patch executable. Install GNU patch or repair the packaged runtime. "

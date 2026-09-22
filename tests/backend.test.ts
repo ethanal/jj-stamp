@@ -486,7 +486,18 @@ test("nonzero tool exit after real squash blocks this service, while restart onl
   const preview = await service.preview(
     input(state, [{ id: hunk.id, lines: changes(hunk) }]),
   );
-  await rejectsCode(service.squash(preview.token), "PARTIAL_FAILURE");
+  await assert.rejects(service.squash(preview.token), (error: unknown) => {
+    assert.ok(error instanceof ApiError);
+    assert.equal(error.code, "PARTIAL_FAILURE");
+    assert.ok(
+      String(error.details?.output).startsWith(
+        `Working directory: ${root}\nFailed command:\njj-hunk-tool squash ${hunk.id} --from ${state.source.commitId} --into ${state.parent!.commitId} --use-destination-message --keep-emptied\n\n`,
+      ),
+    );
+    assert.match(String(error.details?.output), /Simulated post-write failure/);
+    assert.match(error.message, /history may have changed/);
+    return true;
+  });
   assert.equal(squashCalls, 1);
   await rejectsCode(service.squash(preview.token), "STALE_PREVIEW");
   assert.equal(squashCalls, 1);
@@ -1541,8 +1552,8 @@ test("missing patch runtime dependency is actionable over HTTP and never retried
   );
   assert.equal(
     error.output,
-    stderr,
-    "preserve complete actionable subprocess diagnostics",
+    `Working directory: ${root}\nFailed command:\njj-hunk-tool squash ${hunk.id}:${changes(hunk)[0]} --from ${state.source.commitId} --into ${state.parent!.commitId} --use-destination-message --keep-emptied\n\n${stderr}`,
+    "include the exact failed invocation and preserve complete subprocess diagnostics",
   );
   assert.deepEqual(await service.getState(), state);
   assert.deepEqual(await (await fetch(`${base}/state`)).json(), state);
@@ -1566,7 +1577,7 @@ test("squash preview process failures expose stdout and stderr without attemptin
     repoPath: root,
     toolRunner: async (command, args, cwd) => {
       if (args[0] === "patch")
-        throw new ProcessError(command, args, { stdout, stderr }, 1);
+        throw new ProcessError(command, args, { stdout, stderr }, 1, cwd);
       if (args[0] === "squash") squashCalls++;
       return run(command, args, cwd);
     },
@@ -1594,7 +1605,10 @@ test("squash preview process failures expose stdout and stderr without attemptin
   assert.equal(response.status, 500);
   const error = await response.json();
   assert.equal(error.code, "TOOL_FAILED");
-  assert.equal(error.output, stdout + stderr);
+  assert.equal(
+    error.output,
+    `Working directory: ${root}\nFailed command:\njj-hunk-tool patch ${hunk.id}:${changes(hunk)[0]} -r ${state.source.commitId}\n\n${stdout}${stderr}`,
+  );
   assert.match(error.error, /selected hunk could not be read/);
   assert.equal(squashCalls, 0);
   assert.deepEqual(await service.getState(), state);

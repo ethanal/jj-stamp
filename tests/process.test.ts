@@ -1,11 +1,81 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
+import {
+  formatCommand,
+  processFailureOutput,
+  ProcessError,
+  run,
+} from "../server/process.ts";
+
+test("failed commands retain all arguments with copyable POSIX shell quoting", () => {
+  assert.equal(
+    formatCommand("jj-hunk-tool", [
+      "squash",
+      "abc1234:2-4,7",
+      "--from",
+      "123abc",
+    ]),
+    "jj-hunk-tool squash abc1234:2-4,7 --from 123abc",
+  );
+  assert.equal(
+    formatCommand("/path with spaces/tool", []),
+    "'/path with spaces/tool'",
+  );
+  const args = [
+    "",
+    "two words",
+    "it's quoted",
+    '"double"',
+    "$(printf injected)",
+    "`printf injected`",
+    "a;b",
+    "*",
+    "a\\b",
+    "line\nbreak",
+  ];
+  const command = formatCommand(process.execPath, [
+    "-e",
+    "console.log(JSON.stringify(process.argv.slice(1)))",
+    ...args,
+  ]);
+  const result = spawnSync("sh", ["-c", command], { encoding: "utf8" });
+  assert.equal(result.status, 0, result.stderr);
+  assert.deepEqual(JSON.parse(result.stdout), args);
+});
+
+test("process failures include cwd and command without losing any tool output", async () => {
+  const cwd = os.tmpdir();
+  const args = [
+    "-e",
+    "process.stdout.write('out\\n'); process.stderr.write('err\\n'); process.exit(1)",
+  ];
+  await assert.rejects(run(process.execPath, args, cwd), (error: unknown) => {
+    assert.ok(error instanceof ProcessError);
+    assert.equal(error.cwd, cwd);
+    assert.equal(
+      processFailureOutput(error),
+      `Working directory: ${cwd}\nFailed command:\n${formatCommand(process.execPath, args)}\n\nout\nerr\n`,
+    );
+    return true;
+  });
+  assert.equal(
+    processFailureOutput(
+      new ProcessError(
+        "jj-hunk-tool",
+        ["squash"],
+        { stdout: "", stderr: "" },
+        1,
+      ),
+    ),
+    "Failed command:\njj-hunk-tool squash\n\n",
+  );
+});
 
 async function waitFile(file: string): Promise<string> {
   for (let attempt = 0; attempt < 250; attempt++) {

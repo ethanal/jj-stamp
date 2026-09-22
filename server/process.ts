@@ -10,11 +10,34 @@ export class ProcessError extends Error {
     public args: string[],
     public result: ProcessResult,
     public exitCode: number | null,
+    public cwd?: string,
   ) {
     super(
       `${command} failed: ${result.stderr.trim() || result.stdout.trim() || `exit ${exitCode}`}`,
     );
   }
+}
+
+/** POSIX-shell quoting for copyable diagnostics only; execution never uses a shell. */
+export function formatCommand(command: string, args: string[]): string {
+  return [command, ...args]
+    .map((arg) =>
+      /^[a-zA-Z0-9_@%+=:,./-]+$/.test(arg)
+        ? arg
+        : `'${arg.replaceAll("'", "'\\''")}'`,
+    )
+    .join(" ");
+}
+
+export function processFailureOutput(
+  error: ProcessError,
+  cwd = error.cwd,
+): string {
+  return (
+    (cwd ? `Working directory: ${cwd}\n` : "") +
+    `Failed command:\n${formatCommand(error.command, error.args)}\n\n` +
+    processOutput(error.result)
+  );
 }
 
 export function processOutput(result: ProcessResult): string {
@@ -63,7 +86,9 @@ export function run(
     child.on("close", (code) =>
       code === 0
         ? resolve({ stdout, stderr })
-        : reject(new ProcessError(command, args, { stdout, stderr }, code)),
+        : reject(
+            new ProcessError(command, args, { stdout, stderr }, code, cwd),
+          ),
     );
   });
 }
