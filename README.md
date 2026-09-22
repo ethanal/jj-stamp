@@ -1,5 +1,8 @@
 # jj-stamp
 
+> [!WARNING]
+> This is completely AI generated if that wasn't obvious. Maybe don't bother reading the code because I haven't. It's an experiment, and if it works out I might clean it up.
+
 A local, keyboard-first review UI for Jujutsu. Run **`jj-stamp`** in a jj workspace, then click a **change ID in the `jj log` graph** to choose what to review. Select changed lines and squash them into that change's **single mutable immediate parent**—not necessarily `@ → @-`.
 
 Pierre Diffs renders the code; Pierre Trees renders the file sidebar. The existing TypeScript backend uses `jj-hunk-tool` for exact line-level operations.
