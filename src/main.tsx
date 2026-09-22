@@ -11,7 +11,12 @@ import {
 import { createRoot } from "react-dom/client";
 import type { FileDiffLoadedFiles, SelectedLineRange } from "@pierre/diffs";
 import type { LogRow, RepoState, Selections } from "./types";
-import { refsFromSelection, specsForRefs, type RowRef } from "./optimistic";
+import {
+  refsFromFile,
+  refsFromSelection,
+  specsForRefs,
+  type RowRef,
+} from "./optimistic";
 import { SquashQueue } from "./squash-queue";
 import { api, errorMessage, errorDetails, type ErrorDetail } from "./api";
 import { useAppearancePreferences } from "./preferences";
@@ -346,33 +351,40 @@ function App() {
     },
     [queue, clear],
   );
-  const squash = useCallback(() => {
-    const current = queue.getSnapshot();
-    if (
-      lock.current ||
-      dragging ||
-      !count ||
-      !current.view ||
-      current.recovering ||
-      current.halted
-    )
-      return;
-    if (!current.view.parent) {
-      setError(
-        current.view.squashUnavailable ||
-          "The reviewed change needs one mutable parent.",
-      );
-      return;
-    }
-    setError("");
-    setNotice("");
-    try {
-      queue.enqueue(picked);
-      clear();
-    } catch (error) {
-      setError(error);
-    }
-  }, [queue, picked, count, dragging, clear]);
+  const squash = useCallback(
+    (path?: string) => {
+      const current = queue.getSnapshot();
+      if (
+        lock.current ||
+        dragging ||
+        (!path && !count) ||
+        !current.view ||
+        current.recovering ||
+        current.halted
+      )
+        return;
+      if (!current.view.parent || current.view.squashUnavailable) {
+        setError(
+          current.view.squashUnavailable ||
+            "The reviewed change needs one mutable parent.",
+        );
+        return;
+      }
+      try {
+        // Read the latest projection, not the original patch: earlier queued
+        // selections may already have removed part (or all) of this file.
+        const refs = path ? refsFromFile(current.view, path) : picked;
+        if (!refs.length) return;
+        setError("");
+        setNotice("");
+        queue.enqueue(refs);
+        clear();
+      } catch (error) {
+        setError(error);
+      }
+    },
+    [queue, picked, count, dragging, clear],
+  );
   const undo = useCallback(async () => {
     const current = queue.getSnapshot();
     if (
@@ -489,6 +501,12 @@ function App() {
   const deletions =
     state?.files.reduce((sum, file) => sum + file.deletions, 0) ?? 0;
   const idleActionDisabled = working || queued.pending > 0;
+  const squashDisabled =
+    working ||
+    dragging ||
+    queued.halted ||
+    !state?.parent ||
+    !!state.squashUnavailable;
   return (
     <div className="app">
       <header className="topbar">
@@ -539,7 +557,10 @@ function App() {
           expanded={showFiles}
           width={filesWidth}
           resizeDisabled={dragging}
-          navigationDisabled={working}
+          navigationDisabled={working || dragging}
+          squashDisabled={squashDisabled}
+          squashUnavailable={state?.squashUnavailable}
+          onSquashFile={squash}
           onResize={setFilesWidth}
           onToggle={() => setShowFiles((value) => !value)}
           onSelect={selectFile}
@@ -563,6 +584,8 @@ function App() {
           error={error}
           diagnostics={diagnostics}
           idleActionDisabled={idleActionDisabled}
+          squashDisabled={squashDisabled}
+          onSquashFile={squash}
           scrollRef={scroll}
           fileSections={fileSections}
           onFileViewChange={setFileView}
@@ -602,9 +625,7 @@ function App() {
         halted={queued.halted}
         notice={notice}
         queueNotice={queued.notice}
-        canSquash={
-          !!count && !!state?.parent && !working && !dragging && !queued.halted
-        }
+        canSquash={!!count && !squashDisabled}
         canUndo={
           !!queued.confirmed?.canUndo && !idleActionDisabled && !dragging
         }
@@ -614,7 +635,7 @@ function App() {
           state?.squashUnavailable ??
           "Queue selected lines into this change’s immediate parent"
         }
-        onSquash={squash}
+        onSquash={() => squash()}
         onUndo={() => void undo()}
         onClear={clear}
       />

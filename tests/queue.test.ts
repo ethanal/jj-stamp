@@ -5,6 +5,7 @@ import {
   changeSignature,
   projectSquash,
   refsFromSelection,
+  refsFromFile,
   type RowRef,
 } from "../src/optimistic.ts";
 import { RequestError } from "../src/api.ts";
@@ -645,4 +646,29 @@ test("selections enqueued by acknowledgement subscribers join the still-unsent b
   assert.equal(posts.length, 2);
   assert.equal(queue.getSnapshot().pending, 0);
   assert.equal(queue.getSnapshot().halted, false);
+});
+
+test("whole-file squash queues only remaining rows behind an in-flight partial squash", async () => {
+  const { queue, posts, state } = setup();
+  const partial = refs(state, 2);
+  queue.enqueue(partial);
+  const remaining = refsFromFile(queue.getSnapshot().view!, "a");
+  assert.equal(remaining.length, 3);
+  queue.enqueue(remaining);
+  assert.equal(posts.length, 1);
+  assert.equal(queue.getSnapshot().pending, 2);
+  assert.deepEqual(queue.getSnapshot().view!.files, []);
+  const firstAck = acknowledge(state, partial, "v1", true);
+  posts[0].result.resolve({ state: firstAck });
+  await tick();
+  assert.equal(posts.length, 2);
+  assert.deepEqual(posts[1].input, {
+    version: "v1",
+    selections: [{ id: "authoritative-v1", lines: [1, 2, 3] }],
+  });
+  posts[1].result.resolve({ state: acknowledge(firstAck, remaining, "v2") });
+  await tick();
+  assert.equal(queue.getSnapshot().pending, 0);
+  assert.equal(queue.getSnapshot().halted, false);
+  assert.deepEqual(queue.getSnapshot().confirmed!.files, []);
 });

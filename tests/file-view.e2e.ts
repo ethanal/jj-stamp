@@ -121,8 +121,8 @@ app.post("/api/squash-lines", (request, response) => {
   squashRefs = refsFromSelection(serverState, selected);
   serverState = {
     ...projectSquash(serverState, squashRefs),
-    version: "fixture-v2",
-    operation: "fixture-op-2",
+    version: `fixture-v${squashInputs.length + 1}`,
+    operation: `fixture-op-${squashInputs.length + 1}`,
     canUndo: true,
   };
   response.json({ state: serverState });
@@ -158,6 +158,18 @@ try {
   await expect(page.getByLabel("jj log output")).toHaveCSS(
     "padding-left",
     "20px",
+  );
+
+  const currentLog = page.locator(".log-row.is-current");
+  await expect(currentLog).toBeVisible();
+  const graphInset = await currentLog.evaluate(
+    (row) =>
+      row.firstElementChild!.getBoundingClientRect().left -
+      row.getBoundingClientRect().left,
+  );
+  assert(
+    graphInset >= 4,
+    "The @ marker needs padding inside the highlighted row",
   );
 
   await allFiles.click();
@@ -204,6 +216,41 @@ try {
   await expect
     .poll(() => viewport.evaluate((element) => element.scrollTop))
     .toBe(0);
+
+  // Each heading sticks to the viewport, then yields to the next file.
+  await viewport.evaluate((element) => {
+    element.scrollTop = 300;
+  });
+  await expect
+    .poll(async () => {
+      const heading = await section(firstPath)
+        .locator(".file-diff-heading")
+        .boundingBox();
+      const view = await viewport.boundingBox();
+      assert(heading && view);
+      return Math.abs(heading.y - view.y);
+    })
+    .toBeLessThanOrEqual(2);
+  await treeRow(secondPath).click();
+  await viewport.evaluate((element) => {
+    element.scrollTop += 300;
+  });
+  await expect
+    .poll(async () => {
+      const heading = await section(secondPath)
+        .locator(".file-diff-heading")
+        .boundingBox();
+      const view = await viewport.boundingBox();
+      assert(heading && view);
+      return Math.abs(heading.y - view.y);
+    })
+    .toBeLessThanOrEqual(2);
+  await expect(
+    section(unsupportedPath).getByRole("button", {
+      name: `Squash file ${unsupportedPath}`,
+      exact: true,
+    }),
+  ).toBeDisabled();
 
   await addition(firstPath, 80).click();
   await expect(page.getByRole("status")).toContainText(
@@ -285,6 +332,106 @@ try {
   await expect(allFiles).toHaveAttribute("aria-pressed", "true");
   await expect(oneFile).toHaveAttribute("aria-pressed", "false");
   await expect(page.locator(".file-diff-section")).toHaveCount(3);
+
+  const sidebarSquash = page.locator(".file-tree-squash");
+  await treeRow(unsupportedPath).hover();
+  await expect(sidebarSquash).toBeDisabled();
+  await expect(sidebarSquash).toHaveAttribute(
+    "title",
+    unsupportedFile.unsupported!,
+  );
+  await page.locator('.file-tree [data-item-path="vendor/"]').hover();
+  await expect(sidebarSquash).toHaveCount(0);
+
+  // Keyboard users can reach the same action without navigating to that file.
+  await page.locator(".file-bar").hover();
+  await treeRow(secondPath).focus();
+  await page.keyboard.press("Tab");
+  await expect(sidebarSquash).toBeFocused();
+  await expect(sidebarSquash).toHaveAttribute(
+    "aria-label",
+    `Squash file ${secondPath}`,
+  );
+  await page.keyboard.press("Escape");
+  await expect(treeRow(secondPath)).toBeFocused();
+
+  // A whole-file action ignores the active line selection in another file.
+  await addition(firstPath, 10).click();
+  await section(secondPath)
+    .getByRole("button", { name: `Squash file ${secondPath}`, exact: true })
+    .click();
+  await expect(page.locator(".queue-count")).toHaveCount(0);
+  await expect(section(secondPath)).toHaveCount(0);
+  assert.equal(squashInputs.length, 2);
+  assert.equal(
+    squashRefs.length,
+    21,
+    "Only the remaining changes after the earlier partial squash",
+  );
+  assert(squashRefs.every((ref) => ref.path === secondPath));
+  assert.equal(serverState.files[0].patch, originalFirstPatch);
+
+  // Restore to exercise the one-file header and the sidebar separately.
+  serverState = {
+    ...structuredClone(initialState),
+    version: "fixture-reset",
+    operation: "fixture-op-reset",
+  };
+  await page.keyboard.press("r");
+  await expect(section(secondPath)).toHaveCount(1);
+  await oneFile.click();
+  await page
+    .locator(".file-bar")
+    .getByRole("button", { name: `Squash file ${firstPath}`, exact: true })
+    .click();
+  await expect(page.locator(".queue-count")).toHaveCount(0);
+  await expect(treeRow(firstPath)).toHaveCount(0);
+  assert(squashRefs.every((ref) => ref.path === firstPath));
+  assert.equal(squashRefs.length, 20);
+
+  await treeRow(unsupportedPath).click();
+  await expect(
+    page.locator(".file-bar").getByRole("button", {
+      name: `Squash file ${unsupportedPath}`,
+      exact: true,
+    }),
+  ).toBeDisabled();
+  await treeRow(secondPath).hover();
+  await page
+    .getByRole("navigation", { name: "Changed files" })
+    .getByRole("button", { name: `Squash file ${secondPath}`, exact: true })
+    .click();
+  await expect(page.locator(".queue-count")).toHaveCount(0);
+  await expect(treeRow(secondPath)).toHaveCount(0);
+  await expect(treeRow(unsupportedPath)).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  assert(squashRefs.every((ref) => ref.path === secondPath));
+  assert.equal(squashRefs.length, 22);
+  await allFiles.click();
+
+  // Read-only destination guards disable both entry points, not just line squash.
+  serverState = {
+    ...structuredClone(initialState),
+    parent: null,
+    squashUnavailable: "The parent is immutable.",
+    version: "fixture-blocked",
+    operation: "fixture-op-blocked",
+  };
+  await page.keyboard.press("r");
+  await expect(
+    section(firstPath).getByRole("button", {
+      name: `Squash file ${firstPath}`,
+      exact: true,
+    }),
+  ).toBeDisabled();
+  await treeRow(firstPath).hover();
+  await expect(sidebarSquash).toBeDisabled();
+  await expect(sidebarSquash).toHaveAttribute(
+    "title",
+    "The parent is immutable.",
+  );
 
   serverState = {
     ...serverState,

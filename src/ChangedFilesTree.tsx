@@ -1,12 +1,17 @@
 import { useLayoutEffect, useRef } from "react";
 import { FileTree, useFileTree } from "@pierre/trees/react";
 import type { GitStatusEntry } from "@pierre/trees";
+import { FileTreeSquashAction } from "./FileTreeSquashAction";
+import "./file-tree-squash.css";
 import type { DiffFile } from "./types";
 
 interface Props {
   files: DiffFile[];
   activePath?: string;
   disabled: boolean;
+  squashDisabled: boolean;
+  squashUnavailable?: string;
+  onSquash: (path: string) => void;
   onSelect: (path: string) => void;
 }
 
@@ -22,6 +27,7 @@ function directoryPaths(files: DiffFile[]): string[] {
 }
 
 export function ChangedFilesTree(props: Props) {
+  const container = useRef<HTMLElement>(null);
   // Trees owns its model for the lifetime of the component; callbacks must read
   // the latest optimistic state rather than the props from its construction.
   const current = useRef(props);
@@ -48,6 +54,8 @@ export function ChangedFilesTree(props: Props) {
       [data-item-section="content"] { flex: 1 1 0; }
       [data-item-section="decoration"] { flex: 0 0 auto; font-size: 10px; }
       [data-item-section="decoration"] > span { display: inline-flex; gap: 4px; }
+      /* Keep a permanent action lane so hover never hides counts or shifts text. */
+      [data-item-type="file"] { padding-right: calc(var(--trees-item-padding-x) + 28px); }
     `,
     onSelectionChange(paths) {
       if (syncing.current) return;
@@ -148,12 +156,21 @@ export function ChangedFilesTree(props: Props) {
 
   return (
     <nav
+      ref={container}
       className="changed-files"
       aria-label="Changed files"
       inert={props.disabled}
       aria-disabled={props.disabled}
     >
       <FileTree model={model} className="file-tree" />
+      <FileTreeSquashAction
+        container={container}
+        model={model}
+        files={props.files}
+        disabled={props.disabled || props.squashDisabled}
+        unavailable={props.squashUnavailable}
+        onSquash={props.onSquash}
+      />
     </nav>
   );
 }

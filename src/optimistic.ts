@@ -84,6 +84,24 @@ export function refsFromSelection(
   return refs;
 }
 
+/** Select every remaining changed row in one file from the current optimistic view. */
+export function refsFromFile(state: RepoState, path: string): RowRef[] {
+  const file = state.files.find((entry) => entry.path === path);
+  if (!file) throw new Error("Selected file no longer exists.");
+  if (file.unsupported) throw new Error("Selected file is unsupported.");
+  return refsFromSelection(
+    state,
+    Object.fromEntries(
+      file.hunks.map((hunk) => [
+        hunk.id,
+        hunk.rows
+          .filter((row) => row.raw[0] === "+" || row.raw[0] === "-")
+          .map((row) => row.index),
+      ]),
+    ),
+  );
+}
+
 /** Remap only by the full path/side/source-line/body tuple; never by text alone. */
 export function specsForRefs(state: RepoState, refs: RowRef[]): SquashSpec[] {
   const wanted = checkedKeys(refs);

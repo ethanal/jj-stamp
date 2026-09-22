@@ -6,6 +6,7 @@ import {
   combineSquashRefs,
   projectSquash,
   refsFromSelection,
+  refsFromFile,
   specsForRefs,
   type RowRef,
 } from "../src/optimistic.ts";
@@ -564,4 +565,27 @@ test("compaction rejects duplicate, stale, and already-moved references", () => 
     () => combineSquashRefs(repo, addition, addition),
     /no longer match/,
   );
+});
+
+test("whole-file references include every hunk but no context or other file, including after a partial squash", () => {
+  const repo = state(
+    file(
+      "a",
+      "@@ -1,3 +1,3 @@\n same\n-old\n+new\n end\n@@ -10,2 +10,2 @@\n-last\n+latest\n tail",
+    ),
+    file("b", "@@ -1 +1 @@\n-other\n+updated"),
+  );
+  const refs = refsFromFile(repo, "a");
+  assert.equal(refs.length, 4);
+  assert.deepEqual(specsForRefs(repo, refs), [
+    { id: "a-0", lines: [2, 3] },
+    { id: "a-1", lines: [1, 2] },
+  ]);
+  const partial = projectSquash(repo, [refs[0]]);
+  const remaining = refsFromFile(partial, "a");
+  assert.equal(remaining.length, 3);
+  assert.deepEqual(projectSquash(partial, remaining).files, [repo.files[1]]);
+  assert.throws(() => refsFromFile(repo, "missing"), /no longer exists/);
+  repo.files[0].unsupported = "Read-only";
+  assert.throws(() => refsFromFile(repo, "a"), /unsupported/);
 });

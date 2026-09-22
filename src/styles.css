@@ -556,6 +556,9 @@ kbd {
   padding-bottom: 20px;
 }
 .file-diff-heading {
+  position: sticky;
+  top: 0;
+  z-index: 5;
   display: flex;
   align-items: center;
   gap: 14px;
@@ -648,6 +651,7 @@ kbd {
   scrollbar-color: var(--scrollbar) var(--panel);
 }
 .log-row {
+  padding-inline: 4px;
   display: block;
   width: max-content;
   min-width: 100%;
@@ -891,4 +895,10 @@ kbd {
   .jj-log {
     font-size: 10px;
   }
+}
+
+.squash-file {
+  flex-shrink: 0;
+  white-space: nowrap;
+  font-size: 10px;
 }

@@ -5,6 +5,7 @@ import { ChangedFilesTree } from "./ChangedFilesTree";
 import { CodeDiff } from "./CodeDiff";
 import { ChangeId } from "./ReviewToolbar";
 import { SidebarResize } from "./SidebarResize";
+import { SquashFileButton } from "./SquashFileButton";
 import type { ColorScheme, FileView } from "./preferences";
 import type {
   DiffFile,
@@ -80,6 +81,9 @@ export function FilesSidebar({
   width,
   resizeDisabled,
   navigationDisabled,
+  squashDisabled,
+  squashUnavailable,
+  onSquashFile,
   onResize,
   onToggle,
   onSelect,
@@ -92,6 +96,9 @@ export function FilesSidebar({
   width: number;
   resizeDisabled: boolean;
   navigationDisabled: boolean;
+  squashDisabled: boolean;
+  squashUnavailable?: string;
+  onSquashFile: (path: string) => void;
   onResize: (width: number) => void;
   onToggle: () => void;
   onSelect: (path: string) => void;
@@ -139,6 +146,9 @@ export function FilesSidebar({
               activePath={activePath}
               disabled={navigationDisabled}
               onSelect={onSelect}
+              squashDisabled={squashDisabled}
+              squashUnavailable={squashUnavailable}
+              onSquash={onSquashFile}
             />
           )}
         </div>
@@ -273,6 +283,8 @@ export function ReviewViewer({
   error,
   diagnostics,
   idleActionDisabled,
+  squashDisabled,
+  onSquashFile,
   scrollRef,
   fileSections,
   onFileViewChange,
@@ -303,6 +315,8 @@ export function ReviewViewer({
   error: string;
   diagnostics: ErrorDetail[];
   idleActionDisabled: boolean;
+  squashDisabled: boolean;
+  onSquashFile: (path: string) => void;
   scrollRef: RefObject<HTMLDivElement | null>;
   fileSections: RefObject<Map<string, HTMLElement>>;
   onFileViewChange: (view: FileView) => void;
@@ -329,7 +343,18 @@ export function ReviewViewer({
         </span>
         <div className="file-bar-tools">
           {file && fileView === "single" && (
-            <LineCounts additions={file.additions} deletions={file.deletions} />
+            <>
+              <LineCounts
+                additions={file.additions}
+                deletions={file.deletions}
+              />
+              <SquashFileButton
+                file={file}
+                disabled={squashDisabled}
+                unavailable={state?.squashUnavailable}
+                onSquash={onSquashFile}
+              />
+            </>
           )}
           <ToggleGroup
             label="File view"
@@ -409,6 +434,12 @@ export function ReviewViewer({
                   <LineCounts
                     additions={entry.additions}
                     deletions={entry.deletions}
+                  />
+                  <SquashFileButton
+                    file={entry}
+                    disabled={squashDisabled}
+                    unavailable={state.squashUnavailable}
+                    onSquash={onSquashFile}
                   />
                 </div>
               )}

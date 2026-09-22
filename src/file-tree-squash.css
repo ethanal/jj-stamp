@@ -1,0 +1,35 @@
+.changed-files {
+  position: relative;
+}
+
+.file-tree-squash {
+  position: absolute;
+  z-index: 5;
+  width: 24px;
+  margin-top: 2px;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  color: var(--muted);
+  background: var(--panel);
+  border: 1px solid transparent;
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+.file-tree-squash:hover:not(:disabled) {
+  color: var(--strong);
+  background: var(--hover);
+  border-color: var(--border);
+}
+
+.file-tree-squash:focus-visible {
+  color: var(--strong);
+  outline: 2px solid var(--focus);
+  outline-offset: -2px;
+}
+
+.file-tree-squash:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
