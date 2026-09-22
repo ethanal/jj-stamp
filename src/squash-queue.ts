@@ -1,5 +1,6 @@
 import {
   changeSignature,
+  combineSquashRefs,
   projectSquash,
   specsForRefs,
   type RowRef,
@@ -27,12 +28,13 @@ export interface Snapshot {
   epoch: number;
 }
 interface Job {
+  before: RepoState;
   refs: RowRef[];
   beforeSignature: string;
   count: number;
 }
 
-/** In-memory FIFO. Each mutation is sent at most once, against an acknowledged version. */
+/** One in-flight mutation and one compacted waiting batch, each sent at most once. */
 export class SquashQueue {
   private snapshot: Snapshot = {
     confirmed: null,
@@ -48,6 +50,7 @@ export class SquashQueue {
   private jobs: Job[] = [];
   private listeners = new Set<() => void>();
   private draining = false;
+  private inFlight: Job | null = null;
 
   constructor(private readonly transport: SquashTransport) {}
 
@@ -110,7 +113,21 @@ export class SquashQueue {
     const saved = refs.map((ref) => ({ ...ref }));
     const beforeSignature = changeSignature(view);
     const projected = projectSquash(view, saved);
-    this.jobs.push({ refs: saved, beforeSignature, count: saved.length });
+    const tail = this.jobs.at(-1);
+    if (tail && tail !== this.inFlight) {
+      // Later selections use the projected parent's coordinates, not the
+      // waiting batch's original coordinates. Never modify a dispatched job.
+      const combined = combineSquashRefs(tail.before, tail.refs, saved);
+      tail.refs = combined;
+      tail.count = combined.length;
+    } else {
+      this.jobs.push({
+        before: view,
+        refs: saved,
+        beforeSignature,
+        count: saved.length,
+      });
+    }
     this.publish({
       view: projected,
       pending: this.jobs.length,
@@ -186,6 +203,7 @@ export class SquashQueue {
           );
         const selections = specsForRefs(confirmed, job.refs);
         const expected = projectSquash(confirmed, job.refs);
+        this.inFlight = job;
         const result = await this.transport.squash({
           version: confirmed.version,
           selections,
@@ -203,6 +221,7 @@ export class SquashQueue {
           return;
         }
         this.jobs.shift();
+        this.inFlight = null;
         const idle = this.jobs.length === 0;
         // Keep the rendered files AND epoch stable across acknowledgements. The
         // user may be dragging a new range against these original projected IDs.
@@ -221,6 +240,7 @@ export class SquashQueue {
     } catch (error) {
       await this.recover(error);
     } finally {
+      this.inFlight = null;
       this.draining = false;
       // A subscriber can explicitly replace/re-enqueue when recovery completes.
       if (this.jobs.length && !this.snapshot.halted) void this.drain();

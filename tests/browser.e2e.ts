@@ -633,7 +633,7 @@ try {
     if (queuedRequests.length === 1) await held;
     await route.continue();
   });
-  const queueLines = longAdditions.slice(4, 7);
+  const queueLines = longAdditions.slice(4, 8);
   await codeLine(queueLines[0].newLine!).click();
   await page.keyboard.press("s");
   await expect(page.getByRole("status")).toContainText("1 queued");
@@ -659,8 +659,13 @@ try {
       .getByRole("button", { name: "Show 10 lines above", exact: true })
       .first(),
   ).toHaveAttribute("aria-disabled", "true");
-  // A new selection must survive earlier operations being acknowledged.
   await codeLine(queueLines[2].newLine!).click();
+  await page.keyboard.press("s");
+  await expect(page.getByRole("status")).toContainText("2 queued");
+  await expect(codeLine(queueLines[2].newLine!)).toHaveCount(0);
+  await expect(page.getByLabel("Change line counts")).toHaveText("+37−0");
+  // A new selection must survive earlier operations being acknowledged.
+  await codeLine(queueLines[3].newLine!).click();
   await page.getByRole("button", { name: "Split", exact: true }).click();
   await expect(page.getByRole("status")).toContainText(
     "1 changed line selected",
@@ -681,7 +686,16 @@ try {
   await expect(page.getByRole("status")).toContainText(
     "1 changed line selected",
   );
-  await pressMutation("s");
+  // Undo restores both selections in the compacted batch, but not the first.
+  await page.keyboard.press("Escape");
+  await pressMutation("u");
+  await expect(page.getByLabel("Change line counts")).toHaveText("+39−0");
+  await expect(codeLine(queueLines[0].newLine!)).toHaveCount(0);
+  for (const row of queueLines.slice(1, 3)) {
+    await expect(codeLine(row.newLine!)).toBeVisible();
+    await codeLine(row.newLine!).click();
+    await pressMutation("s");
+  }
   assert.equal(
     (await service.getState()).files.find(
       (file) => file.path === "src/long.ts",
@@ -690,10 +704,10 @@ try {
   );
   await page.unroute("**/api/squash-lines");
   console.log(
-    "✓ Instant speculative rows/counts, FIFO, fresh-version remapping, and selection survives ACKs/layout changes",
+    "✓ Instant speculative rows/counts, compaction/undo, fresh-version remapping, and selection survives ACKs/layout changes",
   );
 
-  // First queued operation succeeds, second fails, third must never be dispatched.
+  // First squash succeeds; the compacted follow-up fails and must never be retried.
   const failState = await service.getState();
   const failLines = failState.files
     .find((file) => file.path === "src/long.ts")!
@@ -728,7 +742,7 @@ try {
     await codeLine(row.newLine!).click();
     await page.keyboard.press("s");
   }
-  await expect(page.getByRole("status")).toContainText("3 queued");
+  await expect(page.getByRole("status")).toContainText("2 queued");
   await expect(page.getByLabel("Change line counts")).toHaveText("+34−0");
   releaseFailure();
   await expect(page.getByRole("alert")).toContainText(
@@ -750,11 +764,7 @@ try {
   );
   await expect(page.getByLabel("Change line counts")).toHaveText("+36−0");
   await expect(treeRow("src/long.ts")).toContainText("+36−0");
-  assert.equal(
-    failureRequests,
-    2,
-    "failed second job is not retried; third is canceled",
-  );
+  assert.equal(failureRequests, 2, "failed compacted batch is not retried");
   await expect(codeLine(failLines[1].newLine!)).toBeVisible();
   await expect(codeLine(failLines[2].newLine!)).toBeVisible();
   assert.equal(
@@ -773,7 +783,7 @@ try {
     "Drag code to select lines",
   );
   console.log(
-    "✓ Failure shows literal multiline tool output/code, stops FIFO, and reloads without replay",
+    "✓ Failure shows literal multiline tool output/code, stops the queue, and reloads without replay",
   );
 
   await codeLine(failLines[1].newLine!).click();

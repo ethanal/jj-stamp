@@ -136,6 +136,48 @@ export function changeSignature(state: RepoState): string {
   return JSON.stringify(keys.sort());
 }
 
+/** Combine selections made before and after a projection in the original coordinates. */
+export function combineSquashRefs(
+  state: RepoState,
+  selected: RowRef[],
+  next: RowRef[],
+): RowRef[] {
+  specsForRefs(state, selected);
+  const moved = checkedKeys(selected);
+  const wanted = checkedKeys(next);
+  const combined = [...selected];
+  const matched = new Set<string>();
+  for (const file of state.files) {
+    // Squashing only changes the parent side. Carry its offset across hunks,
+    // but never across files; additions retain their source coordinates.
+    let delta = 0;
+    for (const hunk of file.hunks)
+      for (const row of hunk.rows) {
+        if (row.raw[0] !== "+" && row.raw[0] !== "-") continue;
+        const original = rowRef(file.path, row);
+        if (moved.has(key(original))) {
+          delta += original.kind === "+" ? 1 : -1;
+          continue;
+        }
+        const projected = key({
+          ...original,
+          line: original.line + (original.kind === "-" ? delta : 0),
+        });
+        if (!wanted.has(projected)) continue;
+        if (matched.has(projected))
+          throw new Error("Changed-row reference is ambiguous.");
+        matched.add(projected);
+        combined.push(original);
+      }
+  }
+  if (matched.size !== wanted.size)
+    throw new Error(
+      "Selected changes no longer match the repository; refresh before squashing.",
+    );
+  specsForRefs(state, combined);
+  return combined;
+}
+
 const CONTEXT_LINES = 3;
 
 /** Keep only the context surrounding remaining changes, splitting long gaps. */

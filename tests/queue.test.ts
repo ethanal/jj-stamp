@@ -206,6 +206,7 @@ test("network/tool failure discards every speculative job, reloads once, and nev
   const first = refs(state, 2);
   queue.enqueue(first);
   queue.enqueue(refs(queue.getSnapshot().view!, 2));
+  queue.enqueue(refs(queue.getSnapshot().view!, 2));
   const epoch = queue.getSnapshot().epoch;
   posts[0].result.reject(new Error("Network connection lost"));
   await tick();
@@ -415,20 +416,17 @@ test("queued deletion coordinates track earlier moved rows and independent files
   await tick();
   assert.deepEqual(posts[1].input, {
     version: "v1",
-    selections: [{ id: "authoritative-v1", lines: [2] }],
+    selections: [
+      { id: "authoritative-v1", lines: [2] },
+      { id: "other-v1", lines: [4] },
+    ],
   });
-  actual = acknowledge(actual, second, "v2");
+  actual = acknowledge(actual, [...second, ...third], "v2");
   actual.files[1].hunks[0].id = "other-v2";
   posts[1].result.resolve({ state: actual });
   await tick();
-  assert.deepEqual(posts[2].input, {
-    version: "v2",
-    selections: [{ id: "other-v2", lines: [4] }],
-  });
-  actual = acknowledge(actual, third, "v3");
-  actual.files[1].hunks[0].id = "other-v3";
-  posts[2].result.resolve({ state: actual });
-  await tick();
+  assert.equal(posts.length, 2);
+  assert.equal(queue.getSnapshot().notice, "2 lines squashed.");
   assert.equal(queue.getSnapshot().halted, false);
   assert.equal(queue.getSnapshot().pending, 0);
   assert.equal(queue.getSnapshot().view!.files, files);
@@ -506,4 +504,145 @@ test("squash diagnostics survive successful and failed reloads, and dismissal ne
     queue.replace(state);
     assert.deepEqual(queue.getSnapshot().errorDetails, []);
   }
+});
+
+for (const order of [
+  ["+new1", "-old1", "-old2", "+new2"],
+  ["+new2", "-old2", "-old1", "+new1"],
+]) {
+  test(`waiting selections compact with shifted deletion coordinates: ${order}`, async () => {
+    const { queue, posts, state } = setup();
+    let actual = state;
+    let afterFirst!: RepoState;
+    for (const [index, raw] of order.entries()) {
+      const view = queue.getSnapshot().view!;
+      const row = view.files[0].hunks[0].rows.find((row) => row.raw === raw)!;
+      const selected = refs(view, row.index);
+      queue.enqueue(selected);
+      actual = acknowledge(actual, selected, `v${index + 1}`);
+      if (!index) afterFirst = actual;
+      assert.equal(posts.length, 1);
+      assert.equal(queue.getSnapshot().pending, Math.min(index + 1, 2));
+    }
+    const files = queue.getSnapshot().view!.files;
+    const epoch = queue.getSnapshot().epoch;
+    assert.deepEqual(files, []);
+    posts[0].result.resolve({ state: afterFirst });
+    await tick();
+    assert.equal(posts.length, 2);
+    assert.deepEqual(posts[1].input, {
+      version: afterFirst.version,
+      selections: [
+        {
+          id: "authoritative-v1",
+          lines: order[0] === "+new1" ? [2, 3, 5] : [2, 3, 4],
+        },
+      ],
+    });
+    posts[1].result.resolve({ state: actual });
+    await tick();
+    assert.equal(queue.getSnapshot().halted, false);
+    assert.equal(queue.getSnapshot().pending, 0);
+    assert.equal(queue.getSnapshot().notice, "3 lines squashed.");
+    assert.equal(queue.getSnapshot().view!.files, files);
+    assert.equal(queue.getSnapshot().epoch, epoch);
+  });
+}
+
+test("new selections form a fresh batch while the compacted squash is in flight", async () => {
+  const { queue, posts, state } = setup();
+  const first = refs(state, 4);
+  queue.enqueue(first);
+  const second = refs(queue.getSnapshot().view!, 2);
+  queue.enqueue(second);
+  const third = refs(queue.getSnapshot().view!, 2);
+  queue.enqueue(third);
+  const actual1 = acknowledge(state, first, "v1");
+  posts[0].result.resolve({ state: actual1 });
+  await tick();
+  const dispatched = structuredClone(posts[1].input);
+  const fourth = refs(queue.getSnapshot().view!, 3);
+  queue.enqueue(fourth);
+  assert.equal(posts.length, 2);
+  assert.deepEqual(posts[1].input, dispatched);
+  assert.equal(queue.getSnapshot().pending, 2);
+  const actual2 = acknowledge(
+    acknowledge(actual1, second, "intermediate"),
+    third,
+    "v2",
+  );
+  posts[1].result.resolve({ state: actual2 });
+  await tick();
+  assert.equal(posts.length, 3);
+  assert.equal(posts[2].input.version, "v2");
+  posts[2].result.resolve({ state: acknowledge(actual2, fourth, "v3") });
+  await tick();
+  assert.equal(queue.getSnapshot().pending, 0);
+  assert.equal(queue.getSnapshot().halted, false);
+});
+
+test("invalid selections cannot alter a compacted waiting batch", async () => {
+  const { queue, posts, state } = setup();
+  const first = refs(state, 4);
+  queue.enqueue(first);
+  const second = refs(queue.getSnapshot().view!, 2);
+  queue.enqueue(second);
+  const third = refs(queue.getSnapshot().view!, 2);
+  queue.enqueue(third);
+  const before = queue.getSnapshot();
+  const remaining = refs(before.view!, 3);
+  assert.throws(() => queue.enqueue([...remaining, ...remaining]), /Duplicate/);
+  assert.throws(() => queue.enqueue(second), /no longer match/);
+  assert.equal(queue.getSnapshot(), before);
+  const actual1 = acknowledge(state, first, "v1");
+  posts[0].result.resolve({ state: actual1 });
+  await tick();
+  assert.deepEqual(posts[1].input.selections, [
+    { id: "authoritative-v1", lines: [2, 3] },
+  ]);
+  posts[1].result.resolve({
+    state: acknowledge(
+      acknowledge(actual1, second, "intermediate"),
+      third,
+      "v2",
+    ),
+  });
+  await tick();
+  assert.equal(queue.getSnapshot().halted, false);
+  assert.equal(queue.getSnapshot().pending, 0);
+});
+
+test("selections enqueued by acknowledgement subscribers join the still-unsent batch", async () => {
+  const { queue, posts, state } = setup();
+  const first = refs(state, 4);
+  queue.enqueue(first);
+  const second = refs(queue.getSnapshot().view!, 2);
+  queue.enqueue(second);
+  const actual1 = acknowledge(state, first, "v1");
+  let third: RowRef[] = [];
+  const stop = queue.subscribe(() => {
+    if (queue.getSnapshot().confirmed === actual1) {
+      stop();
+      third = refs(queue.getSnapshot().view!, 2);
+      queue.enqueue(third);
+    }
+  });
+  posts[0].result.resolve({ state: actual1 });
+  await tick();
+  assert.equal(posts.length, 2);
+  assert.equal(queue.getSnapshot().pending, 1);
+  assert.deepEqual(posts[1].input.selections, [
+    { id: "authoritative-v1", lines: [2, 3] },
+  ]);
+  posts[1].result.resolve({
+    state: acknowledge(
+      acknowledge(actual1, second, "intermediate"),
+      third,
+      "v2",
+    ),
+  });
+  await tick();
+  assert.equal(posts.length, 2);
+  assert.equal(queue.getSnapshot().pending, 0);
+  assert.equal(queue.getSnapshot().halted, false);
 });

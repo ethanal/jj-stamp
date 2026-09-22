@@ -3,6 +3,7 @@ import test from "node:test";
 import { parseFile } from "../server/diff.ts";
 import {
   changeSignature,
+  combineSquashRefs,
   projectSquash,
   refsFromSelection,
   specsForRefs,
@@ -502,4 +503,65 @@ test("split hunk IDs avoid existing IDs across files and remain deterministic", 
     }),
   );
   validatePatches(projected);
+});
+
+test("compaction preserves exact row identity across files, hunks, repeated text and selection orders", () => {
+  const repo = state(
+    file(
+      "a",
+      "@@ -2,0 +3,2 @@\n+same\n+same\n@@ -10,2 +12,0 @@\n-same\n-same\n@@ -20,2 +20,2 @@\n-same\n+same\n end",
+    ),
+    file("new", "@@ -0,0 +1,3 @@\n+same\n+same\n+same", "new"),
+    file("gone", "@@ -1,3 +0,0 @@\n-same\n-same\n-same", "deleted"),
+  );
+  let seed = 12345;
+  for (let run = 0; run < 50; run++) {
+    let view = repo;
+    let combined: RowRef[] = [];
+    while (view.files.length) {
+      const available = refsFromSelection(
+        view,
+        Object.fromEntries(
+          view.files.flatMap((file) =>
+            file.hunks.map((hunk) => [
+              hunk.id,
+              hunk.rows
+                .filter((row) => /^[+-]/.test(row.raw))
+                .map((row) => row.index),
+            ]),
+          ),
+        ),
+      );
+      seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
+      const next = [available[seed % available.length]];
+      combined = combineSquashRefs(repo, combined, next);
+      view = projectSquash(view, next);
+      assert.equal(
+        changeSignature(projectSquash(repo, combined)),
+        changeSignature(view),
+      );
+    }
+    assert.equal(combined.length, 12);
+  }
+});
+
+test("compaction rejects duplicate, stale, and already-moved references", () => {
+  const repo = state(file("a", "@@ -1,2 +1,2 @@\n-old\n-old\n+new\n+new"));
+  const selected = select(repo, "a-0", 1);
+  const next = select(projectSquash(repo, selected), "a-0", 1);
+  assert.equal(next[0].line, 1);
+  assert.equal(combineSquashRefs(repo, selected, next)[1].line, 2);
+  assert.throws(
+    () => combineSquashRefs(repo, selected, [next[0], next[0]]),
+    /Duplicate/,
+  );
+  assert.throws(
+    () => combineSquashRefs(repo, selected, [{ ...next[0], text: "stale" }]),
+    /no longer match/,
+  );
+  const addition = select(repo, "a-0", 3);
+  assert.throws(
+    () => combineSquashRefs(repo, addition, addition),
+    /no longer match/,
+  );
 });
