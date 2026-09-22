@@ -1,7 +1,14 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
-import { mkdtemp, readFile, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  mkdir,
+  mkdtemp,
+  readFile,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -75,6 +82,80 @@ test("process failures include cwd and command without losing any tool output", 
     ),
     "Failed command:\njj-hunk-tool squash\n\n",
   );
+});
+
+test("packaged hunk tool executes and reports its pinned wrapper path, not ambient PATH", async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "jj-stamp-pinned-tool-"));
+  const wrapper = path.join(
+    root,
+    "store path's wrapper",
+    "bin",
+    "jj-hunk-tool",
+  );
+  const ambient = path.join(root, "ambient", "jj-hunk-tool");
+  await mkdir(path.dirname(wrapper), { recursive: true });
+  await mkdir(path.dirname(ambient));
+  await writeFile(
+    wrapper,
+    `#!${process.execPath}\nconsole.log(JSON.stringify(process.argv.slice(2))); console.error('pinned failure'); process.exit(1);\n`,
+  );
+  await writeFile(
+    ambient,
+    `#!${process.execPath}\nconsole.error('WRONG ambient tool'); process.exit(2);\n`,
+  );
+  await chmod(wrapper, 0o755);
+  await chmod(ambient, 0o755);
+  const oldPath = process.env.PATH;
+  const oldTool = process.env.JJ_STAMP_HUNK_TOOL;
+  t.after(async () => {
+    if (oldPath === undefined) delete process.env.PATH;
+    else process.env.PATH = oldPath;
+    if (oldTool === undefined) delete process.env.JJ_STAMP_HUNK_TOOL;
+    else process.env.JJ_STAMP_HUNK_TOOL = oldTool;
+    await rm(root, { recursive: true });
+  });
+  process.env.PATH = path.dirname(ambient);
+  process.env.JJ_STAMP_HUNK_TOOL = wrapper;
+  const args = [
+    "squash",
+    "273b22d:20-21,24-29",
+    "--from",
+    "abc",
+    "--into",
+    "def",
+    "--use-destination-message",
+    "--keep-emptied",
+  ];
+  await assert.rejects(run("jj-hunk-tool", args, root), (error: unknown) => {
+    assert.ok(error instanceof ProcessError);
+    assert.equal(error.command, wrapper);
+    assert.equal(error.exitCode, 1);
+    assert.deepEqual(JSON.parse(error.result.stdout), args);
+    assert.equal(error.result.stderr, "pinned failure\n");
+    assert.equal(
+      processFailureOutput(error),
+      `Working directory: ${root}\nFailed command:\n${formatCommand(wrapper, args)}\n\n${error.result.stdout}${error.result.stderr}`,
+    );
+    // The printed command runs the same wrapper without the launcher's env.
+    const copied = spawnSync(
+      "/bin/sh",
+      ["-c", formatCommand(error.command, error.args)],
+      { cwd: root, encoding: "utf8", env: { PATH: path.dirname(ambient) } },
+    );
+    assert.equal(copied.status, 1, copied.stderr);
+    assert.deepEqual(JSON.parse(copied.stdout), args);
+    assert.equal(copied.stderr, error.result.stderr);
+    return true;
+  });
+  // Non-Nix execution still uses PATH when there is no packaged override.
+  delete process.env.JJ_STAMP_HUNK_TOOL;
+  await assert.rejects(run("jj-hunk-tool", args, root), (error: unknown) => {
+    assert.ok(error instanceof ProcessError);
+    assert.equal(error.command, "jj-hunk-tool");
+    assert.equal(error.exitCode, 2);
+    assert.match(error.result.stderr, /WRONG ambient tool/);
+    return true;
+  });
 });
 
 async function waitFile(file: string): Promise<string> {

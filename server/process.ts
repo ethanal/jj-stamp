@@ -63,7 +63,12 @@ export function run(
     // These are private protocol variables. Inheriting one could reverse a squash.
     delete env.JJ_HUNK_TOOL_PATCH;
     delete env.JJ_HUNK_TOOL_REVERSE;
-    const child = spawn(command, args, {
+    // The Nix launcher pins the wrapped executable, not its hidden payload.
+    // Use this same path for execution and diagnostics so copying a failure
+    // cannot accidentally run a different, unpatched tool from the user's PATH.
+    const executable =
+      command === "jj-hunk-tool" ? env.JJ_STAMP_HUNK_TOOL || command : command;
+    const child = spawn(executable, args, {
       cwd,
       // Terminal signals target the CLI's foreground process group. Isolate
       // history-writing tools so graceful shutdown can await their completion.
@@ -87,7 +92,7 @@ export function run(
       code === 0
         ? resolve({ stdout, stderr })
         : reject(
-            new ProcessError(command, args, { stdout, stderr }, code, cwd),
+            new ProcessError(executable, args, { stdout, stderr }, code, cwd),
           ),
     );
   });

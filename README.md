@@ -60,7 +60,7 @@ The flake exposes a default package/app and development shell for x86_64/aarch64
 - Both sidebars collapse to narrow rails; drag their inner edges to resize them. Sidebar widths, collapsed states, and diff layout persist in browser `localStorage`.
 - Choose **Dark**, **Dim**, **Light**, **Solarized Dark**, or **Solarized Light** under **settings**. The scheme preference also persists in `localStorage` for this browser origin.
 
-- Failed squashes show the API error code, working directory, full shell-quoted failed command, and full, selectable tool output. The command is diagnostic, not an automatic retry; inspect history first if the error says it may have changed. If reloading also fails, the original squash diagnostics remain visible alongside the reload error. Dismissing an error never resumes or retries queued work.
+- Failed squashes show the API error code, working directory, full shell-quoted failed command, and full, selectable tool output. Nix builds print the absolute `/nix/store/…/bin/jj-hunk-tool` wrapper path actually executed, so copying the command uses the same patched tool and bundled dependencies. The command is diagnostic, not an automatic retry; inspect history first if the error says it may have changed. If reloading also fails, the original squash diagnostics remain visible alongside the reload error. Dismissing an error never resumes or retries queued work.
 - A review stays pinned to its selected change, not the moving working copy. If jj abandons that change (for example, when editing away from an empty undescribed change), the error identifies its full ID. The graph remains available: explicitly select another mutable change to resume review. Missing and divergent changes are reported separately.
 
 The heading groups the **change ID**, **title**, **commit ID**, and change line counts, without the author. The browser tab reads **`<title> (<short change ID> <full repo path>)`**. The graph is rendered by `jj`, with clickable change IDs and a high-contrast selected-change highlight. It uses `trunk() | ((tracked_remote_bookmarks() & ~::trunk())::) | (mutable() & mine())::`, plus the selected change and working copy instead of the default log revset or a 100-entry cap. Graph refreshes wait for queued operations to complete and show recorded history without snapshotting the working copy.
@@ -92,15 +92,21 @@ npm run build
 npm start -- --repository /path/to/workspace --no-open
 ```
 
-Without Nix, provide Node.js 24+, `jj`, **GNU `patch` available as `patch`**, and the **same tested hunk-tool revision** on `PATH`. The hunk tool invokes `patch -p1 --silent` when applying a squash, even if preview works without it. Install the hunk tool with Rust/Cargo:
+Without Nix, provide Node.js 24+, `jj`, **GNU `patch` available as `patch`**, and the **same tested hunk-tool revision plus our local source patch** on `PATH`. The hunk tool invokes `patch -p1 --silent` when applying a squash, even if preview works without it. The Nix build applies the patch automatically. To build the equivalent tool manually, run from this checkout:
 
 ```sh
-cargo install --git https://github.com/mvzink/jj-hunk-tool \
-  --rev 817a3d19cab8ed9bf04ebf64f2f3073fe195d641 --locked jj-hunk-tool
+stamp_checkout="$PWD"
+hunk_src="$(mktemp -d)/jj-hunk-tool"
+git clone https://github.com/mvzink/jj-hunk-tool "$hunk_src"
+git -C "$hunk_src" checkout --detach 817a3d19cab8ed9bf04ebf64f2f3073fe195d641
+git -C "$hunk_src" apply "$stamp_checkout/nix/jj-hunk-tool-context.patch"
+cargo install --path "$hunk_src" --locked jj-hunk-tool
 # Ensure Cargo's bin directory (normally ~/.cargo/bin) is on PATH.
 ```
 
-Do not install a moving branch or rely on `jj-hunk-tool --version` to verify the pin: multiple revisions report `0.1.0`. `cargo install --list` records the git source/revision for this installation. Unlike the Nix wrapper, non-Nix runs use the first `jj`, `jj-hunk-tool`, and `patch` on `PATH`; keeping them compatible is your responsibility. The revision and Cargo lockfile pin source dependencies, not your host Rust compiler or `jj` version.
+The local patch normalizes partial-hunk context to avoid GNU `patch` falsely requiring a selected change to be at the start/end of the file. It preserves the selected additions/deletions and uses the same generation path for previews and mutations.
+
+Do not install a moving branch or rely on `jj-hunk-tool --version` to verify the pin: multiple revisions report `0.1.0`. Unlike the Nix wrapper, non-Nix runs normally use the first `jj`, `jj-hunk-tool`, and `patch` on `PATH`; keeping them compatible is your responsibility. The Nix launcher sets `JJ_STAMP_HUNK_TOOL` to its patched executable's absolute wrapper path, which is also used in error diagnostics. The revision and Cargo lockfile pin source dependencies, not your host Rust compiler or `jj` version.
 
 `npm run build` typechecks and produces **`dist/cli.cjs`** plus **`dist/client/`**. The CLI is bundled, so it does not need `node_modules` at runtime. `npm run dev -- -R /path/to/workspace` rebuilds and runs it; restart after source edits.
 

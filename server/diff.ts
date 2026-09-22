@@ -295,7 +295,57 @@ export function ranges(indices: number[]): string {
   return spans.join(",");
 }
 
-/** Exact reconciliation of file identity, hunk location, and every patch-body row. */
+interface PreviewHunk {
+  oldHeader: string | undefined;
+  newHeader: string | undefined;
+  oldStart: number;
+  newStart: number;
+  rows: string[];
+}
+
+/**
+ * Match the packaged tool's outer-context normalization, not arbitrary context
+ * removal: retain min(3, leading, trailing) rows on EACH side. Symmetry avoids
+ * GNU patch treating a shorter side as a false BOF/EOF hint. Zero context is
+ * allowed only when the selected body already has no context on one side.
+ * Internal context (including unselected deletions) is never removed.
+ */
+function normalizePreviewContext(
+  hunk: PreviewHunk,
+  originalHeader: string,
+): PreviewHunk {
+  const first = hunk.rows.findIndex((row) => row[0] !== " ");
+  const last = hunk.rows.findLastIndex((row) => row[0] !== " ");
+  if (first === -1)
+    throw new Error("Tool preview contains no selected changes.");
+  const context = Math.min(3, first, hunk.rows.length - last - 1);
+  const leading = first - context;
+  const rows = hunk.rows.slice(leading, last + 1 + context);
+  const header = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/.exec(
+    originalHeader,
+  )!;
+  // A zero-count range is anchored BEFORE the insertion, not at its first
+  // line. The original counts matter when a partial deletion revives context
+  // on a formerly empty side, or trimming removes the last context rows.
+  const start = (coordinate: number, originalCount: number, count: number) =>
+    coordinate + Number(originalCount === 0) + leading - Number(count === 0);
+  return {
+    ...hunk,
+    oldStart: start(
+      hunk.oldStart,
+      Number(header[2] ?? 1),
+      rows.filter((row) => row[0] !== "+").length,
+    ),
+    newStart: start(
+      hunk.newStart,
+      Number(header[4] ?? 1),
+      rows.filter((row) => row[0] !== "-").length,
+    ),
+    rows,
+  };
+}
+
+/** Exact changes and locations, allowing only the packaged tool's context trim. */
 export function assertExactPreview(
   preview: string,
   selected: Array<{ patch: string; path: string; hunk: Hunk; lines: number[] }>,
@@ -312,13 +362,23 @@ export function assertExactPreview(
           ],
     );
     const header = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/.exec(hunk.header)!;
-    return [
-      patch.match(/^--- .*$/m)?.[0],
-      patch.match(/^\+\+\+ .*$/m)?.[0],
-      Number(header[1]),
-      Number(header[2]),
+    const legacy = {
+      oldHeader: patch.match(/^--- .*$/m)?.[0],
+      newHeader: patch.match(/^\+\+\+ .*$/m)?.[0],
+      oldStart: Number(header[1]),
+      newStart: Number(header[2]),
       rows,
-    ];
+    };
+    // The service uses a bare hunk ID when all changes are selected; the
+    // packaged tool normalizes only explicit partial row selections.
+    const wholeHunk =
+      lines.length === hunk.rows.filter((row) => row.raw[0] !== " ").length;
+    return {
+      legacy,
+      normalized: wholeHunk
+        ? legacy
+        : normalizePreviewContext(legacy, hunk.header),
+    };
   });
   const sections = preview.split(/(?=^--- )/m).filter(Boolean);
   const actual = sections.map((section) => {
@@ -331,15 +391,28 @@ export function assertExactPreview(
       throw new Error("Unexpected hunk grouping in tool preview.");
     const hunk = file.hunks[0];
     const header = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/.exec(hunk.header)!;
-    return [
-      old,
-      next,
-      Number(header[1]),
-      Number(header[2]),
-      hunk.rows.map((row) => row.raw),
-    ];
+    return {
+      oldHeader: old,
+      newHeader: next,
+      oldStart: Number(header[1]),
+      newStart: Number(header[2]),
+      rows: hunk.rows.map((row) => row.raw),
+    };
   });
-  if (JSON.stringify(actual) !== JSON.stringify(expected)) {
+  // parseFile has verified every actual header count. Compare the whole body
+  // and both coordinates, rather than stripping context from actual output:
+  // canonicalizing it would hide altered or missing matching context. Keep the
+  // exact legacy form for non-Nix installations of the unpatched pinned tool.
+  if (
+    actual.length !== expected.length ||
+    actual.some((hunk, index) => {
+      const serialized = JSON.stringify(hunk);
+      return (
+        serialized !== JSON.stringify(expected[index].legacy) &&
+        serialized !== JSON.stringify(expected[index].normalized)
+      );
+    })
+  ) {
     throw new Error(
       "Tool preview differs from the exact selected rows or their locations; nothing was squashed.",
     );

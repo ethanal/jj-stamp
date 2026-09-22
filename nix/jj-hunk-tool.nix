@@ -19,6 +19,10 @@ rustPlatform.buildRustPackage {
     rev = "817a3d19cab8ed9bf04ebf64f2f3073fe195d641";
     hash = "sha256-HtuR2IL/WIq6+y8saHFAyquQ8cFGvvz0t3VqZXBQ7gI=";
   };
+  # Normalize only emitted partial patches, not hunk listings or selection IDs.
+  # GNU patch otherwise mistakes asymmetric sliced context for a file boundary.
+  patches = [ ./jj-hunk-tool-context.patch ];
+
   cargoHash = "sha256-ncpm8g5In2Ih5cx3AnG2vPfGFy5oMnR012hBKqV4fYw=";
 
   nativeBuildInputs = [ makeWrapper ];
