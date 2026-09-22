@@ -39,6 +39,7 @@ export interface LogRow {
   revision?: Revision;
   mutable?: boolean;
   isWorkingCopy?: boolean;
+  isEmpty?: boolean;
 }
 export interface RevisionSelection {
   version: string;
@@ -743,7 +744,8 @@ export class ReviewService {
         " ++ " +
         revisionFieldsTemplate +
         ' ++ "\\t" ++ json(self.contained_in("mutable()"))' +
-        ' ++ "\\t" ++ json(current_working_copy) ++ "\\n"';
+        ' ++ "\\t" ++ json(current_working_copy)' +
+        ' ++ "\\t" ++ json(empty) ++ "\\n"';
       const rendered = (
         await this.jjRunner(this.root, [
           "log",
@@ -764,15 +766,16 @@ export class ReviewService {
         if (index === -1) return { graph: line };
         const { revision, flags } = parseRevisionRecord(
           line.slice(index + marker.length),
-          2,
+          3,
           "Unrecognized revision in jj graph.",
         );
-        const [mutable, isWorkingCopy] = flags;
+        const [mutable, isWorkingCopy, isEmpty] = flags;
         return {
           graph: line.slice(0, index),
           revision,
           mutable,
           isWorkingCopy,
+          isEmpty,
         };
       });
       await this.validateViews(views, operation.id, viewOptions);

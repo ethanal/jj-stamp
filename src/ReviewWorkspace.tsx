@@ -568,6 +568,7 @@ export function RevisionGraph({
                       >
                         <ChangeId revision={row.revision} />
                       </button>{" "}
+                      {row.isEmpty && <span>(empty) </span>}
                       <span title={row.revision.description}>
                         {row.revision.description || "(no description)"}
                       </span>

@@ -507,7 +507,7 @@ try {
     (row) =>
       row.graph +
       (row.revision
-        ? `${row.revision.changeId.slice(0, 8)} ${row.revision.description || "(no description)"}`
+        ? `${row.revision.changeId.slice(0, 8)} ${row.isEmpty ? "(empty) " : ""}${row.revision.description || "(no description)"}`
         : ""),
   );
   await expect(page.getByLabel("jj log output").locator(".log-row")).toHaveText(
@@ -963,6 +963,13 @@ try {
   await jj(repoPath, ["new"]);
   await reviewWorkingCopy();
   const pinnedEmpty = await refreshState();
+  await page.reload();
+  await expect(
+    reviewChange(pinnedEmpty.source.changeId).locator(".."),
+  ).toContainText("(empty) (no description)");
+  await expect(reviewChange(replacement).locator("..")).toContainText(
+    "(empty) Healthy replacement change",
+  );
   await jj(repoPath, ["edit", replacement]);
   await page.reload();
   await expect(page.getByRole("alert")).toContainText(

@@ -701,6 +701,11 @@ test("structured log preserves actual jj graph prefixes, metadata, connector row
   assert.equal(source.revision!.description, 'Review <script> "quoted"\ttab');
   assert.equal(source.mutable, true);
   assert.equal(source.isWorkingCopy, false);
+  assert.equal(source.isEmpty, false);
+  assert.equal(
+    log.rows.find((row) => row.revision?.changeId === workingCopyId)!.isEmpty,
+    true,
+  );
   assert.equal(
     log.rows.find((row) => row.revision?.changeId === workingCopyId)!
       .isWorkingCopy,

@@ -29,6 +29,7 @@ export interface LogRow {
   revision?: Revision;
   mutable?: boolean;
   isWorkingCopy?: boolean;
+  isEmpty?: boolean;
 }
 export interface RepoState {
   repo: { name: string; path: string };
