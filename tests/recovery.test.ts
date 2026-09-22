@@ -104,7 +104,11 @@ test("a snapshot during post-squash validation cannot leave a false pending guar
     toolRunner: async (command, args, cwd) => {
       const result = await run(command, args, cwd);
       if (args[0] === "squash") squashed = true;
-      if (squashed && !edited && args[0] === "hunks") {
+      return result;
+    },
+    jjRunner: async (cwd, args) => {
+      const result = await jj(cwd, args);
+      if (squashed && !edited && args[0] === "diff") {
         edited = true;
         await appendFile(
           path.join(root, "src/preferences.ts"),

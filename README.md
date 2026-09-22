@@ -5,7 +5,7 @@
 
 A local, keyboard-first review UI for Jujutsu. Run **`jj-stamp`** in a jj workspace, then click a **change ID in the `jj log` graph** to choose what to review. Select changed lines and squash them into that change's **single mutable immediate parent**—not necessarily `@ → @-`.
 
-Pierre Diffs renders the code; Pierre Trees renders the file sidebar. The existing TypeScript backend uses `jj-hunk-tool` for exact line-level operations.
+Pierre Diffs renders the code; Pierre Trees renders the file sidebar. This experimental branch uses a native TypeScript diff editor: selected file contents are constructed directly, and `jj squash --tool jj-stamp` performs the history rewrite. No hunk tool or patch-application executable is used.
 
 ## Install with Nix
 
@@ -35,7 +35,7 @@ Or run without installing, from this checkout:
 nix run . -- --repository /path/to/workspace
 ```
 
-The flake bundles the browser assets, Node.js, `jj`, `jj-hunk-tool`, and GNU `patch`. The hunk tool is pinned to **`817a3d19cab8ed9bf04ebf64f2f3073fe195d641`** in `nix/jj-hunk-tool.nix`, with fixed source and Cargo dependency hashes; `flake.lock` pins the Nix inputs. The installed wrapper puts its packaged tools ahead of ambient `PATH`, so a different globally installed hunk tool does not replace the tested one. The standalone Nix hunk-tool package also wraps its `jj` and GNU `patch` dependencies; listing hunks and previewing patches alone do not exercise the external `patch` command required for mutations.
+The flake bundles the browser assets, Node.js, `jj`, and jj-stamp's native diff-editor callback. `flake.lock` pins the Nix inputs. The launcher pins its absolute `jj` executable via `JJ_STAMP_JJ`; callbacks use the same Node.js runtime as the server. There is no Rust/Cargo or GNU `patch` dependency in this branch.
 
 No npm installation or runtime download of assets or bundled tools is needed. Builds may need network access. Your browser and any external helpers configured in jj (for example, signing tools) are not bundled. Linux browser launch uses bundled `xdg-open`; macOS uses system `open`.
 
@@ -60,7 +60,7 @@ The flake exposes a default package/app and development shell for x86_64/aarch64
 - Both sidebars collapse to narrow rails; drag their inner edges to resize them. Sidebar widths, collapsed states, and diff layout persist in browser `localStorage`.
 - Choose **Dark**, **Dim**, **Light**, **Solarized Dark**, or **Solarized Light** under **settings**. The scheme preference also persists in `localStorage` for this browser origin.
 
-- Failed squashes show the API error code, working directory, full shell-quoted failed command, and full, selectable tool output. Nix builds print the absolute `/nix/store/…/bin/jj-hunk-tool` wrapper path actually executed, so copying the command uses the same patched tool and bundled dependencies. The command is diagnostic, not an automatic retry; inspect history first if the error says it may have changed. If reloading also fails, the original squash diagnostics remain visible alongside the reload error. Dismissing an error never resumes or retries queued work.
+- Failed squashes show the API error code, working directory, full shell-quoted failed command, and full, selectable tool output. Nix builds print the absolute `/nix/store/…/bin/jj` path actually executed. Callback arguments reference a short-lived private manifest that is removed after the invocation; the command is diagnostic, **not a replayable retry**. Inspect history first if the error says it may have changed. If reloading also fails, the original squash diagnostics remain visible alongside the reload error. Dismissing an error never resumes or retries queued work.
 - A review stays pinned to its selected change, not the moving working copy. If jj abandons that change (for example, when editing away from an empty undescribed change), the error identifies its full ID. The graph remains available: explicitly select another mutable change to resume review. Missing and divergent changes are reported separately.
 
 The heading groups the **change ID**, **title**, **commit ID**, and change line counts, without the author. The browser tab reads **`<title> (<short change ID> <full repo path>)`**. The graph is rendered by `jj`, with clickable change IDs and a high-contrast selected-change highlight. It uses `trunk() | ((tracked_remote_bookmarks() & ~::trunk())::) | (mutable() & mine())::`, plus the selected change and working copy instead of the default log revset or a 100-entry cap. Graph refreshes wait for queued operations to complete and show recorded history without snapshotting the working copy.
@@ -79,7 +79,7 @@ This is a **single-user local tool**, not a network service. Host and Origin che
 - If a queued job fails, unsent jobs are canceled and the actual repository is reloaded. Completed jobs are not rolled back. Failed mutations are never automatically retried.
 - Do not close the browser with queued work. An accepted request can finish after a disconnection, but unsent browser-local jobs are lost.
 
-The backend stores **no application state on disk**. Selected revision, preview tokens, undo information and recovery guards exist only in the running process. Existing `operations-*.json` files from older versions are ignored and are not deleted automatically. Browser appearance preferences remain in `localStorage`.
+The backend stores **no durable application state on disk**. A native squash temporarily writes a private manifest containing the pinned input and selected output bytes; it is removed after success or failure. An abrupt process/VM crash can leave that private temporary directory behind; it is not a recovery journal and is never reused. Selected revision, preview tokens, undo information and recovery guards exist only in the running process. Existing `operations-*.json` files from older versions are ignored and are not deleted automatically. Browser appearance preferences remain in `localStorage`.
 
 An ambiguous history operation blocks further mutations and revision switching in that process. Inspect `jj op log` and the current diff before restarting; restarting clears only app bookkeeping, never rolls back history or retries a squash. Undo is available only for operations performed by the current process. Do not blindly repeat a selection after an uncertain result. See [backend notes](server/README.md).
 
@@ -92,23 +92,10 @@ npm run build
 npm start -- --repository /path/to/workspace --no-open
 ```
 
-Without Nix, provide Node.js 24+, `jj`, **GNU `patch` available as `patch`**, and the **same tested hunk-tool revision plus our local source patch** on `PATH`. The hunk tool invokes `patch -p1 --silent` when applying a squash, even if preview works without it. The Nix build applies the patch automatically. To build the equivalent tool manually, run from this checkout:
+Without Nix, provide Node.js 24+ and `jj` on `PATH`. No hunk tool, Rust toolchain, or external `patch` is needed. Unpack/install the complete `dist/` directory: the bundled CLI must keep its sibling `diff-editor.cjs` and browser assets. `JJ_STAMP_JJ`, when set, selects the same absolute jj executable for reads, mutations and diagnostics.
 
-```sh
-stamp_checkout="$PWD"
-hunk_src="$(mktemp -d)/jj-hunk-tool"
-git clone https://github.com/mvzink/jj-hunk-tool "$hunk_src"
-git -C "$hunk_src" checkout --detach 817a3d19cab8ed9bf04ebf64f2f3073fe195d641
-git -C "$hunk_src" apply "$stamp_checkout/nix/jj-hunk-tool-context.patch"
-cargo install --path "$hunk_src" --locked jj-hunk-tool
-# Ensure Cargo's bin directory (normally ~/.cargo/bin) is on PATH.
-```
-
-The local patch normalizes partial-hunk context to avoid GNU `patch` falsely requiring a selected change to be at the start/end of the file. It preserves the selected additions/deletions and uses the same generation path for previews and mutations.
-
-Do not install a moving branch or rely on `jj-hunk-tool --version` to verify the pin: multiple revisions report `0.1.0`. Unlike the Nix wrapper, non-Nix runs normally use the first `jj`, `jj-hunk-tool`, and `patch` on `PATH`; keeping them compatible is your responsibility. The Nix launcher sets `JJ_STAMP_HUNK_TOOL` to its patched executable's absolute wrapper path, which is also used in error diagnostics. The revision and Cargo lockfile pin source dependencies, not your host Rust compiler or `jj` version.
-
-`npm run build` typechecks and produces **`dist/cli.cjs`** plus **`dist/client/`**. The CLI is bundled, so it does not need `node_modules` at runtime. `npm run dev -- -R /path/to/workspace` rebuilds and runs it; restart after source edits.
+Native selection currently supports regular, non-executable, lossless UTF-8 text with final newlines (including CRLF). Existing conservative restrictions on binary files, rename/copy/mode changes, merges, and ambiguous paths/formats remain. File snapshots are verified as bytes before applying a selection; there is no context search, offset adjustment, or fuzz.
+`npm run build` typechecks and produces **`dist/cli.cjs`**, **`dist/diff-editor.cjs`**, and **`dist/client/`**. The CLI is bundled, so it does not need `node_modules` at runtime. `npm run dev -- -R /path/to/workspace` rebuilds and runs it; restart after source edits.
 
 ```sh
 npm run check                  # formatting and strict type checking
@@ -123,7 +110,7 @@ nix flake check                 # installed Nix packages and runtime tools
 
 Browser suites share an ephemeral loopback server and Chromium fixture with HMR disabled. Setup failures and test completion close the browser, HTTP server and Vite instance; no fixed development port or running app is required.
 
-Tests use isolated real jj repositories. They cover exact line squashes, optimistic FIFO/recovery, revision selection and rewrite tracking, immutable/merge guards, stale requests, process-local undo and recovery guards, tree and graph interactions, full-path titles, local HTTP protections, browser launching, and graceful terminal-signal shutdown. Nix checks also exercise installed CLI preview, squash, and undo with an empty ambient `PATH`, verify a standalone installed hunk-tool squash under the same restriction, and run the upstream hunk-tool tests.
+Tests use isolated real jj repositories. They cover exact line squashes, optimistic FIFO/recovery, revision selection and rewrite tracking, immutable/merge guards, stale requests, process-local undo and recovery guards, tree and graph interactions, full-path titles, local HTTP protections, browser launching, and graceful terminal-signal shutdown. Native tests cover exact selection, repeated text, asymmetric context, invalid UTF-8, CRLF, creation/deletion, source-tree preservation, callback inventories and filesystem containment. Nix checks exercise the installed CLI with poisoned obsolete hunk/patch executables on `PATH`, including a real partial squash, undo, and complete native-command error diagnostics.
 
 `@pierre/trees` is pinned to a beta release; review its API when upgrading.
 
@@ -135,7 +122,7 @@ Run a newly built version with tracing enabled, reproduce a few slow change swit
 jj-stamp --trace -R /path/to/workspace 2> /tmp/jj-stamp-trace.log
 ```
 
-Each `[jj-stamp timing]` line is a JSON record for one completed backend request (including startup). It contains the operation name, time waiting in the shared queue, execution time, success/failure, and the start offset/duration of every service-launched subprocess. Timings are milliseconds. Nested commands inside `jj-hunk-tool` are included in that tool's duration, not listed separately. Parallel spans overlap; don't sum them to estimate request wall time. Browser rendering, network transfer, and JSON response serialization are outside these backend timings.
+Each `[jj-stamp timing]` line is a JSON record for one completed backend request (including startup). It contains the operation name, time waiting in the shared queue, execution time, success/failure, and the start offset/duration of every service-launched subprocess. Timings are milliseconds. The native diff-editor callback is included in the `jj squash (native editor)` duration, not listed separately. Parallel spans overlap; don't sum them to estimate request wall time. Browser rendering, network transfer, and JSON response serialization are outside these backend timings.
 
 Trace records contain no repository paths, revision IDs, command arguments, file contents, or subprocess output. Ordinary errors on stderr can still contain sensitive details. To share only the diagnostic records:
 
@@ -156,6 +143,7 @@ npm run benchmark -- --runs 3 --extra-files 50 --trace
 - `cli.ts` — arguments, local startup, browser launch, shutdown
 - `server/http.ts`, `server/api.ts` — loopback HTTP boundary and versioned API
 - `server/service.ts`, `server/diff.ts` — revision tracking, exact patches and process-local mutation safety
+- `server/selection.ts`, `server/diff-editor.ts` — byte-exact selection and private jj callback
 - `server/revision.ts`, `server/editor.ts` — revision metadata parsing and safe workspace-editor dispatch
 - `src/main.tsx` — review state, queue coordination and shortcuts
 - `src/ReviewWorkspace.tsx`, `src/ReviewToolbar.tsx` — sidebars, revision graph, viewer, status and settings

@@ -22,13 +22,8 @@ import {
 
 test("failed commands retain all arguments with copyable POSIX shell quoting", () => {
   assert.equal(
-    formatCommand("jj-hunk-tool", [
-      "squash",
-      "abc1234:2-4,7",
-      "--from",
-      "123abc",
-    ]),
-    "jj-hunk-tool squash abc1234:2-4,7 --from 123abc",
+    formatCommand("jj", ["squash", "abc1234:2-4,7", "--from", "123abc"]),
+    "jj squash abc1234:2-4,7 --from 123abc",
   );
   assert.equal(
     formatCommand("/path with spaces/tool", []),
@@ -73,26 +68,16 @@ test("process failures include cwd and command without losing any tool output", 
   });
   assert.equal(
     processFailureOutput(
-      new ProcessError(
-        "jj-hunk-tool",
-        ["squash"],
-        { stdout: "", stderr: "" },
-        1,
-      ),
+      new ProcessError("jj", ["squash"], { stdout: "", stderr: "" }, 1),
     ),
-    "Failed command:\njj-hunk-tool squash\n\n",
+    "Failed command:\njj squash\n\n",
   );
 });
 
-test("packaged hunk tool executes and reports its pinned wrapper path, not ambient PATH", async (t) => {
+test("packaged jj executes and reports its pinned wrapper path, not ambient PATH", async (t) => {
   const root = await mkdtemp(path.join(os.tmpdir(), "jj-stamp-pinned-tool-"));
-  const wrapper = path.join(
-    root,
-    "store path's wrapper",
-    "bin",
-    "jj-hunk-tool",
-  );
-  const ambient = path.join(root, "ambient", "jj-hunk-tool");
+  const wrapper = path.join(root, "store path's wrapper", "bin", "jj");
+  const ambient = path.join(root, "ambient", "jj");
   await mkdir(path.dirname(wrapper), { recursive: true });
   await mkdir(path.dirname(ambient));
   await writeFile(
@@ -106,16 +91,16 @@ test("packaged hunk tool executes and reports its pinned wrapper path, not ambie
   await chmod(wrapper, 0o755);
   await chmod(ambient, 0o755);
   const oldPath = process.env.PATH;
-  const oldTool = process.env.JJ_STAMP_HUNK_TOOL;
+  const oldTool = process.env.JJ_STAMP_JJ;
   t.after(async () => {
     if (oldPath === undefined) delete process.env.PATH;
     else process.env.PATH = oldPath;
-    if (oldTool === undefined) delete process.env.JJ_STAMP_HUNK_TOOL;
-    else process.env.JJ_STAMP_HUNK_TOOL = oldTool;
+    if (oldTool === undefined) delete process.env.JJ_STAMP_JJ;
+    else process.env.JJ_STAMP_JJ = oldTool;
     await rm(root, { recursive: true });
   });
   process.env.PATH = path.dirname(ambient);
-  process.env.JJ_STAMP_HUNK_TOOL = wrapper;
+  process.env.JJ_STAMP_JJ = wrapper;
   const args = [
     "squash",
     "273b22d:20-21,24-29",
@@ -126,7 +111,7 @@ test("packaged hunk tool executes and reports its pinned wrapper path, not ambie
     "--use-destination-message",
     "--keep-emptied",
   ];
-  await assert.rejects(run("jj-hunk-tool", args, root), (error: unknown) => {
+  await assert.rejects(run("jj", args, root), (error: unknown) => {
     assert.ok(error instanceof ProcessError);
     assert.equal(error.command, wrapper);
     assert.equal(error.exitCode, 1);
@@ -148,14 +133,27 @@ test("packaged hunk tool executes and reports its pinned wrapper path, not ambie
     return true;
   });
   // Non-Nix execution still uses PATH when there is no packaged override.
-  delete process.env.JJ_STAMP_HUNK_TOOL;
-  await assert.rejects(run("jj-hunk-tool", args, root), (error: unknown) => {
+  delete process.env.JJ_STAMP_JJ;
+  await assert.rejects(run("jj", args, root), (error: unknown) => {
     assert.ok(error instanceof ProcessError);
-    assert.equal(error.command, "jj-hunk-tool");
+    assert.equal(error.command, "jj");
     assert.equal(error.exitCode, 2);
     assert.match(error.result.stderr, /WRONG ambient tool/);
     return true;
   });
+});
+
+test("process runner retains binary stdout for exact pinned file validation", async () => {
+  const result = await run(
+    process.execPath,
+    ["-e", "process.stdout.write(Buffer.from([0xef,0xbb,0xbf,0xff,0x0a]))"],
+    os.tmpdir(),
+  );
+  assert.deepEqual(
+    result.stdoutBytes,
+    Buffer.from([0xef, 0xbb, 0xbf, 0xff, 0x0a]),
+  );
+  assert.notDeepEqual(Buffer.from(result.stdout, "utf8"), result.stdoutBytes);
 });
 
 async function waitFile(file: string): Promise<string> {
@@ -274,7 +272,14 @@ test(
     assert.deepEqual(await finished, { code: 0, signal: null }, stderr);
     assert.deepEqual(JSON.parse(stdout), {
       signals: ["SIGINT", "SIGTERM"],
-      result: { stdout: "mutation finished", stderr: "" },
+      result: {
+        stdout: "mutation finished",
+        stderr: "",
+        stdoutBytes: {
+          type: "Buffer",
+          data: [...Buffer.from("mutation finished")],
+        },
+      },
     });
   },
 );

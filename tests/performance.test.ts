@@ -16,7 +16,7 @@ async function fixture(t: test.TestContext) {
 }
 
 // Count processes instead of asserting wall-clock timings on shared CI hosts.
-test("state, graph and selection have bounded process budgets and batch all hunks", async (t) => {
+test("state, graph and selection have bounded process budgets and derive all hunks locally", async (t) => {
   const options = await fixture(t);
   const calls: Array<{ command: string; args: string[] }> = [];
   const service = new ReviewService({
@@ -32,16 +32,19 @@ test("state, graph and selection have bounded process budgets and batch all hunk
   });
   const initial = await service.getState();
   assert.equal(initial.files.length, 3);
+  assert.ok(
+    initial.files.every((file) =>
+      file.hunks.every((hunk) => /^[a-f0-9]{7}$/.test(hunk.id)),
+    ),
+  );
   assert.equal(
     calls.length,
-    8,
-    "initialization batches visibility; two metadata checks + one diff/listing",
+    7,
+    "initialization batches visibility; two metadata checks + one pinned diff",
   );
   assert.deepEqual(
-    calls
-      .filter((call) => call.command === "jj-hunk-tool")
-      .map((call) => call.args),
-    [["hunks", "-r", initial.source.commitId]],
+    calls.filter((call) => call.args[0] === "diff").map((call) => call.args),
+    [["diff", "--git", "-r", initial.source.commitId, "--ignore-working-copy"]],
   );
   calls.length = 0;
   assert.deepEqual(await service.getState(), initial);
@@ -73,17 +76,23 @@ test("state, graph and selection have bounded process budgets and batch all hunk
       changeId: initial.parent!.changeId,
     })
   ).state;
-  assert.equal(calls.length, 6, "both sources share validation snapshots");
+  assert.equal(calls.length, 5, "both sources share validation snapshots");
   assert.deepEqual(
-    calls
-      .filter((call) => call.command === "jj-hunk-tool")
-      .map((call) => call.args),
-    [["hunks", "-r", selected.source.commitId]],
+    calls.filter((call) => call.args[0] === "diff").map((call) => call.args),
+    [
+      [
+        "diff",
+        "--git",
+        "-r",
+        selected.source.commitId,
+        "--ignore-working-copy",
+      ],
+    ],
   );
   assert.deepEqual(await service.getState(), selected);
 });
 
-test("a cold graph read needs neither diffs nor the hunk tool and has the same repository version", async (t) => {
+test("a cold graph read needs neither diffs nor the mutation runner and has the same repository version", async (t) => {
   const options = await fixture(t);
   const service = new ReviewService({
     ...options,
@@ -92,7 +101,7 @@ test("a cold graph read needs neither diffs nor the hunk tool and has the same r
       return jj(cwd, args);
     },
     toolRunner: async () => {
-      throw new Error("graph must not run jj-hunk-tool");
+      throw new Error("graph must not run the native mutation runner");
     },
   });
   const graph = await service.getLog({ includeOutput: false });
@@ -131,9 +140,14 @@ for (const affected of ["source", "candidate"] as const) {
     const service = new ReviewService({
       ...options,
       revision: original.changeId,
-      toolRunner: async (command, args, cwd) => {
-        const result = await run(command, args, cwd);
-        if (args[0] === "hunks" && args[2] !== original.commitId && !changed) {
+      jjRunner: async (cwd, args) => {
+        const result = await jj(cwd, args);
+        if (
+          args[0] === "diff" &&
+          args[args.indexOf("-r") + 1] !== original.commitId &&
+          !changed
+        ) {
+          assert.ok(args.includes("--ignore-working-copy"));
           changed = true;
           await jj(cwd, [
             "config",
@@ -190,7 +204,7 @@ test("graph validation catches configuration changes without loading source hunk
       return result;
     },
     toolRunner: async () => {
-      throw new Error("graph must not run jj-hunk-tool");
+      throw new Error("graph must not run the native mutation runner");
     },
   });
   await assert.rejects(
@@ -427,11 +441,9 @@ test("cold state subprocess budget stays constant with many files and mutable an
   assert.ok(
     state.files.every((file) => !file.unsupported && file.hunks.length === 1),
   );
-  assert.equal(calls.length, 8);
-  assert.equal(
-    calls.filter(({ command }) => command === "jj-hunk-tool").length,
-    1,
-  );
+  assert.equal(calls.length, 7);
+  assert.ok(calls.every(({ command }) => command === "jj"));
+  assert.ok(calls.every(({ args }) => args[0] !== "file"));
   assert.equal(calls.filter(({ args }) => args[0] === "diff").length, 1);
   calls.length = 0;
   assert.deepEqual(await service.getState(), state);
@@ -536,9 +548,9 @@ test("direct squash and its graph refresh have explicit subprocess budgets", asy
     ],
   });
   assert.equal(result.state.canUndo, true);
-  // One private capture + preview/conflict baseline + final metadata/op
-  // validation, attribution, and the fully validated rewritten source diff.
-  // Tool-internal jj/patch processes are additional, not counted here.
+  // One private capture + two pinned file reads/conflict baseline + final
+  // metadata/op validation, native mutation, attribution, and the fully
+  // validated rewritten source diff. Native editor internals are not counted.
   assert.equal(calls.length, 15);
   assert.equal(
     calls.filter((call) => call.command === "jj" && call.args[0] === "log")
@@ -555,12 +567,14 @@ test("direct squash and its graph refresh have explicit subprocess budgets", asy
       .length,
     1,
   );
-  assert.deepEqual(
-    calls
-      .filter((call) => call.command === "jj-hunk-tool")
-      .map((call) => call.args[0]),
-    ["patch", "squash", "hunks"],
-  );
+  assert.ok(calls.every((call) => call.command === "jj"));
+  const fileReads = calls.filter((call) => call.args[0] === "file");
+  assert.equal(fileReads.length, 2);
+  for (const { args } of fileReads) {
+    assert.equal(args[1], "show");
+    assert.ok(args.includes("--ignore-working-copy"));
+  }
+  assert.equal(calls.filter((call) => call.args[0] === "squash").length, 1);
   const conflictReads = calls.filter((call) =>
     call.args.includes("conflicts()"),
   );
@@ -570,7 +584,20 @@ test("direct squash and its graph refresh have explicit subprocess budgets", asy
     assert.equal(args[args.indexOf("-T") + 1], 'change_id ++ "\\n"');
   }
   const squashIndex = calls.findIndex(
-    (call) => call.command === "jj-hunk-tool" && call.args[0] === "squash",
+    (call) => call.command === "jj" && call.args[0] === "squash",
+  );
+  assert.deepEqual(calls[squashIndex].args.slice(0, 7), [
+    "squash",
+    "--from",
+    initial.source.commitId,
+    "--into",
+    initial.parent!.commitId,
+    "--tool",
+    "jj-stamp",
+  ]);
+  assert.deepEqual(
+    calls[squashIndex].args.slice(calls[squashIndex].args.indexOf("--") + 1),
+    [`root-file:${JSON.stringify(initial.files[0].path)}`],
   );
   assert.deepEqual(
     calls.slice(squashIndex - 2, squashIndex).map((call) => call.args[0]),
@@ -582,3 +609,103 @@ test("direct squash and its graph refresh have explicit subprocess budgets", asy
   await service.getLog({ includeOutput: false });
   assert.equal(calls.length, 5);
 });
+
+test("preview reads each selected file side once, regardless of selected hunk count", async (t) => {
+  const options = await fixture(t);
+  const calls: string[][] = [];
+  const service = new ReviewService({
+    ...options,
+    jjRunner: (cwd, args) => {
+      calls.push(args);
+      return jj(cwd, args);
+    },
+    toolRunner: async () => {
+      throw new Error("preview must not invoke the native mutation runner");
+    },
+  });
+  const state = await service.getState();
+  for (const files of [[state.files[0]], state.files]) {
+    calls.length = 0;
+    const selections = files.flatMap((file) =>
+      file.hunks.map((hunk) => ({
+        id: hunk.id,
+        lines: hunk.rows
+          .filter((row) => /^[+-]/.test(row.raw))
+          .map((row) => row.index),
+      })),
+    );
+    assert.ok(selections.length > files.length);
+    const preview = await service.preview({
+      version: state.version,
+      target: state.parent!.changeId,
+      selections,
+    });
+    assert.ok(preview.patch);
+    assert.equal(calls.length, 4 + files.length * 2);
+    assert.deepEqual(
+      calls.filter((args) => args[0] === "file"),
+      files.flatMap((file) =>
+        [state.parent!.commitId, state.source.commitId].map((revision) => [
+          "file",
+          "show",
+          "-r",
+          revision,
+          "--ignore-working-copy",
+          "--",
+          `root-file:${JSON.stringify(file.path)}`,
+        ]),
+      ),
+    );
+    assert.ok(calls.every((args) => args[0] !== "diff"));
+  }
+});
+
+for (const kind of ["added", "deleted"] as const) {
+  test(`preview skips the absent side of a ${kind} file`, async (t) => {
+    const options = await fixture(t);
+    const filePath = kind === "added" ? "added.txt" : "src/notifications.ts";
+    if (kind === "added")
+      await writeFile(path.join(options.repoPath, filePath), "new file\n");
+    else await rm(path.join(options.repoPath, filePath));
+    const calls: string[][] = [];
+    const service = new ReviewService({
+      ...options,
+      jjRunner: (cwd, args) => {
+        calls.push(args);
+        return jj(cwd, args);
+      },
+      toolRunner: async () => {
+        throw new Error("preview must not invoke the native mutation runner");
+      },
+    });
+    const state = await service.getState();
+    const file = state.files.find((file) => file.path === filePath)!;
+    assert.ok(!file.unsupported);
+    calls.length = 0;
+    await service.preview({
+      version: state.version,
+      target: state.parent!.changeId,
+      selections: file.hunks.map((hunk) => ({
+        id: hunk.id,
+        lines: hunk.rows
+          .filter((row) => /^[+-]/.test(row.raw))
+          .map((row) => row.index),
+      })),
+    });
+    assert.equal(calls.length, 5);
+    assert.deepEqual(
+      calls.filter((args) => args[0] === "file"),
+      [
+        [
+          "file",
+          "show",
+          "-r",
+          kind === "added" ? state.source.commitId : state.parent!.commitId,
+          "--ignore-working-copy",
+          "--",
+          `root-file:${JSON.stringify(filePath)}`,
+        ],
+      ],
+    );
+  });
+}

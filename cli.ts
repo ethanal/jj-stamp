@@ -84,7 +84,7 @@ async function main() {
   const assetsDir = path.join(__dirname, "client");
   await access(path.join(assetsDir, "index.html"));
   await access(repoPath);
-  for (const command of ["jj", "jj-hunk-tool"]) {
+  for (const command of ["jj"]) {
     try {
       await run(command, ["--version"], repoPath);
     } catch (error) {

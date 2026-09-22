@@ -2,44 +2,51 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-const hunkPackage = await readFile(
-  new URL("../nix/jj-hunk-tool.nix", import.meta.url),
-  "utf8",
-);
-const readme = await readFile(new URL("../README.md", import.meta.url), "utf8");
+const source = (name: string) =>
+  readFile(new URL(`../${name}`, import.meta.url), "utf8");
 
-test("hunk tool source and Cargo dependencies are fixed, not moving targets", () => {
-  assert.match(hunkPackage, /rev = "[a-f0-9]{40}";/);
-  assert.match(hunkPackage, /\bhash = "sha256-[A-Za-z0-9+/]{43}=";/);
-  assert.match(hunkPackage, /\bcargoHash = "sha256-[A-Za-z0-9+/]{43}=";/);
+const [launcher, flake, build, cli, editor, runner] = await Promise.all([
+  source("nix/package.nix"),
+  source("flake.nix"),
+  source("scripts/build.mjs"),
+  source("cli.ts"),
+  source("server/diff-editor.ts"),
+  source("server/process.ts"),
+]);
+
+test("runtime packaging does not depend on jj-hunk-tool or GNU patch", () => {
+  for (const text of [launcher, flake, build, cli, editor, runner]) {
+    assert.doesNotMatch(text, /jj-hunk-tool|JJ_STAMP_HUNK_TOOL|gnupatch/);
+  }
+  assert.match(cli, /for \(const command of \["jj"\]\)/);
+  assert.doesNotMatch(editor, /(?:spawn|execFile|run)\(\s*["']patch["']/);
 });
 
-test("non-Nix install guidance uses the same locked revision and custom source patch", () => {
-  const revision = hunkPackage.match(/rev = "([a-f0-9]{40})";/)?.[1];
-  assert.ok(revision, "Nix must pin a full commit ID");
-  const checkout = readme.match(
-    /git -C "\$hunk_src" checkout --detach ([a-f0-9]{40})/,
-  );
-  assert.ok(checkout, "document the exact upstream checkout");
-  assert.equal(checkout[1], revision);
+test("Nix launcher pins jj for execution and error diagnostics", () => {
+  assert.match(launcher, /--set JJ_STAMP_JJ \$\{lib\.getExe jujutsu\}/);
   assert.match(
-    readme,
-    /cargo install --path "\$hunk_src" --locked jj-hunk-tool/,
+    runner,
+    /command === "jj" \? env\.JJ_STAMP_JJ \|\| command : command/,
   );
-  assert.match(
-    readme,
-    /git -C "\$hunk_src" apply "\$stamp_checkout\/nix\/jj-hunk-tool-context\.patch"/,
-  );
-  assert.match(hunkPackage, /patches = \[ \.\/jj-hunk-tool-context\.patch \];/);
+  assert.match(runner, /spawn\(executable, args/);
+  assert.match(runner, /new ProcessError\(executable, args/);
 });
 
-test("Nix launcher pins the same wrapped hunk tool used in error diagnostics", async () => {
-  const launcher = await readFile(
-    new URL("../nix/package.nix", import.meta.url),
-    "utf8",
-  );
+test("build and Nix installation include the standalone native callback", () => {
+  assert.match(build, /entryPoints: \["server\/diff-editor-cli\.ts"\]/);
+  assert.match(build, /outfile: "dist\/diff-editor\.cjs"/);
+  assert.match(build, /bundle: true/);
   assert.match(
     launcher,
-    /--set JJ_STAMP_HUNK_TOOL \$\{lib\.getExe jj-hunk-tool\}/,
+    /cp dist\/cli\.cjs dist\/diff-editor\.cjs "\$out\/lib\/jj-stamp\/"/,
+  );
+  assert.match(editor, /path\.join\(__dirname, "diff-editor\.cjs"\)/);
+  assert.match(
+    editor,
+    /merge-tools\.jj-stamp\.program=\$\{JSON\.stringify\(process\.execPath\)\}/,
+  );
+  assert.match(
+    editor,
+    /JSON\.stringify\(\[script, manifest, "\$left", "\$right"\]\)/,
   );
 });

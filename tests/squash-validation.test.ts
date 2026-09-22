@@ -51,8 +51,8 @@ const metadata = (args: string[]) =>
 // Cover distinct windows without multiplying every boundary by every race.
 const races = [
   { api: "direct", boundary: "files", change: "edit" },
-  { api: "direct", boundary: "patch", change: "config" },
-  { api: "legacy", boundary: "patch", change: "history" },
+  { api: "direct", boundary: "file bytes", change: "config" },
+  { api: "legacy", boundary: "file bytes", change: "history" },
   { api: "direct", boundary: "baseline", change: "edit" },
   { api: "legacy", boundary: "baseline", change: "config" },
   { api: "direct", boundary: "final metadata", change: "history" },
@@ -112,6 +112,9 @@ for (const scenario of races) {
           // Return the old metadata result after recording a new operation.
           // Only the subsequent, sequential operation read can detect this.
           await inject("final metadata");
+        } else if (args[0] === "file" && args[1] === "show") {
+          assert.ok(args.includes("--ignore-working-copy"));
+          await inject("file bytes");
         } else if (args[0] === "diff") {
           assert.ok(args.includes("--ignore-working-copy"));
           await inject("files");
@@ -122,7 +125,6 @@ for (const scenario of races) {
         if (armed) calls.push(args[0]);
         if (args[0] === "squash") squashCalls++;
         const result = await run(command, args, cwd);
-        if (args[0] === "patch") await inject("patch");
         return result;
       },
     });

@@ -170,11 +170,12 @@ test("subprocess classifications only expose allowlisted command labels", () => 
   assert.equal(jjTimingName(["op", "log", "private"]), "jj op log");
   assert.equal(jjTimingName(["op", "revert", "private"]), "jj op revert");
   assert.equal(jjTimingName(["file", "show", "private"]), "jj file show");
-  for (const command of ["hunks", "patch", "squash"])
-    assert.equal(
-      toolTimingName([command, "private"]),
-      `jj-hunk-tool ${command}`,
-    );
+  assert.equal(
+    toolTimingName(["squash", "--from", "private", "--tool", "jj-stamp"]),
+    "jj squash (native editor)",
+  );
+  for (const command of ["hunks", "patch"])
+    assert.equal(toolTimingName([command, "private"]), "jj");
   assert.equal(
     jjTimingName(["log", "--no-graph", "-r", "private"]),
     "jj log metadata (snapshot)",
@@ -209,7 +210,7 @@ test("subprocess classifications only expose allowlisted command labels", () => 
   );
   assert.equal(jjTimingName(["private"]), "jj");
   assert.equal(jjTimingName(["op", "private"]), "jj");
-  assert.equal(toolTimingName(["private"]), "jj-hunk-tool");
+  assert.equal(toolTimingName(["private"]), "jj");
 });
 
 test("queued operations retain their own subprocesses and wait for failed parallel reads to drain", async (t) => {
@@ -262,13 +263,13 @@ test("queued operations retain their own subprocesses and wait for failed parall
       { id: 2, name: "state", ok: true },
     ],
   );
-  assert.equal(records[0].subprocesses.length, 6);
+  assert.equal(records[0].subprocesses.length, 5);
   assert.equal(records[1].subprocesses.length, 4);
   assert.equal(
     records[0].subprocesses.find((child) => child.name === "jj op log")!.ok,
     false,
   );
-  assert.equal(records[0].subprocesses.at(-1)!.name, "jj-hunk-tool hunks");
+  assert.equal(records[0].subprocesses.at(-1)!.name, "jj diff");
   assert.ok(records[1].queueMs > 0);
   for (const record of records) checkRecord(record);
 });
@@ -297,7 +298,7 @@ for (const asyncObserver of [false, true]) {
     const state = await service.getState();
     assert.equal(
       records[0].subprocesses.length,
-      8,
+      7,
       "startup is captured without extra subprocesses",
     );
     await service.getLog({ includeOutput: false });
@@ -383,7 +384,7 @@ for (const asyncObserver of [false, true]) {
     );
     assert.ok(
       records[6].subprocesses.some(
-        ({ name }) => name === "jj-hunk-tool squash",
+        ({ name }) => name === "jj squash (native editor)",
       ),
     );
     assert.ok(

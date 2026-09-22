@@ -26,11 +26,10 @@
         system:
         let
           pkgs = pkgsFor system;
-          jj-hunk-tool = pkgs.callPackage ./nix/jj-hunk-tool.nix { };
-          jj-stamp = pkgs.callPackage ./nix/package.nix { inherit jj-hunk-tool; };
+          jj-stamp = pkgs.callPackage ./nix/package.nix { };
         in
         {
-          inherit jj-stamp jj-hunk-tool;
+          inherit jj-stamp;
           default = jj-stamp;
         };
     in
@@ -51,7 +50,7 @@
           pkgs = pkgsFor system;
         in
         {
-          inherit (self.packages.${system}) jj-stamp jj-hunk-tool;
+          inherit (self.packages.${system}) jj-stamp;
           installed-cli =
             pkgs.runCommand "jj-stamp-installed-cli-check"
               {
@@ -75,7 +74,6 @@
             packages = [
               pkgs.nodejs_24
               pkgs.jujutsu
-              self.packages.${system}.jj-hunk-tool
             ]
             ++ pkgs.lib.optionals pkgs.stdenv.hostPlatform.isLinux [ pkgs.xdg-utils ];
           };

@@ -1,20 +1,18 @@
 import { createHash, randomBytes } from "node:crypto";
 import { realpath } from "node:fs/promises";
 import path from "node:path";
-import {
-  parseFile,
-  parseRevisionListing,
-  reconcileListing,
-  ranges,
-  assertExactPreview,
-} from "./diff.ts";
-import type { FileDiff, Hunk, Row, RevisionListing } from "./diff.ts";
+import { parseFile, ranges } from "./diff.ts";
+import type { Row } from "./diff.ts";
+import { materializeSelection } from "./selection.ts";
+import { withDiffEditor } from "./diff-editor.ts";
+import type { DiffEditorPlan } from "./diff-editor.ts";
 import { editorExpression, resolveEditorPath } from "./editor.ts";
 import { ApiError } from "./errors.ts";
 import {
   jj,
   processOutput,
   processFailureOutput,
+  formatCommand,
   run,
   ProcessError,
 } from "./process.ts";
@@ -71,7 +69,7 @@ export interface State {
   canUndo: boolean;
 }
 // Revision IDs pin the diff bytes. Repository versions do not depend on
-// rendering or transient hunk-tool errors, so graph reads need no diff loading.
+// rendering or transient diff errors, so graph reads need no diff loading.
 type RevisionView = Pick<
   State,
   "source" | "targets" | "parent" | "squashUnavailable"
@@ -119,7 +117,11 @@ interface Preview {
   command: string;
   selectedLines: number;
 }
+interface PreparedPreview extends Omit<Preview, "token"> {
+  editPlan: DiffEditorPlan;
+}
 interface Plan extends Preview {
+  editPlan: DiffEditorPlan;
   version: string;
   source: Revision;
   target: Revision;
@@ -167,14 +169,15 @@ export const reviewLogRevset =
 function same(actual: unknown, expected: unknown) {
   return JSON.stringify(actual) === JSON.stringify(expected);
 }
-function squashArgs(specs: string[], source: string, target: string): string[] {
+function squashArgs(source: string, target: string): string[] {
   return [
     "squash",
-    ...specs,
     "--from",
     source,
     "--into",
     target,
+    "--tool",
+    "jj-stamp",
     "--use-destination-message",
     "--keep-emptied",
   ];
@@ -390,7 +393,7 @@ export class ReviewService {
   }
   private async files(
     source: string,
-    reconcileHunks = true,
+    includeHunks = true,
   ): Promise<ReviewFile[]> {
     const key = `${this.root}:${source}`;
     const cached = this.fileCache.get(key);
@@ -405,8 +408,8 @@ export class ReviewService {
       ])
     ).stdout;
     const sections = diff.split(/(?=^diff --git )/m).filter(Boolean);
-    const parsedFiles = new Map<ReviewFile, FileDiff>();
     const files: ReviewFile[] = [];
+    const occurrences = new Map<string, number>();
     for (const patch of sections) {
       const next = /^\+\+\+ b\/(.*)$/m.exec(patch)?.[1];
       const old = /^--- a\/(.*)$/m.exec(patch)?.[1];
@@ -421,60 +424,40 @@ export class ReviewService {
         hunks: [],
       };
       try {
-        parsedFiles.set(file, parseFile(patch, name));
+        const parsed = parseFile(patch, name);
+        if (includeHunks) {
+          file.hunks = parsed.hunks.map((hunk) => {
+            // IDs belong to this exact pinned diff, not to a third-party listing.
+            // Resolve even short-hash collisions deterministically across files.
+            const short = hash(
+              JSON.stringify([name, hunk.header, hunk.rows.map((r) => r.raw)]),
+            ).slice(0, 7);
+            const occurrence = (occurrences.get(short) ?? 0) + 1;
+            occurrences.set(short, occurrence);
+            return {
+              ...hunk,
+              id: short + (occurrence === 1 ? "" : `-${occurrence}`),
+            };
+          });
+          for (const hunk of file.hunks)
+            for (const row of hunk.rows) {
+              if (row.raw[0] === "+") file.additions++;
+              if (row.raw[0] === "-") file.deletions++;
+            }
+        }
       } catch (error) {
         file.unsupported =
           error instanceof Error ? error.message : String(error);
       }
       files.push(file);
     }
-    // Editor validation only needs pinned diff paths. Never run a hunk tool
-    // here: its internal jj reads may snapshot the workspace on a cache miss.
-    if (!reconcileHunks) return files;
-    // One whole-revision listing, regardless of file count. Reconcile exact
-    // paths, ordered hunks and every body row before exposing any selections.
-    if (parsedFiles.size) {
-      let listing: RevisionListing | undefined;
-      let listingError: unknown;
-      try {
-        listing = parseRevisionListing(
-          (
-            await this.toolRunner(
-              "jj-hunk-tool",
-              ["hunks", "-r", source],
-              this.root,
-            )
-          ).stdout,
-          files.map((file) => file.path),
-        );
-      } catch (error) {
-        listingError = error;
-      }
-      for (const [file, parsed] of parsedFiles) {
-        try {
-          if (!listing) throw listingError;
-          const hunks = reconcileListing(parsed, listing);
-          file.hunks = parsed.hunks.map((hunk, i) => ({
-            ...hunk,
-            id: hunks[i].id,
-          }));
-          const changedRows = parsed.hunks.flatMap((hunk) => hunk.rows);
-          for (const row of changedRows) {
-            if (row.raw[0] === "+") file.additions++;
-            if (row.raw[0] === "-") file.deletions++;
-          }
-        } catch (error) {
-          file.unsupported =
-            error instanceof Error ? error.message : String(error);
-        }
-      }
-    }
+    if (!includeHunks) return files;
     const ids = files.flatMap((file) => file.hunks.map((hunk) => hunk.id));
     if (new Set(ids).size !== ids.length)
       throw new Error(
         "Duplicate hunk IDs across files; refusing ambiguous selections.",
       );
-    // Do not retain transient tool failures or unsupported interpretations.
+    // Do not retain unsupported interpretations.
     if (files.every((file) => !file.unsupported)) {
       if (this.fileCache.size >= 16)
         this.fileCache.delete(this.fileCache.keys().next().value!);
@@ -1009,7 +992,7 @@ export class ReviewService {
   private async prepare(
     state: State,
     input: PreviewInput,
-  ): Promise<Omit<Preview, "token">> {
+  ): Promise<PreparedPreview> {
     this.requireVersion(state, input.version);
     this.assertNotPending();
     const target = state.targets.find((rev) => rev.changeId === input.target);
@@ -1055,7 +1038,7 @@ export class ReviewService {
     const picked: Array<{
       patch: string;
       path: string;
-      hunk: Hunk;
+      hunk: ReviewHunk;
       lines: number[];
     }> = [];
     const specs: string[] = [];
@@ -1089,26 +1072,88 @@ export class ReviewService {
         "INVALID_SELECTION",
         "The selected hunk does not exist in this diff.",
       );
-    const patch = (
-      await this.toolRunner(
-        "jj-hunk-tool",
-        ["patch", ...specs, "-r", state.source.commitId],
-        this.root,
-      )
-    ).stdout;
-    try {
-      assertExactPreview(patch, picked);
-    } catch (error) {
-      throw new ApiError(422, "UNSAFE_PREVIEW", (error as Error).message);
+    if (!state.parent)
+      throw new ApiError(
+        409,
+        "SQUASH_UNAVAILABLE",
+        "Native selection requires a single conflict-free immediate parent.",
+      );
+    const editPlan: DiffEditorPlan = {
+      version: 1,
+      repository: this.root,
+      files: [],
+    };
+    const previews: string[] = [];
+    for (const file of state.files) {
+      const selections = picked.filter((pick) => pick.path === file.path);
+      if (!selections.length) continue;
+      const read = async (revision: string) => {
+        const result = await this.jjRunner(this.root, [
+          "file",
+          "show",
+          "-r",
+          revision,
+          "--ignore-working-copy",
+          "--",
+          `root-file:${JSON.stringify(file.path)}`,
+        ]);
+        if (
+          result.stdoutBytes &&
+          result.stdoutBytes.toString("utf8") !== result.stdout
+        )
+          throw new ApiError(
+            422,
+            "UNSAFE_PREVIEW",
+            "Pinned file bytes disagree with their text representation.",
+          );
+        return result.stdoutBytes ?? Buffer.from(result.stdout, "utf8");
+      };
+      const base = /^--- \/dev\/null$/m.test(file.patch)
+        ? null
+        : await read(state.parent.commitId);
+      const source = /^\+\+\+ \/dev\/null$/m.test(file.patch)
+        ? null
+        : await read(state.source.commitId);
+      try {
+        const materialized = materializeSelection(
+          {
+            path: file.path,
+            patch: file.patch,
+            selections: selections.map((pick) => ({
+              hunk: file.hunks.indexOf(pick.hunk),
+              lines: pick.lines,
+            })),
+          },
+          base,
+          source,
+        );
+        editPlan.files.push({
+          path: file.path,
+          base: base?.toString("base64") ?? null,
+          source: source?.toString("base64") ?? null,
+          result: materialized.result?.toString("base64") ?? null,
+        });
+        previews.push(materialized.preview);
+      } catch (error) {
+        throw new ApiError(
+          422,
+          "UNSAFE_PREVIEW",
+          error instanceof Error ? error.message : String(error),
+        );
+      }
     }
-    const args = squashArgs(specs, state.source.commitId, target.commitId);
     return {
-      patch,
+      patch: previews.join(""),
       specs,
-      command: ["jj-hunk-tool", ...args].join(" "),
+      command: formatCommand(
+        process.env.JJ_STAMP_JJ || "jj",
+        squashArgs(state.source.commitId, target.commitId),
+      ),
       selectedLines,
+      editPlan,
     };
   }
+
   preview(input: PreviewInput): Promise<Preview> {
     return this.serial("preview", async () =>
       this.previewInternal(input, (await this.captureState()).state),
@@ -1134,7 +1179,8 @@ export class ReviewService {
       selections: structuredClone(input.selections),
       expires: Date.now() + 10 * 60_000,
     });
-    return { ...preview, token };
+    const { editPlan: _privatePlan, ...publicPreview } = preview;
+    return { ...publicPreview, token };
   }
   squash(
     token: string,
@@ -1161,6 +1207,7 @@ export class ReviewService {
     });
     if (
       !same(check.specs, plan.specs) ||
+      !same(check.editPlan, plan.editPlan) ||
       check.patch !== plan.patch ||
       check.command !== plan.command
     )
@@ -1190,10 +1237,19 @@ export class ReviewService {
     this.plans.clear();
     let result;
     try {
-      result = await this.toolRunner(
-        "jj-hunk-tool",
-        squashArgs(plan.specs, plan.source.commitId, plan.target.commitId),
-        this.root,
+      result = await withDiffEditor(plan.editPlan, (configArgs) =>
+        this.toolRunner(
+          "jj",
+          [
+            ...squashArgs(plan.source.commitId, plan.target.commitId),
+            ...configArgs,
+            "--",
+            ...plan.editPlan.files.map(
+              (file) => `root-file:${JSON.stringify(file.path)}`,
+            ),
+          ],
+          this.root,
+        ),
       );
     } catch (error) {
       return this.failedMutation(error, before.operation);
@@ -1282,13 +1338,14 @@ export class ReviewService {
       same(operation.parents, [parent]) &&
       operation.description === `squash commits into ${target}` &&
       operation.attributes.includes(`--from ${source} --into ${target} `) &&
-      operation.attributes.includes("--tool jj-hunk-tool")
+      operation.attributes.includes("--tool jj-stamp ")
     );
   }
   private async failedMutation(
     error: unknown,
     beforeOperation: string,
   ): Promise<never> {
+    const nativeSquash = this.history.pending?.kind === "squash";
     let current: string | undefined;
     try {
       current = (await this.operation()).id;
@@ -1302,16 +1359,15 @@ export class ReviewService {
       error instanceof ProcessError
         ? processFailureOutput(error, error.cwd ?? this.root)
         : String(error);
-    const dependencyHint = /failed to run patch/.test(output)
-      ? "jj-hunk-tool could not start its required patch executable. Install GNU patch or repair the packaged runtime. "
-      : "";
     throw this.pendingError(
       500,
       current === beforeOperation ? "TOOL_FAILED" : "PARTIAL_FAILURE",
-      dependencyHint +
-        (current === beforeOperation
-          ? "The tool failed without a recorded history change. Nothing was automatically retried. Refresh before trying again."
-          : "The tool failed and history may have changed. Inspect jj op log before doing anything else. No retry or rollback was attempted."),
+      (current === beforeOperation
+        ? "The tool failed without a recorded history change. Nothing was automatically retried. Refresh before trying again."
+        : "The tool failed and history may have changed. Inspect jj op log before doing anything else. No retry or rollback was attempted.") +
+        (nativeSquash
+          ? " Native-editor manifest paths are temporary and have been removed; this diagnostic command is not a replayable retry."
+          : ""),
       { output, ...(current ? { currentOperation: current } : {}) },
     );
   }

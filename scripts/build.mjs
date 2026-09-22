@@ -20,6 +20,18 @@ await build({
   target: "node24",
   format: "cjs",
   banner: { js: "#!/usr/bin/env node" },
-  define: { __JJ_STAMP_VERSION__: JSON.stringify(version) },
+  define: {
+    __JJ_STAMP_VERSION__: JSON.stringify(version),
+    __JJ_STAMP_BUNDLED__: "true",
+  },
 });
 await chmod("dist/cli.cjs", 0o755);
+await build({
+  entryPoints: ["server/diff-editor-cli.ts"],
+  outfile: "dist/diff-editor.cjs",
+  bundle: true,
+  platform: "node",
+  target: "node24",
+  format: "cjs",
+  define: { __JJ_STAMP_BUNDLED__: "true" },
+});

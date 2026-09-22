@@ -65,7 +65,7 @@ function postWriteFailureService(repoPath: string) {
   });
 }
 
-// Run against actual jj and jj-hunk-tool, including non-working-copy rewrites.
+// Run against actual jj and the native diff editor, including non-working-copy rewrites.
 test("non-@ ancestor is resolved once and follows its change through full squash, process-local undo and workspace moves", async () => {
   const options = await fixture();
   const workingCopyId = await revisionId(options.repoPath, "@");
@@ -338,9 +338,9 @@ test("initial read becoming stale does not re-resolve @ on re-entry", async () =
   let moved = false;
   const service = new ReviewService({
     repoPath: options.repoPath,
-    toolRunner: async (command, args, cwd) => {
-      const result = await run(command, args, cwd);
-      if (args[0] === "hunks" && !moved) {
+    jjRunner: async (cwd, args) => {
+      const result = await jj(cwd, args);
+      if (args[0] === "diff" && !moved) {
         moved = true;
         await jj(cwd, ["new", "-m", "Moved during initial read"]);
       }
@@ -658,9 +658,9 @@ test("selection becoming stale leaves the prior source active", async () => {
   let moved = false;
   const service = new ReviewService({
     repoPath: options.repoPath,
-    toolRunner: async (command, args, cwd) => {
-      const result = await run(command, args, cwd);
-      if (args[0] === "hunks" && args.includes(chosenCommit) && !moved) {
+    jjRunner: async (cwd, args) => {
+      const result = await jj(cwd, args);
+      if (args[0] === "diff" && args.includes(chosenCommit) && !moved) {
         moved = true;
         await jj(cwd, ["new", "-m", "Race while selecting"]);
       }
@@ -901,7 +901,7 @@ test("state and graph batch revision author and jj's distinguishing change prefi
   assert.equal(
     toolCalls,
     0,
-    "revision metadata uses existing jj queries, never the hunk tool",
+    "revision metadata uses existing jj queries, never a mutation tool",
   );
   assert.deepEqual(
     (await new ReviewService({ repoPath: options.repoPath }).getState()).source,
@@ -1091,9 +1091,9 @@ test("unavailable-source recovery revalidates history before publishing a candid
   let changeDuringSelection = false;
   const service = new ReviewService({
     repoPath: options.repoPath,
-    toolRunner: async (command, args, cwd) => {
-      const result = await run(command, args, cwd);
-      if (changeDuringSelection && args[0] === "hunks") {
+    jjRunner: async (cwd, args) => {
+      const result = await jj(cwd, args);
+      if (changeDuringSelection && args[0] === "diff") {
         changeDuringSelection = false;
         await jj(cwd, ["new", "-m", "External operation during recovery"]);
       }

@@ -67,16 +67,8 @@ export function jjTimingName(args: string[]): string {
   }
 }
 export function toolTimingName(args: string[]): string {
-  switch (args[0]) {
-    case "hunks":
-      return "jj-hunk-tool hunks";
-    case "patch":
-      return "jj-hunk-tool patch";
-    case "squash":
-      return "jj-hunk-tool squash";
-    default:
-      return "jj-hunk-tool";
-  }
+  // The only separately instrumented tool is jj's history-writing squash.
+  return args[0] === "squash" ? "jj squash (native editor)" : "jj";
 }
 
 /** Opt-in instrumentation, not a scheduler. The service must drain every

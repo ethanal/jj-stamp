@@ -36,11 +36,20 @@ run_jj("describe", "-m", "parent")
 run_jj("new", "-m", "review me")
 (repo / "example.txt").write_text("after\n")
 change = run_jj("log", "--no-graph", "-r", "@", "-T", "change_id")
-# Only the Nix wrappers may supply node, jj, jj-hunk-tool and GNU patch.
-# Listing/preview does not invoke patch: a real mutation below must succeed too.
-env["PATH"] = ""
-# The launcher must override any ambient tool choice with the patched store wrapper.
-env["JJ_STAMP_HUNK_TOOL"] = "/not-the-packaged-hunk-tool"
+# Only the Nix wrapper may supply node and jj. Poison obsolete external tools:
+# startup, preview, real mutations and undo must never invoke either one.
+poison = root / "poison-bin"
+poison.mkdir()
+invoked = root / "obsolete-tool-invoked"
+for name in ("jj-hunk-tool", "patch"):
+    executable = poison / name
+    executable.write_text(
+        f"#!{sys.executable}\nfrom pathlib import Path\n"
+        f"Path({str(invoked)!r}).write_text({name!r})\nraise SystemExit(91)\n")
+    executable.chmod(0o755)
+env["PATH"] = str(poison)
+# The launcher must override an ambient jj choice with the packaged executable.
+env["JJ_STAMP_JJ"] = "/not-the-packaged-jj"
 env.pop("NODE_PATH", None)
 process = subprocess.Popen([f"{package}/bin/jj-stamp", "--no-open", change],
                            cwd=repo, env=env, stdout=subprocess.PIPE,
@@ -125,8 +134,8 @@ try:
     assert (repo / "example.txt").read_text() == "after\n"
 
     # Selecting only a late replacement neutralizes the earlier deletion block
-    # into >3 leading context rows. Upstream's patch then incorrectly requires
-    # EOF; the file deliberately continues well past the selected hunk.
+    # into >3 leading context rows. The former external patch pipeline wrongly
+    # required EOF here; the native editor must preserve the remaining file.
     partial_source = partial_base.replace(
         "".join(f"line {i}\n" for i in range(6, 16)), "early replacement\n"
     ).replace("line 18\n", "changed 18\n")
@@ -172,11 +181,28 @@ try:
     assert "Signing error" in failed["output"], failed
     command = shlex.split(failed["output"].split("Failed command:\n", 1)[1].splitlines()[0])
     assert command[0].startswith("/nix/store/"), command
-    assert command[0].endswith("/bin/jj-hunk-tool"), command
+    assert command[0] == jj, command
     assert Path(command[0]).is_file(), command
-    assert command[1:] == ["squash", hunk["id"], "--from", failing["source"]["commitId"],
-                           "--into", failing["parent"]["commitId"],
-                           "--use-destination-message", "--keep-emptied"], command
+    assert command[1:10] == ["squash", "--from", failing["source"]["commitId"],
+                            "--into", failing["parent"]["commitId"],
+                            "--tool", "jj-stamp",
+                            "--use-destination-message", "--keep-emptied"], command
+    assert command[10::2][:4] == ["--config"] * 4, command
+    config = dict(arg.split("=", 1) for arg in command[11:18:2])
+    node = json.loads(config["merge-tools.jj-stamp.program"])
+    assert node.startswith("/nix/store/") and node.endswith("/bin/node"), node
+    assert Path(node).is_file(), node
+    callback, manifest, left, right = json.loads(config["merge-tools.jj-stamp.edit-args"])
+    assert callback == f"{package}/lib/jj-stamp/diff-editor.cjs", callback
+    assert Path(callback).is_file(), callback
+    assert Path(manifest).is_absolute() and Path(manifest).name == "plan.json", manifest
+    assert not Path(manifest).exists() and not Path(manifest).parent.exists(), manifest
+    assert (left, right) == ("$left", "$right"), (left, right)
+    assert config["ui.diff-instructions"] == "false", config
+    assert config["merge-tools.jj-stamp.edit-invocation-mode"] == '"dir"', config
+    assert command[18:] == ["--", 'root-file:"example.txt"'], command
+    assert "manifest" in failed["error"] and "removed" in failed["error"], failed
+    assert "not a replayable retry" in failed["error"], failed
     assert json.loads(get("api/state"))["operation"] == failing["operation"]
     for key in signing:
         run_jj("config", "unset", "--repo", key)
@@ -194,7 +220,8 @@ try:
     # Review, squash, undo and shutdown must not create backend app state.
     assert not (root / "state" / "jj-stamp").exists()
     assert not (home / ".local" / "state" / "jj-stamp").exists()
-    print("Installed CLI, pinned patched runtime, full Nix command diagnostics, asymmetric-context partial squash, browser assets, preview, squash, undo, stateless operation, revision selection and shutdown passed")
+    assert not invoked.exists(), invoked.read_text() if invoked.exists() else ""
+    print("Installed CLI, pinned jj/native callback, no external patch tools, full Nix command diagnostics, asymmetric-context partial squash, browser assets, preview, squash, undo, stateless operation, revision selection and shutdown passed")
 finally:
     selector.close()
     if process.poll() is None:

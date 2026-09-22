@@ -5,8 +5,6 @@
   nodejs_24,
   makeWrapper,
   jujutsu,
-  jj-hunk-tool,
-  patch,
   xdg-utils,
 }:
 
@@ -42,18 +40,16 @@ buildNpmPackage {
   installPhase = ''
     runHook preInstall
     mkdir -p "$out/lib/jj-stamp" "$out/bin"
-    cp dist/cli.cjs "$out/lib/jj-stamp/cli.cjs"
+    cp dist/cli.cjs dist/diff-editor.cjs "$out/lib/jj-stamp/"
     cp -R dist/client "$out/lib/jj-stamp/client"
     # Prefer the packaged, tested tools over any user-installed versions on PATH.
     makeWrapper ${lib.getExe nodejs_24} "$out/bin/jj-stamp" \
       --add-flags "$out/lib/jj-stamp/cli.cjs" \
-      --set JJ_STAMP_HUNK_TOOL ${lib.getExe jj-hunk-tool} \
+      --set JJ_STAMP_JJ ${lib.getExe jujutsu} \
       --prefix PATH : ${
         lib.makeBinPath (
           [
             jujutsu
-            jj-hunk-tool
-            patch
           ]
           ++ lib.optionals stdenv.hostPlatform.isLinux [ xdg-utils ]
         )

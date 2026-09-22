@@ -13,9 +13,10 @@ import express from "express";
 import type { AddressInfo } from "node:net";
 import { ReviewService, ApiError, reviewLogRevset } from "../server/service.ts";
 import type { ReviewHunk, State, Selection } from "../server/service.ts";
-import { jj, run, ProcessError } from "../server/process.ts";
+import { jj, run, ProcessError, formatCommand } from "../server/process.ts";
 import { createApi } from "../server/api.ts";
-import { assertExactPreview, parseFile } from "../server/diff.ts";
+import { parseFile } from "../server/diff.ts";
+import { materializeSelection } from "../server/selection.ts";
 import { createDemo } from "./fixtures.ts";
 
 async function fixture() {
@@ -83,7 +84,7 @@ test("full hunk squash rewrites pinned parent, retains other changes, and exact 
     ),
   );
   assert.ok(
-    preview.command.endsWith("--use-destination-message --keep-emptied"),
+    preview.command.includes("--use-destination-message --keep-emptied"),
   );
   assert.equal(
     (await service.getState()).operation,
@@ -325,17 +326,29 @@ test("unsupported newline, mode, binary and rename structures fail closed", asyn
   }
 });
 
-test("preview verifier rejects changed path, widened changes and shifted hunk positions", () => {
+test("native materialization selects exact rows and rejects changed paths, widened patches and shifted positions", () => {
   const patch = "--- a/x.ts\n+++ b/x.ts\n@@ -1,2 +1,4 @@\n a\n+b\n+c\n z\n";
-  const parsed = parseFile(patch, "x.ts");
-  const picks = [{ patch, path: "x.ts", hunk: parsed.hunks[0], lines: [2] }];
-  const exact = "--- a/x.ts\n+++ b/x.ts\n@@ -1,2 +1,3 @@\n a\n+b\n z\n";
-  assertExactPreview(exact, picks);
-  assert.throws(() =>
-    assertExactPreview(exact.replaceAll("x.ts", "other.ts"), picks),
-  );
-  assert.throws(() => assertExactPreview(patch, picks));
-  assert.throws(() => assertExactPreview(exact.replace("-1,2", "-2,2"), picks));
+  const base = Buffer.from("a\nz\n");
+  const source = Buffer.from("a\nb\nc\nz\n");
+  const selection = {
+    path: "x.ts",
+    patch,
+    selections: [{ hunk: 0, lines: [2] }],
+  };
+  const exact =
+    "diff --git a/x.ts b/x.ts\n--- a/x.ts\n+++ b/x.ts\n@@ -1,2 +1,3 @@\n a\n+b\n z\n";
+  const materialized = materializeSelection(selection, base, source);
+  assert.equal(materialized.preview, exact);
+  assert.deepEqual(materialized.result, Buffer.from("a\nb\nz\n"));
+  for (const unsafe of [
+    patch.replaceAll("x.ts", "other.ts"),
+    patch.replace("+1,4", "+1,5").replace("+c\n", "+c\n+unselected extra\n"),
+    patch.replace("-1,2", "-2,2"),
+  ]) {
+    assert.throws(() =>
+      materializeSelection({ ...selection, patch: unsafe }, base, source),
+    );
+  }
 });
 
 test("legacy pending journal is ignored and never rewritten or supplemented", async () => {
@@ -491,7 +504,7 @@ test("nonzero tool exit after real squash blocks this service, while restart onl
     assert.equal(error.code, "PARTIAL_FAILURE");
     assert.ok(
       String(error.details?.output).startsWith(
-        `Working directory: ${root}\nFailed command:\njj-hunk-tool squash ${hunk.id} --from ${state.source.commitId} --into ${state.parent!.commitId} --use-destination-message --keep-emptied\n\n`,
+        `Working directory: ${root}\nFailed command:\njj squash --from ${state.source.commitId} --into ${state.parent!.commitId} --tool jj-stamp --use-destination-message --keep-emptied`,
       ),
     );
     assert.match(String(error.details?.output), /Simulated post-write failure/);
@@ -991,15 +1004,18 @@ test("immediate squash retains preview verification and revalidates before mutat
   let squashCalls = 0;
   const service = new ReviewService({
     repoPath: root,
-    toolRunner: async (command, args, cwd) => {
-      const result = await run(command, args, cwd);
-      if (args[0] === "patch")
+    jjRunner: async (cwd, args) => {
+      const result = await jj(cwd, args);
+      if (args[0] === "file" && args[1] === "show")
         await appendFile(
           path.join(root, "src/notifications.ts"),
           "\n// external edit during internal preview\n",
         );
-      if (args[0] === "squash") squashCalls++;
       return result;
+    },
+    toolRunner: (command, args, cwd) => {
+      if (args[0] === "squash") squashCalls++;
+      return run(command, args, cwd);
     },
   });
   const hunk = state.files[0].hunks[0];
@@ -1118,36 +1134,46 @@ test("file context remains available when the exact parent is immutable", async 
   );
 });
 
-test("immediate squash refuses unsafe internal previews without executing the tool", async () => {
-  const { state, root } = await fixture();
-  let squashCalls = 0;
-  const service = new ReviewService({
-    repoPath: root,
-    toolRunner: async (command, args, cwd) => {
-      if (args[0] === "squash") squashCalls++;
-      const result = await run(command, args, cwd);
-      return args[0] === "patch"
-        ? {
-            ...result,
-            stdout: result.stdout.replaceAll(
-              "src/notifications.ts",
-              "src/wrong.ts",
-            ),
-          }
-        : result;
-    },
+for (const side of ["base", "source"] as const) {
+  test(`immediate squash rejects exact ${side} bytes inconsistent with its pinned diff`, async () => {
+    const { state, root } = await fixture();
+    let squashCalls = 0;
+    let corrupted = false;
+    const service = new ReviewService({
+      repoPath: root,
+      toolRunner: async (command, args, cwd) => {
+        squashCalls++;
+        return run(command, args, cwd);
+      },
+      jjRunner: async (cwd, args) => {
+        const result = await jj(cwd, args);
+        const revision =
+          side === "base" ? state.parent!.commitId : state.source.commitId;
+        if (
+          args[0] === "file" &&
+          args[1] === "show" &&
+          args.includes(revision)
+        ) {
+          corrupted = true;
+          const stdout = "wrong pinned file contents\n";
+          return { ...result, stdout, stdoutBytes: Buffer.from(stdout) };
+        }
+        return result;
+      },
+    });
+    const hunk = state.files[0].hunks[0];
+    await rejectsCode(
+      service.squashLines({
+        version: state.version,
+        selections: [{ id: hunk.id, lines: changes(hunk) }],
+      }),
+      "UNSAFE_PREVIEW",
+    );
+    assert.equal(corrupted, true);
+    assert.equal(squashCalls, 0);
+    assert.deepEqual(await service.getState(), state);
   });
-  const hunk = state.files[0].hunks[0];
-  await rejectsCode(
-    service.squashLines({
-      version: state.version,
-      selections: [{ id: hunk.id, lines: changes(hunk) }],
-    }),
-    "UNSAFE_PREVIEW",
-  );
-  assert.equal(squashCalls, 0);
-  assert.equal((await service.getState()).operation, state.operation);
-});
+}
 
 test("immediate squash preserves in-process recovery guard after a post-write tool failure", async () => {
   const { dataDir, state, root } = await fixture();
@@ -1195,16 +1221,14 @@ test("immediate squash preserves in-process recovery guard after a post-write to
   assert.deepEqual(await readdir(dataDir), [path.basename(root)]);
 });
 
-test("immutable diff cache serves state, log and context without repeating listings or sharing mutable objects", async () => {
+test("immutable diff cache serves state, log and context without repeating pinned diffs or sharing mutable objects", async () => {
   const { root } = await fixture();
-  let listings = 0,
-    diffs = 0,
-    patches = 0;
+  let diffs = 0,
+    toolCalls = 0;
   const service = new ReviewService({
     repoPath: root,
     toolRunner: async (command, args, cwd) => {
-      if (args[0] === "hunks") listings++;
-      if (args[0] === "patch") patches++;
+      toolCalls++;
       return run(command, args, cwd);
     },
     jjRunner: async (cwd, args) => {
@@ -1214,7 +1238,6 @@ test("immutable diff cache serves state, log and context without repeating listi
   });
   const state = await service.getState();
   const pristine = structuredClone(state);
-  assert.equal(listings, 1);
   assert.equal(diffs, 1);
   const context = await service.getFile({
     version: state.version,
@@ -1229,7 +1252,6 @@ test("immutable diff cache serves state, log and context without repeating listi
   state.files[0].hunks[0].id = "caller mutation";
   state.files[0].patch = "caller mutation";
   assert.deepEqual(await service.getState(), pristine);
-  assert.equal(listings, 1);
   assert.equal(diffs, 1);
   const hunk = pristine.files[0].hunks[0];
   await rejectsCode(
@@ -1252,20 +1274,20 @@ test("immutable diff cache serves state, log and context without repeating listi
     "INVALID_PATH",
   );
   assert.equal(
-    patches,
+    toolCalls,
     0,
-    "invalid cached selections do not invoke patch or squash",
+    "reads and invalid cached selections never invoke a mutation tool",
   );
 });
 
 test("cached source never hides external operation-only changes or unsnapshotted workspace edits", async () => {
   const { root } = await fixture();
-  let listings = 0;
+  let diffs = 0;
   const service = new ReviewService({
     repoPath: root,
-    toolRunner: async (command, args, cwd) => {
-      if (args[0] === "hunks") listings++;
-      return run(command, args, cwd);
+    jjRunner: async (cwd, args) => {
+      if (args[0] === "diff") diffs++;
+      return jj(cwd, args);
     },
   });
   const initial = await service.getState();
@@ -1281,7 +1303,7 @@ test("cached source never hides external operation-only changes or unsnapshotted
   assert.notEqual(history.operation, initial.operation);
   assert.notEqual(history.version, initial.version);
   assert.equal(
-    listings,
+    diffs,
     1,
     "operation-only changes reuse immutable source diff, not the old version",
   );
@@ -1311,7 +1333,7 @@ test("cached source never hides external operation-only changes or unsnapshotted
   const edited = await service.getState();
   assert.notEqual(edited.source.commitId, history.source.commitId);
   assert.notEqual(edited.version, history.version);
-  assert.equal(listings, 2);
+  assert.equal(diffs, 2);
   assert.match(edited.files[0].patch, /external unsnapshotted edit/);
   assert.deepEqual(
     edited,
@@ -1321,12 +1343,12 @@ test("cached source never hides external operation-only changes or unsnapshotted
 
 test("cached source rechecks configuration-only immutability without an operation change", async () => {
   const { root } = await fixture();
-  let listings = 0;
+  let diffs = 0;
   const service = new ReviewService({
     repoPath: root,
-    toolRunner: async (command, args, cwd) => {
-      if (args[0] === "hunks") listings++;
-      return run(command, args, cwd);
+    jjRunner: async (cwd, args) => {
+      if (args[0] === "diff") diffs++;
+      return jj(cwd, args);
     },
   });
   const state = await service.getState();
@@ -1342,7 +1364,7 @@ test("cached source rechecks configuration-only immutability without an operatio
   assert.equal(restricted.source.commitId, state.source.commitId);
   assert.notEqual(restricted.version, state.version);
   assert.equal(restricted.parent, null);
-  assert.equal(listings, 1);
+  assert.equal(diffs, 1);
   const selections = [
     { id: state.files[0].hunks[0].id, lines: changes(state.files[0].hunks[0]) },
   ];
@@ -1366,65 +1388,6 @@ test("cached source rechecks configuration-only immutability without an operatio
     context.oldFile!.contents,
     await fileAt(root, state.parent!.commitId, state.files[0].path),
   );
-});
-
-test("transient hunk listing failures are not retained in the immutable diff cache", async () => {
-  const { root } = await fixture();
-  let listings = 0;
-  const service = new ReviewService({
-    repoPath: root,
-    toolRunner: async (command, args, cwd) => {
-      if (args[0] === "hunks" && ++listings === 1)
-        throw new Error("temporary listing failure");
-      return run(command, args, cwd);
-    },
-  });
-  const failed = await service.getState();
-  assert.match(failed.files[0].unsupported!, /temporary listing failure/);
-  const recovered = await service.getState();
-  assert.ok(recovered.files.every((file) => !file.unsupported));
-  assert.equal(listings, 2);
-  assert.equal(
-    recovered.version,
-    failed.version,
-    "tool availability does not change repository identity",
-  );
-  assert.deepEqual(await service.getState(), recovered);
-  assert.equal(listings, 2);
-});
-
-test("direct squash checks one exact preview and lists only the new committed source", async () => {
-  const { root } = await fixture();
-  let listings = 0,
-    patches = 0,
-    squashes = 0;
-  const service = new ReviewService({
-    repoPath: root,
-    toolRunner: async (command, args, cwd) => {
-      if (args[0] === "hunks") listings++;
-      if (args[0] === "patch") patches++;
-      if (args[0] === "squash") squashes++;
-      return run(command, args, cwd);
-    },
-  });
-  const before = await service.getState();
-  listings = 0;
-  const hunk = before.files[2].hunks[1];
-  const result = await service.squashLines({
-    version: before.version,
-    selections: [
-      {
-        id: hunk.id,
-        lines: [hunk.rows.find((row) => row.raw.startsWith("+"))!.index],
-      },
-    ],
-  });
-  assert.equal(patches, 1);
-  assert.equal(squashes, 1);
-  assert.equal(listings, 1);
-  assert.equal(result.state.canUndo, true);
-  assert.deepEqual(await service.getState(), result.state);
-  assert.equal(listings, 1);
 });
 
 test("revision API validates strict versioned identity input and returns the explicitly selected state", async (t) => {
@@ -1506,18 +1469,35 @@ test("revision API validates strict versioned identity input and returns the exp
   assert.deepEqual(await service.getState(), selected);
 });
 
-test("missing patch runtime dependency is actionable over HTTP and never retried by reads or restart", async (t) => {
+test("native callback failure includes its full invocation over HTTP and never retried by reads or restart", async (t) => {
   const { root, state } = await fixture();
-  // Exact stderr reproduced with the pinned binary and a PATH containing only
-  // jj and jj-hunk-tool: previews work, but _jj-tool cannot launch GNU patch.
+  // Native callback errors must preserve jj diagnostics, without legacy dependency advice.
   const stderr =
-    "Error: failed to run patch\n\nCaused by:\n    No such file or directory (os error 2)\nError: Failed to edit diff\nCaused by: Tool exited with exit status: 1 (run with --debug to see the exact invocation)\nError: jj command failed\n";
+    "Error: Failed to edit diff\nCaused by:\n    jj-stamp native callback: source tree did not match pinned plan\n    Tool exited with exit status: 1\n";
   let squashCalls = 0;
+  let invocation = "";
   const service = new ReviewService({
     repoPath: root,
     toolRunner: async (command, args, cwd) => {
       if (args[0] === "squash") {
         squashCalls++;
+        assert.equal(command, "jj");
+        assert.deepEqual(args.slice(0, 9), [
+          "squash",
+          "--from",
+          state.source.commitId,
+          "--into",
+          state.parent!.commitId,
+          "--tool",
+          "jj-stamp",
+          "--use-destination-message",
+          "--keep-emptied",
+        ]);
+        assert.ok(args.includes("--config"));
+        assert.deepEqual(args.slice(args.indexOf("--") + 1), [
+          `root-file:${JSON.stringify(state.files[0].path)}`,
+        ]);
+        invocation = formatCommand(command, args);
         throw new ProcessError(command, args, { stdout: "", stderr }, 1);
       }
       return run(command, args, cwd);
@@ -1545,14 +1525,15 @@ test("missing patch runtime dependency is actionable over HTTP and never retried
   assert.equal(response.headers.get("cache-control"), "no-store");
   const error = await response.json();
   assert.equal(error.code, "TOOL_FAILED");
-  assert.match(error.error, /required patch executable.*GNU patch/);
+  assert.match(error.output, /native callback/);
+  assert.doesNotMatch(error.error, /GNU patch|required patch executable/);
   assert.match(
     error.error,
     /without a recorded history change.*Nothing was automatically retried/,
   );
   assert.equal(
     error.output,
-    `Working directory: ${root}\nFailed command:\njj-hunk-tool squash ${hunk.id}:${changes(hunk)[0]} --from ${state.source.commitId} --into ${state.parent!.commitId} --use-destination-message --keep-emptied\n\n${stderr}`,
+    `Working directory: ${root}\nFailed command:\n${invocation}\n\n${stderr}`,
     "include the exact failed invocation and preserve complete subprocess diagnostics",
   );
   assert.deepEqual(await service.getState(), state);
@@ -1568,18 +1549,24 @@ test("missing patch runtime dependency is actionable over HTTP and never retried
   );
 });
 
-test("squash preview process failures expose stdout and stderr without attempting a mutation", async (t) => {
+test("pinned preparation file-read failures expose stdout and stderr without attempting a mutation", async (t) => {
   const { root, state } = await fixture();
-  const stdout = "Previewing chosen rows\n";
-  const stderr = "Error: selected hunk could not be read\n";
+  const stdout = "Reading pinned file\n";
+  const stderr = "Error: pinned file could not be read\n";
   let squashCalls = 0;
+  let invocation = "";
   const service = new ReviewService({
     repoPath: root,
     toolRunner: async (command, args, cwd) => {
-      if (args[0] === "patch")
-        throw new ProcessError(command, args, { stdout, stderr }, 1, cwd);
       if (args[0] === "squash") squashCalls++;
       return run(command, args, cwd);
+    },
+    jjRunner: async (cwd, args) => {
+      if (args[0] === "file" && args[1] === "show") {
+        invocation = formatCommand("jj", args);
+        throw new ProcessError("jj", args, { stdout, stderr }, 1, cwd);
+      }
+      return jj(cwd, args);
     },
   });
   const app = express();
@@ -1607,9 +1594,165 @@ test("squash preview process failures expose stdout and stderr without attemptin
   assert.equal(error.code, "TOOL_FAILED");
   assert.equal(
     error.output,
-    `Working directory: ${root}\nFailed command:\njj-hunk-tool patch ${hunk.id}:${changes(hunk)[0]} -r ${state.source.commitId}\n\n${stdout}${stderr}`,
+    `Working directory: ${root}\nFailed command:\n${invocation}\n\n${stdout}${stderr}`,
   );
-  assert.match(error.error, /selected hunk could not be read/);
+  assert.match(error.error, /pinned file could not be read/);
   assert.equal(squashCalls, 0);
   assert.deepEqual(await service.getState(), state);
+});
+
+test("transient preparation file-read failures do not poison cached diffs or authorize writes", async () => {
+  const { root } = await fixture();
+  let failRead = true;
+  let reads = 0;
+  let diffs = 0;
+  let mutations = 0;
+  const service = new ReviewService({
+    repoPath: root,
+    jjRunner: async (cwd, args) => {
+      if (args[0] === "diff") diffs++;
+      if (args[0] === "file" && args[1] === "show") {
+        reads++;
+        if (failRead) {
+          failRead = false;
+          throw new ProcessError(
+            "jj",
+            args,
+            { stdout: "", stderr: "temporary file read failure\n" },
+            1,
+            cwd,
+          );
+        }
+      }
+      return jj(cwd, args);
+    },
+    toolRunner: async (command, args, cwd) => {
+      mutations++;
+      return run(command, args, cwd);
+    },
+  });
+  const state = await service.getState();
+  const hunk = state.files[0].hunks[0];
+  const request = input(state, [{ id: hunk.id, lines: changes(hunk) }]);
+  await assert.rejects(service.preview(request), (error: unknown) => {
+    assert.ok(error instanceof ProcessError);
+    assert.equal(error.result.stderr, "temporary file read failure\n");
+    assert.equal(error.command, "jj");
+    assert.ok(error.args.includes(state.parent!.commitId));
+    return true;
+  });
+  assert.equal(reads, 1);
+  assert.equal(mutations, 0);
+  assert.deepEqual(await service.getState(), state);
+  const preview = await service.preview(request);
+  assert.ok(preview.token);
+  assert.equal(
+    reads,
+    3,
+    "fresh explicit preview retries both pinned file sides",
+  );
+  assert.equal(
+    diffs,
+    1,
+    "file-read failures do not change or refetch the immutable diff",
+  );
+  assert.equal(mutations, 0);
+});
+
+test("direct squash reads exact pinned file sides and only the new source diff, never an external preview", async () => {
+  const { root } = await fixture();
+  let diffs = 0;
+  let mutations = 0;
+  const reads: string[][] = [];
+  const service = new ReviewService({
+    repoPath: root,
+    jjRunner: async (cwd, args) => {
+      if (args[0] === "diff") diffs++;
+      if (args[0] === "file" && args[1] === "show") reads.push(args);
+      return jj(cwd, args);
+    },
+    toolRunner: async (command, args, cwd) => {
+      assert.equal(command, "jj");
+      assert.equal(
+        args[0],
+        "squash",
+        "the mutation is the only external tool invocation",
+      );
+      mutations++;
+      return run(command, args, cwd);
+    },
+  });
+  const before = await service.getState();
+  diffs = 0;
+  const file = before.files[2];
+  const hunk = file.hunks[1];
+  const result = await service.squashLines({
+    version: before.version,
+    selections: [
+      {
+        id: hunk.id,
+        lines: [hunk.rows.find((row) => row.raw.startsWith("+"))!.index],
+      },
+    ],
+  });
+  assert.deepEqual(
+    reads,
+    [before.parent!.commitId, before.source.commitId].map((revision) => [
+      "file",
+      "show",
+      "-r",
+      revision,
+      "--ignore-working-copy",
+      "--",
+      `root-file:${JSON.stringify(file.path)}`,
+    ]),
+  );
+  assert.equal(mutations, 1);
+  assert.equal(diffs, 1);
+  assert.equal(result.state.canUndo, true);
+  assert.deepEqual(await service.getState(), result.state);
+  assert.equal(diffs, 1);
+});
+
+test("native partial multi-file squash preserves the complete source tree and unselected destination files", async () => {
+  const { service, root, state } = await fixture();
+  const tree = async (revision: string) => {
+    const paths = (
+      await jj(root, ["file", "list", "-r", revision, "--ignore-working-copy"])
+    ).stdout
+      .trim()
+      .split("\n");
+    return Promise.all(
+      paths.map(async (file) => [file, await fileAt(root, revision, file)]),
+    );
+  };
+  const originalSource = await tree(state.source.commitId);
+  const untouchedPath = state.files[1].path;
+  const untouchedParent = await fileAt(
+    root,
+    state.parent!.commitId,
+    untouchedPath,
+  );
+  const selected = [state.files[0], state.files[2]].map((file) => {
+    const hunk = file.hunks[1];
+    return {
+      id: hunk.id,
+      lines: [hunk.rows.find((row) => row.raw.startsWith("+"))!.index],
+    };
+  });
+  const result = await service.squashLines({
+    version: state.version,
+    selections: selected,
+  });
+  assert.deepEqual(await tree(result.state.source.commitId), originalSource);
+  assert.equal(
+    await fileAt(root, result.state.parent!.commitId, untouchedPath),
+    untouchedParent,
+  );
+  assert.notEqual(result.state.parent!.commitId, state.parent!.commitId);
+  assert.equal(result.state.source.changeId, state.source.changeId);
+  assert.equal(result.state.canUndo, true);
+  const undone = await service.undo(result.state.version);
+  assert.deepEqual(await tree(undone.state.source.commitId), originalSource);
+  assert.equal(undone.state.parent!.commitId, state.parent!.commitId);
 });

@@ -266,7 +266,7 @@ test(
     const box = await sandbox(t);
     // Make tool invocations observable, and fatal, even when real tools are on PATH.
     const invoked = path.join(box.root, "invoked-tools");
-    for (const name of ["jj", "jj-hunk-tool"]) {
+    for (const name of ["jj", "jj-hunk-tool", "patch"]) {
       await writeFile(
         path.join(box.bin, name),
         `#!/bin/sh\nprintf '%s\\n' '${name}' >> '${invoked}'\nexit 91\n`,
@@ -288,6 +288,134 @@ test(
     }
     assert.equal(await exists(invoked), false);
     assert.equal(await exists(box.opened), false);
+    await box.assertNoAppState();
+  },
+);
+
+test(
+  "built CLI pins jj and uses its bundled native callback without external patch tools",
+  { timeout: 45_000 },
+  async (t) => {
+    const box = await sandbox(t);
+    const repo = await createDemo(box.root);
+    const jjPath =
+      process.env.JJ_STAMP_JJ ||
+      (await run("sh", ["-c", "command -v jj"], repo)).stdout.trim();
+    const invoked = path.join(box.root, "obsolete-or-ambient-tool");
+    for (const name of ["jj", "jj-hunk-tool", "patch"]) {
+      await writeFile(
+        path.join(box.bin, name),
+        `#!${process.execPath}\nrequire('node:fs').writeFileSync(${JSON.stringify(invoked)}, ${JSON.stringify(name)}); process.exit(91);\n`,
+      );
+      await chmod(path.join(box.bin, name), 0o755);
+    }
+    const pinned = path.join(box.root, "pinned-jj");
+    const commands = path.join(box.root, "jj-commands");
+    await writeFile(
+      pinned,
+      `#!${process.execPath}
+const fs = require('node:fs');
+const args = process.argv.slice(2);
+fs.appendFileSync(${JSON.stringify(commands)}, JSON.stringify(args) + '\\n');
+const result = require('node:child_process').spawnSync(${JSON.stringify(jjPath)}, args, { stdio: 'inherit' });
+if (result.error) throw result.error;
+process.exit(result.status ?? 1);
+`,
+    );
+    await chmod(pinned, 0o755);
+    const cli = box.start(["-R", repo, "--no-open", "--port", "0"], box.root, {
+      JJ_STAMP_JJ: pinned,
+    });
+    const url = await cli.url();
+    const initial: State = JSON.parse((await request(url, "/api/state")).body);
+    const file = initial.files[0];
+    const hunk = file.hunks[0];
+    const response = await request(url, "/api/squash-lines", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Fold-Request": "1" },
+      body: JSON.stringify({
+        version: initial.version,
+        selections: [
+          {
+            id: hunk.id,
+            lines: hunk.rows
+              .filter((row) => /^[+-]/.test(row.raw))
+              .map((row) => row.index),
+          },
+        ],
+      }),
+    });
+    assert.equal(response.status, 200, response.body);
+    assert.equal(JSON.parse(response.body).state.canUndo, true);
+    await cli.stop("SIGTERM");
+    assert.equal(
+      await exists(invoked),
+      false,
+      "ambient jj, jj-hunk-tool and patch must not run",
+    );
+    const calls: string[][] = (await readFile(commands, "utf8"))
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+    assert.ok(
+      calls.some((args) => args.length === 1 && args[0] === "--version"),
+      "preflight must use pinned jj too",
+    );
+    const mutations = calls.filter((args) => args[0] === "squash");
+    assert.equal(
+      mutations.length,
+      1,
+      "a mutation must run once without retries",
+    );
+    const args = mutations[0];
+    assert.deepEqual(args.slice(0, 9), [
+      "squash",
+      "--from",
+      initial.source.commitId,
+      "--into",
+      initial.parent!.commitId,
+      "--tool",
+      "jj-stamp",
+      "--use-destination-message",
+      "--keep-emptied",
+    ]);
+    const config = new Map(
+      args.flatMap((arg, index) => {
+        if (arg !== "--config") return [];
+        const assignment = args[index + 1];
+        const separator = assignment.indexOf("=");
+        return [
+          [
+            assignment.slice(0, separator),
+            assignment.slice(separator + 1),
+          ] as const,
+        ];
+      }),
+    );
+    assert.equal(
+      JSON.parse(config.get("merge-tools.jj-stamp.program")!),
+      process.execPath,
+    );
+    const [callback, manifest, left, right]: string[] = JSON.parse(
+      config.get("merge-tools.jj-stamp.edit-args")!,
+    );
+    assert.equal(
+      callback,
+      path.join(path.dirname(executable), "diff-editor.cjs"),
+    );
+    assert.equal(await exists(callback), true);
+    assert.equal(path.isAbsolute(manifest), true);
+    assert.equal(
+      await exists(manifest),
+      false,
+      "temporary manifest must be removed after success",
+    );
+    assert.equal(await exists(path.dirname(manifest)), false);
+    assert.deepEqual([left, right], ["$left", "$right"]);
+    assert.equal(config.get("ui.diff-instructions"), "false");
+    assert.deepEqual(args.slice(args.indexOf("--") + 1), [
+      `root-file:${JSON.stringify(file.path)}`,
+    ]);
     await box.assertNoAppState();
   },
 );
@@ -496,25 +624,26 @@ test(
 );
 
 for (const signal of ["SIGINT", "SIGTERM"] as const) {
-  test(
-    `${signal} drains an accepted request without interrupting its jj child`,
-    { timeout: 45_000, skip: process.platform !== "linux" },
-    async (t) => {
-      const box = await sandbox(t);
-      const repo = await createDemo(box.root);
-      // Resolve the real executable before putting a gate in front of it. The gate
-      // blocks only a post-startup invocation; all actual repository work is real jj.
-      const jjPath = (
-        await run("sh", ["-c", "command -v jj"], repo)
-      ).stdout.trim();
-      const arm = path.join(box.root, "arm");
-      const entered = path.join(box.root, "entered");
-      const release = path.join(box.root, "release");
-      const interrupted = path.join(box.root, "interrupted");
-      await writeFile(
-        path.join(box.bin, "jj"),
-        `#!/bin/sh
-if [ -f '${arm}' ]; then
+  for (const mutation of [false, true]) {
+    test(
+      `${signal} drains an accepted ${mutation ? "squash" : "read"} request without interrupting its jj child`,
+      { timeout: 45_000, skip: process.platform !== "linux" },
+      async (t) => {
+        const box = await sandbox(t);
+        const repo = await createDemo(box.root);
+        // Resolve the real executable before putting a gate in front of it. The gate
+        // blocks only a post-startup invocation; all actual repository work is real jj.
+        const jjPath = (
+          await run("sh", ["-c", "command -v jj"], repo)
+        ).stdout.trim();
+        const arm = path.join(box.root, "arm");
+        const entered = path.join(box.root, "entered");
+        const release = path.join(box.root, "release");
+        const interrupted = path.join(box.root, "interrupted");
+        await writeFile(
+          path.join(box.bin, "jj"),
+          `#!/bin/sh
+if [ -f '${arm}' ] ${mutation ? '&& [ "$1" = squash ]' : ""}; then
   rm '${arm}'
   trap 'echo interrupted > "${interrupted}"; exit 99' INT TERM
   echo "$$" > '${entered}'
@@ -522,59 +651,92 @@ if [ -f '${arm}' ]; then
 fi
 exec '${jjPath}' "$@"
 `,
-      );
-      await chmod(path.join(box.bin, "jj"), 0o755);
-      const cli = box.start(["--no-open"], repo);
-      const url = await cli.url();
-      // Release even on a test timeout so cleanup can drain instead of kill.
-      box.releaseGates.push(() => writeFile(release, "release"));
-      try {
-        await writeFile(arm, "armed");
-        const pending = request(url, "/api/state");
-        void pending.catch(() => {});
-        await until(
-          async () =>
-            (await exists(entered)) &&
-            /^[1-9]\d*\n$/.test(await readFile(entered, "utf8")),
-          cli.diagnostics,
         );
-        const blockedPid = Number((await readFile(entered, "utf8")).trim());
-        assert.ok(Number.isSafeInteger(blockedPid) && blockedPid > 1);
-        box.blockedGroups.add(blockedPid);
-        // Terminal Ctrl-C reaches the foreground process group, not only the
-        // Node launcher. jj must be isolated from that group to drain safely.
-        assert.equal(process.kill(-cli.child.pid!, signal), true);
-        await until(
-          () => cli.stdout.includes("Stopping jj-stamp"),
-          cli.diagnostics,
+        await chmod(path.join(box.bin, "jj"), 0o755);
+        const cli = box.start(["--no-open"], repo, {
+          JJ_STAMP_JJ: path.join(box.bin, "jj"),
+        });
+        const url = await cli.url();
+        const initial: State = JSON.parse(
+          (await request(url, "/api/state")).body,
         );
-        assert.equal(
-          cli.ended,
-          false,
-          "shutdown must wait for the blocked request",
-        );
-        assert.equal(await exists(interrupted), false);
-        // The listener must stop accepting work while the accepted request drains.
-        await assert.rejects(request(url, "/api/state"));
-        await writeFile(release, "release");
-        const response = await pending;
-        assert.equal(response.status, 200, response.body);
-        assert.equal(
-          JSON.parse(response.body).source.description,
-          "Polish notification delivery",
-        );
-        assert.deepEqual(
-          await cli.done(),
-          { code: 0, signal: null },
-          cli.diagnostics(),
-        );
-        assert.equal(await exists(interrupted), false);
-        assert.equal(await exists(box.opened), false);
-      } finally {
-        await writeFile(release, "release");
-      }
-    },
-  );
+        const hunk = initial.files[0].hunks[0];
+        // Release even on a test timeout so cleanup can drain instead of kill.
+        box.releaseGates.push(() => writeFile(release, "release"));
+        try {
+          await writeFile(arm, "armed");
+          const pending = mutation
+            ? request(url, "/api/squash-lines", {
+                method: "POST",
+                headers: {
+                  "Content-Type": "application/json",
+                  "X-Fold-Request": "1",
+                },
+                body: JSON.stringify({
+                  version: initial.version,
+                  selections: [
+                    {
+                      id: hunk.id,
+                      lines: hunk.rows
+                        .filter((row) => /^[+-]/.test(row.raw))
+                        .map((row) => row.index),
+                    },
+                  ],
+                }),
+              })
+            : request(url, "/api/state");
+          void pending.catch(() => {});
+          await until(
+            async () =>
+              (await exists(entered)) &&
+              /^[1-9]\d*\n$/.test(await readFile(entered, "utf8")),
+            cli.diagnostics,
+          );
+          const blockedPid = Number((await readFile(entered, "utf8")).trim());
+          assert.ok(Number.isSafeInteger(blockedPid) && blockedPid > 1);
+          box.blockedGroups.add(blockedPid);
+          // Terminal Ctrl-C reaches the foreground process group, not only the
+          // Node launcher. jj must be isolated from that group to drain safely.
+          assert.equal(process.kill(-cli.child.pid!, signal), true);
+          await until(
+            () => cli.stdout.includes("Stopping jj-stamp"),
+            cli.diagnostics,
+          );
+          assert.equal(
+            cli.ended,
+            false,
+            "shutdown must wait for the blocked request",
+          );
+          assert.equal(await exists(interrupted), false);
+          // The listener must stop accepting work while the accepted request drains.
+          await assert.rejects(request(url, "/api/state"));
+          await writeFile(release, "release");
+          const response = await pending;
+          assert.equal(response.status, 200, response.body);
+          const state: State = mutation
+            ? JSON.parse(response.body).state
+            : JSON.parse(response.body);
+          assert.equal(
+            state.source.description,
+            "Polish notification delivery",
+          );
+          if (mutation) {
+            assert.equal(state.canUndo, true);
+            assert.notEqual(state.source.commitId, initial.source.commitId);
+          }
+          assert.deepEqual(
+            await cli.done(),
+            { code: 0, signal: null },
+            cli.diagnostics(),
+          );
+          assert.equal(await exists(interrupted), false);
+          assert.equal(await exists(box.opened), false);
+        } finally {
+          await writeFile(release, "release");
+        }
+      },
+    );
+  }
 }
 
 test(
@@ -835,7 +997,7 @@ test(
     );
     assert.deepEqual(
       records.map(({ subprocesses }) => subprocesses.length),
-      [8, 5],
+      [7, 5],
     );
     assert.ok(
       records.every(

@@ -3,6 +3,8 @@ import { spawn } from "node:child_process";
 export interface ProcessResult {
   stdout: string;
   stderr: string;
+  /** Original stdout bytes, used when constructing exact file snapshots. */
+  stdoutBytes?: Buffer;
 }
 export class ProcessError extends Error {
   constructor(
@@ -60,14 +62,8 @@ export function run(
       JJ_EDITOR: "true",
       EDITOR: "true",
     };
-    // These are private protocol variables. Inheriting one could reverse a squash.
-    delete env.JJ_HUNK_TOOL_PATCH;
-    delete env.JJ_HUNK_TOOL_REVERSE;
-    // The Nix launcher pins the wrapped executable, not its hidden payload.
-    // Use this same path for execution and diagnostics so copying a failure
-    // cannot accidentally run a different, unpatched tool from the user's PATH.
-    const executable =
-      command === "jj-hunk-tool" ? env.JJ_STAMP_HUNK_TOOL || command : command;
+    // Nix pins jj's absolute executable for both execution and diagnostics.
+    const executable = command === "jj" ? env.JJ_STAMP_JJ || command : command;
     const child = spawn(executable, args, {
       cwd,
       // Terminal signals target the CLI's foreground process group. Isolate
@@ -77,24 +73,26 @@ export function run(
       stdio: ["ignore", "pipe", "pipe"],
       env,
     });
-    let stdout = "",
-      stderr = "";
-    child.stdout.setEncoding("utf8");
+    const stdoutChunks: Buffer[] = [];
+    let stderr = "";
     child.stderr.setEncoding("utf8");
-    child.stdout.on("data", (chunk) => {
-      stdout += chunk;
+    child.stdout.on("data", (chunk: Buffer) => {
+      stdoutChunks.push(chunk);
     });
     child.stderr.on("data", (chunk) => {
       stderr += chunk;
     });
     child.on("error", reject);
-    child.on("close", (code) =>
-      code === 0
-        ? resolve({ stdout, stderr })
-        : reject(
-            new ProcessError(executable, args, { stdout, stderr }, code, cwd),
-          ),
-    );
+    child.on("close", (code) => {
+      const stdoutBytes = Buffer.concat(stdoutChunks);
+      const result = {
+        stdout: stdoutBytes.toString("utf8"),
+        stderr,
+        stdoutBytes,
+      };
+      if (code === 0) resolve(result);
+      else reject(new ProcessError(executable, args, result, code, cwd));
+    });
   });
 }
 export const jj = (cwd: string, args: string[]) =>
