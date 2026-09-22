@@ -17,6 +17,7 @@ import {
   type SelectedLineRange,
 } from "@pierre/diffs";
 import type { DiffFile, Selections } from "./types";
+import { inferHunkContexts, inferVisibleHunkContexts } from "./hunk-context";
 import {
   selectionAnchor,
   selectionFromRange,
@@ -80,7 +81,7 @@ const separatorCSS = `
 [data-line][data-fold-in-range] { box-shadow: inset 0 1px var(--selection-top), inset 0 -1px var(--selection-bottom), inset -1px 0 var(--diff-selection-border, #386990); }
 [data-separator="line-info-basic"] { height: 25px; background: var(--diff-separator-bg, #20262e); }
 [data-separator-wrapper] { font-size: 11px; }
-[data-gutter] [data-separator-wrapper] { display: flex !important; flex-direction: row; width: max-content; align-items: center; background: var(--diff-separator-bg, #20262e); }
+[data-gutter] [data-separator-wrapper] { display: flex !important; flex-direction: row; width: 100cqi; align-items: center; background: var(--diff-separator-bg, #20262e); }
 [data-gutter] [data-separator-content] { display: block; height: auto; padding: 0 8px; white-space: nowrap; }
 [data-separator-wrapper][data-separator-multi-button] { grid-template-rows: 100%; grid-template-columns: 48px 48px auto; }
 [data-expand-button] { border: none !important; min-width: 48px; width: 48px; flex-shrink: 0; font-size: 11px; }
@@ -89,7 +90,9 @@ const separatorCSS = `
 [data-expand-up]::before { content: '↓ 10'; }
 [data-expand-both]::before { content: '↕ 10'; }
 [data-expand-all-button] { display: none !important; }
-[data-separator-content] { font-size: 11px; color: var(--diff-separator-fg, #7e8895); }
+[data-separator-content] { font-size: 11px; color: var(--diff-separator-fg, #7e8895); gap: 10px; min-width: 0; }
+[data-fold-hunk-context] { color: var(--diff-hunk-context-fg, #b8c1cc); flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+[data-fold-hunk-context]::before { content: '@@'; color: var(--diff-separator-fg, #7e8895); margin-right: 8px; }
 `;
 
 // The renderer mutates its shadow DOM in a child layout effect. An effect
@@ -220,7 +223,29 @@ export function CodeDiff({
   loadFile: (path: string, version: string) => Promise<FileDiffLoadedFiles>;
 }) {
   const root = useRef<HTMLDivElement>(null);
+  const fileLoadKey = `${version}\u0000${file.path}`;
+  const visibleHunkContexts = useMemo(
+    () => inferVisibleHunkContexts(file.path, file.hunks),
+    [file.hunks, file.path],
+  );
+  const [hydratedHunkContexts, setHydratedHunkContexts] = useState<{
+    key: string;
+    contexts: Record<string, string>;
+  } | null>(null);
+  const hunkContexts = useMemo(
+    () =>
+      hydratedHunkContexts?.key === fileLoadKey
+        ? { ...visibleHunkContexts, ...hydratedHunkContexts.contexts }
+        : visibleHunkContexts,
+    [fileLoadKey, hydratedHunkContexts, visibleHunkContexts],
+  );
   const [editorError, setEditorError] = useState("");
+  const loadedFile = useRef<{
+    key: string;
+    promise: Promise<FileDiffLoadedFiles>;
+  } | null>(null);
+  const loadFileRef = useRef(loadFile);
+  loadFileRef.current = loadFile;
   const editorPending = useRef(false);
   const mouse = useRef<{ x: number; y: number } | null>(null);
   const instance = useRef<DiffInstance | null>(null);
@@ -236,6 +261,7 @@ export function CodeDiff({
     style,
     contextDisabled,
     version,
+    hunkContexts,
   });
   current.current = {
     file,
@@ -247,11 +273,12 @@ export function CodeDiff({
     style,
     contextDisabled,
     version,
+    hunkContexts,
   };
   const paint = useCallback(() => {
     const shadow = container.current?.shadowRoot;
     if (!shadow) return;
-    const { file, selections, range, style } = current.current;
+    const { file, selections, range, style, hunkContexts } = current.current;
     const keys = new Set<string>();
     for (const hunk of file.hunks) {
       const selected = new Set(selections[hunk.id] ?? []);
@@ -334,8 +361,43 @@ export function CodeDiff({
       }
       if (previous) mark(previous, "end");
     }
+    shadow
+      .querySelectorAll<HTMLElement>(
+        '[data-separator="line-info-basic"][data-expand-index]',
+      )
+      .forEach((separator) => {
+        const index = Number(separator.dataset.expandIndex);
+        const context = file.hunks[index]
+          ? hunkContexts[file.hunks[index].id]
+          : undefined;
+        const content = separator.querySelector<HTMLElement>(
+          "[data-separator-content]",
+        );
+        const existing = content?.querySelector<HTMLElement>(
+          "[data-fold-hunk-context]",
+        );
+        if (!content || !context) {
+          existing?.remove();
+          return;
+        }
+        const label = existing ?? document.createElement("span");
+        label.setAttribute("data-fold-hunk-context", "");
+        label.textContent = context;
+        label.title = context;
+        if (!existing) content.append(label);
+      });
   }, []);
-  useLayoutEffect(paint, [paint, selections, file, style, range]);
+  useLayoutEffect(paint, [paint, selections, file, style, range, hunkContexts]);
+  const getLoadedFile = useCallback(() => {
+    if (loadedFile.current?.key === fileLoadKey)
+      return loadedFile.current.promise;
+    const promise = loadFileRef.current(file.path, version).catch((error) => {
+      if (loadedFile.current?.promise === promise) loadedFile.current = null;
+      throw error;
+    });
+    loadedFile.current = { key: fileLoadKey, promise };
+    return promise;
+  }, [file.path, fileLoadKey, version]);
   const fileDiff = useMemo(
     () =>
       parsePatchFiles(file.patch, `${file.path}:${file.patch}`, true)[0]
@@ -604,7 +666,12 @@ export function CodeDiff({
           : ""),
       loadDiffFiles: async () => {
         try {
-          return await loadFile(file.path, version);
+          const files = await getLoadedFile();
+          setHydratedHunkContexts({
+            key: fileLoadKey,
+            contexts: inferHunkContexts(file.path, file.hunks, files),
+          });
+          return files;
         } catch (error) {
           onError((error as Error).message);
           throw error;
@@ -650,8 +717,9 @@ export function CodeDiff({
     }),
     [
       file.path,
-      version,
-      loadFile,
+      file.hunks,
+      fileLoadKey,
+      getLoadedFile,
       onError,
       style,
       colorScheme,

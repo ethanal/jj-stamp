@@ -17,6 +17,13 @@ try {
   for (const layout of ["unified", "split"] as const) {
     await page.goto(url);
     await expect(line(10)).toBeVisible();
+    await expect(
+      page
+        .locator("[data-fold-hunk-context]")
+        .filter({ hasText: "function fixtureSection30() {" })
+        .first(),
+    ).toBeVisible();
+    await expect(page.locator("#file-loads")).toHaveText("0");
     if (layout === "split")
       await page.getByText("Layout", { exact: true }).click();
     // A controlled anchor can be extended, replaced, cleared, and reset.
@@ -86,7 +93,7 @@ try {
     await page.keyboard.press("e");
     await expect.poll(() => requests.length).toBe(1);
     assert.deepEqual(requests[0], {
-      path: "scroll-fixture.txt",
+      path: "scroll-fixture.ts",
       version: "0",
       line: 10,
     });
@@ -174,6 +181,7 @@ try {
       "pointer",
     );
     await page.locator("[data-expand-up]").first().click();
+    await expect(page.locator("#file-loads")).toHaveText("1");
     await expect(line(20)).toBeVisible();
     await page.evaluate(() => {
       (

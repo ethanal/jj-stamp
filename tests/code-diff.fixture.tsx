@@ -6,11 +6,13 @@ import { CodeDiff } from "../src/CodeDiff";
 import { type ColorScheme } from "../src/preferences";
 import type { DiffFile, Selections } from "../src/types";
 
-const path = "scroll-fixture.txt";
+const path = "scroll-fixture.ts";
 const base = Array.from(
   { length: 300 },
   (_, i) => `unchanged fixture line ${i + 1}`,
 );
+for (let line = 10; line <= 290; line += 20)
+  base[line - 4] = `function fixtureSection${line}() {`;
 const changed = base.map((text, i) =>
   i % 20 === 9 ? `updated fixture line ${i + 1}` : text,
 );
@@ -55,6 +57,7 @@ function Fixture() {
   const [range, setRange] = useState<SelectedLineRange | null>(null);
   const [dragging, setDragging] = useState(false);
   const [error, setError] = useState("");
+  const [fileLoads, setFileLoads] = useState(0);
   return (
     <>
       <button onClick={() => setStyle(style === "split" ? "unified" : "split")}>
@@ -106,6 +109,7 @@ function Fixture() {
       <output id="selection">{JSON.stringify(selections)}</output>
       <output id="dragging">{String(dragging)}</output>
       <output id="error">{error}</output>
+      <output id="file-loads">{fileLoads}</output>
       <div
         className="viewer-scroll"
         style={{ height: 420, overflow: "auto", marginTop: 20 }}
@@ -125,16 +129,21 @@ function Fixture() {
           }}
           onDragging={setDragging}
           onError={setError}
-          loadFile={async () => ({
-            oldFile: {
-              name: path,
-              contents:
-                base
-                  .map((text, i) => (squashed && i === 89 ? changed[i] : text))
-                  .join("\n") + "\n",
-            },
-            newFile: { name: path, contents: changed.join("\n") + "\n" },
-          })}
+          loadFile={async () => {
+            setFileLoads((count) => count + 1);
+            return {
+              oldFile: {
+                name: path,
+                contents:
+                  base
+                    .map((text, i) =>
+                      squashed && i === 89 ? changed[i] : text,
+                    )
+                    .join("\n") + "\n",
+              },
+              newFile: { name: path, contents: changed.join("\n") + "\n" },
+            };
+          }}
         />
       </div>
     </>
