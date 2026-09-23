@@ -593,7 +593,8 @@ kbd {
 .statusbar {
   min-height: 30px;
   flex-shrink: 0;
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
   align-items: center;
   gap: 12px;
   padding: 0 13px;
@@ -609,9 +610,6 @@ kbd {
 }
 .selection-status {
   color: var(--accent);
-}
-.text-selection-hint {
-  margin-left: auto;
 }
 .shortcuts {
   margin-left: auto;
@@ -758,6 +756,9 @@ kbd {
   }
   .file-bar-tools > .line-counts {
     display: none;
+  }
+  .statusbar {
+    display: flex;
   }
   .text-selection-hint {
     display: none;

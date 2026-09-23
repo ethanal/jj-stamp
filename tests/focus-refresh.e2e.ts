@@ -149,12 +149,32 @@ const holdRead = async (route: Route) => {
   await route.fulfill({ response });
 };
 await page.route("**/api/state", holdRead);
+const hint = page.locator(".text-selection-hint");
+const hintBeforeRefresh = await hint.boundingBox();
+assert(hintBeforeRefresh);
+async function expectCenteredHint() {
+  const footerBox = await page.locator(".statusbar").boundingBox();
+  const hintBox = await hint.boundingBox();
+  assert(footerBox && hintBox);
+  assert(
+    Math.abs(
+      hintBox.x + hintBox.width / 2 - (footerBox.x + footerBox.width / 2),
+    ) < 1,
+    "Copy hint stays centered in the footer",
+  );
+  assert(
+    Math.abs(hintBox.x - hintBeforeRefresh!.x) < 1,
+    "Status text changes do not move the copy hint",
+  );
+}
 before = reads;
 const heldRead = page.waitForResponse("**/api/state");
 await focus();
 await expect.poll(() => reads).toBe(before + 1);
 await expect(refreshButton).toBeDisabled();
 await readCaptured;
+await expect(page.locator(".statusbar")).toContainText("refreshing");
+await expectCenteredHint();
 // Refresh only locks mutations: sidebar appearance and navigation stay intact.
 const fileNavigation = page.getByRole("navigation", { name: "Changed files" });
 await expect(fileNavigation).toHaveCSS("opacity", "1");
@@ -198,6 +218,7 @@ await page.unroute("**/api/state", holdRead);
 await expect(page.locator(".code-surface")).toContainText("// second focus");
 await settled();
 await noReadSince(before + 2);
+await expectCenteredHint();
 
 // A recorded workspace move does not switch away from the selected change.
 await jj(repoPath, ["new", "-m", "Another working copy"]);
