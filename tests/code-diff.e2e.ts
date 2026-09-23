@@ -23,6 +23,22 @@ try {
         .filter({ hasText: "function fixtureSection30() {" })
         .first(),
     ).toBeVisible();
+    const labeledSeparator = page
+      .locator("[data-separator-content][data-fold-has-hunk-context]")
+      .first();
+    await expect(labeledSeparator).toHaveCSS("display", "flex");
+    await expect(
+      labeledSeparator.locator("[data-unmodified-lines]"),
+    ).toBeHidden();
+    const separatorBox = await labeledSeparator
+      .locator("[data-fold-hunk-context]")
+      .boundingBox();
+    const contentBox = await labeledSeparator.boundingBox();
+    assert(separatorBox && contentBox);
+    assert(separatorBox.y >= contentBox.y);
+    assert(
+      separatorBox.y + separatorBox.height <= contentBox.y + contentBox.height,
+    );
     await expect(page.locator("#file-loads")).toHaveText("0");
     if (layout === "split")
       await page.getByText("Layout", { exact: true }).click();
