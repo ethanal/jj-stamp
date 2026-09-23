@@ -165,7 +165,7 @@ export interface ServiceOptions {
 const hash = (value: string) =>
   createHash("sha256").update(value).digest("hex");
 export const reviewLogRevset =
-  "trunk() | ((tracked_remote_bookmarks() & ~::trunk())::) | (mutable() & mine())::";
+  "visible() & (trunk() | (tracked_remote_bookmarks() & ~::trunk()) | (mutable() & mine())::)";
 
 function same(actual: unknown, expected: unknown) {
   return JSON.stringify(actual) === JSON.stringify(expected);
@@ -752,7 +752,7 @@ export class ReviewService {
           "--config",
           "ui.log-word-wrap=false",
           "-r",
-          `(${reviewLogRevset}) | ${this.sourceRevset} | @`,
+          reviewLogRevset,
           "--at-operation",
           operation.id,
           "-T",

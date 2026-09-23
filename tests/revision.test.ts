@@ -725,7 +725,7 @@ test("structured log preserves actual jj graph prefixes, metadata, connector row
       "--config",
       "ui.log-word-wrap=false",
       "-r",
-      `(${reviewLogRevset}) | change_id("${sourceId}") | @`,
+      reviewLogRevset,
       "-T",
       'json(change_id) ++ "\\n"',
     ])
@@ -747,7 +747,7 @@ test("structured log preserves actual jj graph prefixes, metadata, connector row
   assert.equal(log.version, (await service.getState()).version);
 });
 
-test("review graph ignores the default revset and includes selected revisions outside its filter", async () => {
+test("review graph ignores the default revset and excludes selected revisions outside its filter", async () => {
   const options = await fixture();
   const service = new ReviewService({ repoPath: options.repoPath });
   const initial = await service.getState();
@@ -776,10 +776,21 @@ test("review graph ignores the default revset and includes selected revisions ou
     "user.email",
     "another-reviewer@example.com",
   ]);
+  await jj(options.repoPath, [
+    "config",
+    "set",
+    "--repo",
+    'revset-aliases."tracked_remote_bookmarks()"',
+    `change_id("${initial.parent!.changeId}")`,
+  ]);
   const log = await service.getLog();
   assert.ok(!log.output.includes(initial.source.description));
   assert.ok(
-    log.rows.some((row) => row.revision?.changeId === initial.source.changeId),
+    log.rows.some((row) => row.revision?.changeId === initial.parent!.changeId),
+    "Tracked remote bookmark heads are included without their descendants",
+  );
+  assert.ok(
+    !log.rows.some((row) => row.revision?.changeId === initial.source.changeId),
   );
   assert.ok(
     log.rows.every(
@@ -1174,7 +1185,7 @@ test("clean source above resolved ancestor conflicts and an empty parent is avai
   assert.deepEqual(result.state.files, []);
 });
 
-test("unavailable-source graph includes a healthy working copy outside mine() for explicit recovery", async () => {
+test("unavailable-source graph respects the filter even when the working copy is outside mine()", async () => {
   const options = await fixture();
   const healthy = await revisionId(options.repoPath, "@");
   await jj(options.repoPath, ["new"]);
@@ -1190,8 +1201,7 @@ test("unavailable-source graph includes a healthy working copy outside mine() fo
   ]);
   const graph = await service.getLog({ includeOutput: false });
   const workingCopy = graph.rows.find((row) => row.isWorkingCopy);
-  assert.equal(workingCopy?.revision?.changeId, healthy);
-  assert.equal(workingCopy?.mutable, true);
+  assert.equal(workingCopy, undefined);
   assert.ok(
     !graph.rows.some(
       (row) => row.revision?.changeId === initial.source.changeId,
