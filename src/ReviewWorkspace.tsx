@@ -81,9 +81,6 @@ export function FilesSidebar({
   width,
   resizeDisabled,
   navigationDisabled,
-  squashDisabled,
-  squashUnavailable,
-  onSquashFile,
   onResize,
   onToggle,
   onSelect,
@@ -96,9 +93,6 @@ export function FilesSidebar({
   width: number;
   resizeDisabled: boolean;
   navigationDisabled: boolean;
-  squashDisabled: boolean;
-  squashUnavailable?: string;
-  onSquashFile: (path: string) => void;
   onResize: (width: number) => void;
   onToggle: () => void;
   onSelect: (path: string) => void;
@@ -146,9 +140,6 @@ export function FilesSidebar({
               activePath={activePath}
               disabled={navigationDisabled}
               onSelect={onSelect}
-              squashDisabled={squashDisabled}
-              squashUnavailable={squashUnavailable}
-              onSquash={onSquashFile}
             />
           )}
         </div>

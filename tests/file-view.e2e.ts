@@ -342,32 +342,18 @@ try {
   await expect(
     page.getByRole("button", { name: "s squash", exact: true }),
   ).toBeVisible();
-  const sidebarSquash = page.locator(".file-tree-squash");
-  await treeRow(unsupportedPath).hover();
-  await expect(sidebarSquash).toBeDisabled();
-  await expect(sidebarSquash).toHaveText("");
-  await expect(sidebarSquash.locator('svg[aria-hidden="true"]')).toHaveCount(1);
-  await expect(sidebarSquash).toHaveCSS("width", "24px");
-  await expect(sidebarSquash).toHaveCSS("padding-left", "0px");
-  await expect(sidebarSquash.locator("svg circle")).toHaveAttribute("r", "2");
-  await expect(sidebarSquash).toHaveAttribute(
-    "title",
-    unsupportedFile.unsupported!,
-  );
-  await page.locator('.file-tree [data-item-path="vendor/"]').hover();
-  await expect(sidebarSquash).toHaveCount(0);
-
-  // Keyboard users can reach the same action without navigating to that file.
-  await page.locator(".file-bar").hover();
-  await treeRow(secondPath).focus();
+  // Sidebar rows remain navigation-only on both hover and keyboard focus.
+  const sidebarSquash = page
+    .getByRole("navigation", { name: "Changed files" })
+    .getByRole("button", { name: /^Squash file / });
+  for (const path of [firstPath, secondPath, unsupportedPath]) {
+    await treeRow(path).hover();
+    await expect(sidebarSquash).toHaveCount(0);
+    await treeRow(path).focus();
+    await expect(sidebarSquash).toHaveCount(0);
+  }
   await page.keyboard.press("Tab");
-  await expect(sidebarSquash).toBeFocused();
-  await expect(sidebarSquash).toHaveAttribute(
-    "aria-label",
-    `Squash file ${secondPath}`,
-  );
-  await page.keyboard.press("Escape");
-  await expect(treeRow(secondPath)).toBeFocused();
+  await expect(sidebarSquash).toHaveCount(0);
 
   // A whole-file action ignores the active line selection in another file.
   await addition(firstPath, 10).click();
@@ -385,7 +371,7 @@ try {
   assert(squashRefs.every((ref) => ref.path === secondPath));
   assert.equal(serverState.files[0].patch, originalFirstPatch);
 
-  // Restore to exercise the one-file header and the sidebar separately.
+  // Restore to exercise the one-file header.
   serverState = {
     ...structuredClone(initialState),
     version: "fixture-reset",
@@ -410,9 +396,9 @@ try {
       exact: true,
     }),
   ).toBeDisabled();
-  await treeRow(secondPath).hover();
+  await treeRow(secondPath).click();
   await page
-    .getByRole("navigation", { name: "Changed files" })
+    .locator(".file-bar")
     .getByRole("button", { name: `Squash file ${secondPath}`, exact: true })
     .click();
   await expect(page.locator(".queue-count")).toHaveCount(0);
@@ -425,7 +411,7 @@ try {
   assert.equal(squashRefs.length, 22);
   await allFiles.click();
 
-  // Read-only destination guards disable both entry points, not just line squash.
+  // Read-only destination guards disable header actions, not just line squash.
   serverState = {
     ...structuredClone(initialState),
     parent: null,
@@ -441,11 +427,13 @@ try {
     }),
   ).toBeDisabled();
   await treeRow(firstPath).hover();
-  await expect(sidebarSquash).toBeDisabled();
-  await expect(sidebarSquash).toHaveAttribute(
-    "title",
-    "The parent is immutable.",
-  );
+  await expect(sidebarSquash).toHaveCount(0);
+  await expect(
+    section(firstPath).getByRole("button", {
+      name: `Squash file ${firstPath}`,
+      exact: true,
+    }),
+  ).toHaveAttribute("title", "The parent is immutable.");
 
   serverState = {
     ...serverState,

@@ -191,7 +191,9 @@ await expect(notificationRow).toHaveAttribute("aria-selected", "true");
 await expect(page.locator(".file-bar")).toContainText("src/notifications.ts");
 await expect(page.locator(".squash-file")).toBeDisabled();
 await notificationRow.hover();
-await expect(page.locator(".file-tree-squash")).toBeDisabled();
+await expect(
+  fileNavigation.getByRole("button", { name: /^Squash file / }),
+).toHaveCount(0);
 await expect(
   page.getByRole("button", { name: "s squash", exact: true }),
 ).toBeDisabled();

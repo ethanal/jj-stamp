@@ -566,9 +566,6 @@ function App() {
           navigationDisabled={
             dragging || queued.recovering || (!!busy && busy !== "refreshing")
           }
-          squashDisabled={squashDisabled}
-          squashUnavailable={state?.squashUnavailable}
-          onSquashFile={squash}
           onResize={setFilesWidth}
           onToggle={() => setShowFiles((value) => !value)}
           onSelect={selectFile}
