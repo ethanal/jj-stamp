@@ -232,15 +232,21 @@ export function CodeDiff({
   );
   const [hydratedHunkContexts, setHydratedHunkContexts] = useState<{
     key: string;
+    hunkIds: string[];
     contexts: Record<string, string>;
   } | null>(null);
-  const hunkContexts = useMemo(
-    () =>
-      hydratedHunkContexts?.key === fileLoadKey
-        ? { ...visibleHunkContexts, ...hydratedHunkContexts.contexts }
-        : visibleHunkContexts,
-    [fileLoadKey, hydratedHunkContexts, visibleHunkContexts],
-  );
+  const hunkContexts = useMemo(() => {
+    if (hydratedHunkContexts?.key !== fileLoadKey) return visibleHunkContexts;
+    const hydratedIds = new Set(hydratedHunkContexts.hunkIds);
+    return Object.fromEntries(
+      file.hunks.flatMap((hunk) => {
+        const context = hydratedIds.has(hunk.id)
+          ? hydratedHunkContexts.contexts[hunk.id]
+          : visibleHunkContexts[hunk.id];
+        return context ? [[hunk.id, context]] : [];
+      }),
+    );
+  }, [file.hunks, fileLoadKey, hydratedHunkContexts, visibleHunkContexts]);
   const [editorError, setEditorError] = useState("");
   const loadedFile = useRef<{
     key: string;
@@ -679,6 +685,7 @@ export function CodeDiff({
           const files = await getLoadedFile();
           setHydratedHunkContexts({
             key: fileLoadKey,
+            hunkIds: file.hunks.map((hunk) => hunk.id),
             contexts: inferHunkContexts(file.path, file.hunks, files),
           });
           return files;
