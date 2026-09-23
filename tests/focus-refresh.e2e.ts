@@ -155,6 +155,31 @@ await focus();
 await expect.poll(() => reads).toBe(before + 1);
 await expect(refreshButton).toBeDisabled();
 await readCaptured;
+// Refresh only locks mutations: sidebar appearance and navigation stay intact.
+const fileNavigation = page.getByRole("navigation", { name: "Changed files" });
+await expect(fileNavigation).toHaveCSS("opacity", "1");
+await expect(fileNavigation).toHaveAttribute("aria-disabled", "false");
+assert.equal(
+  await fileNavigation.evaluate((element) => element.hasAttribute("inert")),
+  false,
+);
+const notificationRow = page.locator(
+  '.file-tree [data-item-path="src/notifications.ts"]',
+);
+await notificationRow.click();
+await expect(notificationRow).toHaveAttribute("aria-selected", "true");
+await expect(page.locator(".file-bar")).toContainText("src/notifications.ts");
+await expect(page.locator(".squash-file")).toBeDisabled();
+await notificationRow.hover();
+await expect(page.locator(".file-tree-squash")).toBeDisabled();
+await expect(
+  page.getByRole("button", { name: "s squash", exact: true }),
+).toBeDisabled();
+const squashesBeforeRefresh = squashes;
+await page.keyboard.press("s");
+assert.equal(squashes, squashesBeforeRefresh);
+await page.locator('.file-tree [data-item-path="src/preferences.ts"]').click();
+await expect(page.locator(".file-bar")).toContainText("src/preferences.ts");
 await writeFile(
   preferencePath,
   (await readFile(preferencePath, "utf8")).replace(

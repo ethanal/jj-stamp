@@ -899,6 +899,13 @@ kbd {
 
 .squash-file {
   flex-shrink: 0;
-  white-space: nowrap;
-  font-size: 10px;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  border-radius: 3px;
+}
+.squash-file:hover:not(:disabled) {
+  background: var(--hover);
 }

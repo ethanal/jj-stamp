@@ -1,3 +1,4 @@
+import { SquashIcon } from "./SquashIcon";
 import { useEffect, useRef, useState, type RefObject } from "react";
 import { flushSync } from "react-dom";
 import type { FileTree } from "@pierre/trees";
@@ -220,7 +221,7 @@ export function FileTreeSquashAction({
         }
       }}
     >
-      squash
+      <SquashIcon />
     </button>
   );
 }

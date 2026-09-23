@@ -334,7 +334,10 @@ try {
   await expect(page.locator(".file-diff-section")).toHaveCount(3);
 
   for (const button of await page.locator(".squash-file").all()) {
-    await expect(button).toHaveText("squash");
+    await expect(button).toHaveText("");
+    await expect(button.locator('svg[aria-hidden="true"]')).toHaveCount(1);
+    await expect(button).toHaveCSS("width", "24px");
+    await expect(button).toHaveCSS("height", "24px");
   }
   await expect(
     page.getByRole("button", { name: "s squash", exact: true }),
@@ -342,8 +345,11 @@ try {
   const sidebarSquash = page.locator(".file-tree-squash");
   await treeRow(unsupportedPath).hover();
   await expect(sidebarSquash).toBeDisabled();
-  await expect(sidebarSquash).toHaveText("squash");
-  await expect(sidebarSquash.locator("svg")).toHaveCount(0);
+  await expect(sidebarSquash).toHaveText("");
+  await expect(sidebarSquash.locator('svg[aria-hidden="true"]')).toHaveCount(1);
+  await expect(sidebarSquash).toHaveCSS("width", "24px");
+  await expect(sidebarSquash).toHaveCSS("padding-left", "0px");
+  await expect(sidebarSquash.locator("svg circle")).toHaveAttribute("r", "2");
   await expect(sidebarSquash).toHaveAttribute(
     "title",
     unsupportedFile.unsupported!,

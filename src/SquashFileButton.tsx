@@ -1,3 +1,4 @@
+import { SquashIcon } from "./SquashIcon";
 import type { DiffFile } from "./types";
 
 export function SquashFileButton({
@@ -22,7 +23,7 @@ export function SquashFileButton({
       disabled={disabled || !!reason || !(file.additions + file.deletions)}
       onClick={() => onSquash(file.path)}
     >
-      squash
+      <SquashIcon />
     </button>
   );
 }

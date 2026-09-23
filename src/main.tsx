@@ -326,14 +326,20 @@ function App() {
   }, [queued.pending, queued.recovering]);
   const selectFile = useCallback(
     (path: string) => {
-      if (lock.current || queue.getSnapshot().recovering) return;
+      // A read-only refresh need not interrupt browsing the current files.
+      // Squash remains guarded by the operation lock until it completes.
+      if (
+        (lock.current && busy !== "refreshing") ||
+        queue.getSnapshot().recovering
+      )
+        return;
       clear();
       setActivePath(path);
       // Only explicit navigation resets scroll; squash may remove the active file.
       if (fileView === "all") scrollToFile(path);
       else scroll.current?.scrollTo(0, 0);
     },
-    [clear, queue, fileView, scrollToFile],
+    [clear, queue, fileView, scrollToFile, busy],
   );
   const select = useCallback(
     (path: string, next: SelectedLineRange | null, selected: Selections) => {
@@ -557,7 +563,9 @@ function App() {
           expanded={showFiles}
           width={filesWidth}
           resizeDisabled={dragging}
-          navigationDisabled={working || dragging}
+          navigationDisabled={
+            dragging || queued.recovering || (!!busy && busy !== "refreshing")
+          }
           squashDisabled={squashDisabled}
           squashUnavailable={state?.squashUnavailable}
           onSquashFile={squash}
