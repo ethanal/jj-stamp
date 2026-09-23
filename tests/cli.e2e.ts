@@ -495,6 +495,9 @@ test(
     assert.equal(page.status, 200);
     assert.match(page.headers["content-type"]!, /text\/html/);
     assert.equal(page.headers["x-content-type-options"], "nosniff");
+    assert.equal(page.headers["cache-control"], "no-store");
+    assert.equal(page.headers.etag, undefined);
+    assert.equal(page.headers["last-modified"], undefined);
     const assets = [
       ...page.body.matchAll(/(?:src|href)="([^"?#]+\.(?:js|css))"/g),
     ].map((match) => match[1]);

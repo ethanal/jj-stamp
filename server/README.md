@@ -4,6 +4,8 @@ The CLI constructs `ReviewService({ repoPath, revision })` and passes it to `cre
 
 `server/http.ts` serves the bundled UI and router on `127.0.0.1`. It validates Host and Origin before any route, rejects cross-site requests, and requires JSON plus `X-Fold-Request: 1` for mutations. Browser launch and graceful shutdown live in `cli.ts`.
 
+Unversioned UI files (especially `/` and `/index.html`) use `Cache-Control: no-store`, without ETag or Last-Modified validators. Nix normalizes file timestamps, and different entry pages can have identical sizes; stat-based validators could otherwise return a false 304 and leave the browser requesting obsolete hashed bundles after an upgrade. Content-hashed `/assets/` files retain conditional caching. Missing static files return uncached plain-text 404s, never an HTML fallback.
+
 ## Native diff editor (experimental branch)
 
 Only Node.js and `jj` are required. Pinned Git diffs are parsed locally and assigned deterministic hunk IDs (short hashes of exact path/header/rows, with collision suffixes). No third-party hunk listing, patch generation, GNU `patch`, or fuzzy matching is involved.

@@ -72,8 +72,27 @@ export async function startLocalServer({
   app.use("/api", (_req, res) => {
     res.status(404).json({ error: "API route not found.", code: "NOT_FOUND" });
   });
-  app.use(express.static(path.resolve(assetsDir), { etag: true }));
-  app.use((_req, res) => res.status(404).send("Not found"));
+  const clientDir = path.resolve(assetsDir);
+  // Content-hashed build assets can retain normal conditional caching.
+  app.use("/assets", express.static(path.join(clientDir, "assets")));
+  // Nix builds normalize mtimes, and successive index files often have the
+  // same size. Stat-based ETags / Last-Modified can therefore falsely validate
+  // an old page whose hashed assets no longer exist. Do not cache or revalidate
+  // unversioned files, including validators sent by browsers on older builds.
+  app.use(
+    express.static(clientDir, {
+      etag: false,
+      lastModified: false,
+      setHeaders: (res) => res.setHeader("Cache-Control", "no-store"),
+    }),
+  );
+  app.use((_req, res) =>
+    res
+      .status(404)
+      .set("Cache-Control", "no-store")
+      .type("text")
+      .send("Not found"),
+  );
 
   const listen = (requestedPort: number) =>
     new Promise<void>((resolve, reject) => {
