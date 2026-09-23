@@ -1000,11 +1000,13 @@ try {
     "✓ Missing pinned source identifies its full ID and permits explicit graph recovery without a loaded diff",
   );
   assert(mutations.every((endpoint) => endpoint === "/api/squash-lines"));
-  // Fixture edits intentionally race an outstanding read-only graph refresh.
-  // Any 409 must be that guard, never an unexpected mutation/context failure.
+  // Fixture edits intentionally race outstanding read-only graph and optional
+  // Tree-sitter file-context reads. Any 409 must be one of those guards, never
+  // an unexpected mutation failure.
   for (const rejected of rejectedReads)
     assert.ok(
       (rejected.path === "/api/graph" && rejected.code === "STALE_STATE") ||
+        (rejected.path === "/api/file" && rejected.code === "STALE_STATE") ||
         (rejected.path === "/api/state" &&
           rejected.code === "SOURCE_UNAVAILABLE"),
       JSON.stringify(rejected),

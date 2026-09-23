@@ -42,7 +42,7 @@ try {
     await expect(
       page.getByText("More unchanged context may be available").first(),
     ).toBeHidden();
-    await expect(page.locator("#file-loads")).toHaveText("0");
+    await expect(page.locator("#file-loads")).toHaveText("1");
     if (layout === "split")
       await page.getByText("Layout", { exact: true }).click();
     // A controlled anchor can be extended, replaced, cleared, and reset.
@@ -200,7 +200,7 @@ try {
       "pointer",
     );
     await page.locator("[data-expand-up]").first().click();
-    await expect(page.locator("#file-loads")).toHaveText("1");
+    await expect(page.locator("#file-loads")).toHaveText("3");
     await expect(line(20)).toBeVisible();
     await page.evaluate(() => {
       (

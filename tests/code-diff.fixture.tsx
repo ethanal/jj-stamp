@@ -9,13 +9,18 @@ import type { DiffFile, Selections } from "../src/types";
 const path = "scroll-fixture.ts";
 const base = Array.from(
   { length: 300 },
-  (_, i) => `unchanged fixture line ${i + 1}`,
+  (_, i) => `// unchanged fixture line ${i + 1}`,
 );
-for (let line = 10; line <= 290; line += 20)
+for (let line = 10; line <= 290; line += 20) {
   base[line - 4] = `function fixtureSection${line}() {`;
-const changed = base.map((text, i) =>
-  i % 20 === 9 ? `updated fixture line ${i + 1}` : text,
-);
+  base[line - 1] =
+    `  const fixtureValue${line} = "unchanged fixture line ${line}";`;
+  base[line + 2] = "}";
+}
+const changed = [...base];
+for (let line = 10; line <= 290; line += 20)
+  changed[line - 1] =
+    `  const fixtureValue${line} = "updated fixture line ${line}";`;
 function makeFile(squashed: boolean): DiffFile {
   const hunks = Array.from({ length: 15 }, (_, i) => i * 20 + 10)
     .filter((line) => !squashed || line !== 90)

@@ -20,11 +20,18 @@ const copy = async () => {
   await page.keyboard.press("Control+c");
   return page.evaluate(() => navigator.clipboard.readText());
 };
+const expectedLine = (line: number) => {
+  if (line % 20 === 7) return `function fixtureSection${line + 3}() {`;
+  if (line % 20 === 10)
+    return `  const fixtureValue${line} = "updated fixture line ${line}";`;
+  if (line % 20 === 13) return "}";
+  return `// unchanged fixture line ${line}`;
+};
 const expected = (start: number, end: number) =>
-  Array.from({ length: end - start + 1 }, (_, i) => {
-    const n = start + i;
-    return `${n % 20 === 10 ? "updated" : "unchanged"} fixture line ${n}\n`;
-  }).join("");
+  Array.from(
+    { length: end - start + 1 },
+    (_, index) => `${expectedLine(start + index)}\n`,
+  ).join("");
 
 try {
   // Permission is only used by this test to READ results. Application copy must

@@ -1,172 +1,266 @@
 import assert from "node:assert/strict";
+import path from "node:path";
 import test from "node:test";
 import type { FileDiffLoadedFiles } from "@pierre/diffs";
 import { parseFile } from "../server/diff.ts";
 import {
-  inferHunkContext,
-  inferVisibleHunkContext,
+  inferHunkContexts,
+  setTreeSitterAssetsForTesting,
+  type TreeSitterAssets,
 } from "../src/hunk-context.ts";
 import type { Hunk } from "../src/types.ts";
 
-function hunk(body: string, path = "example.ts"): Hunk {
+const grammar = (directory: string, file = directory) =>
+  path.resolve(
+    `node_modules/tree-sitter-wasm/out/${directory}/tree-sitter-${file}.wasm`,
+  );
+setTreeSitterAssetsForTesting({
+  core: path.resolve("node_modules/web-tree-sitter/web-tree-sitter.wasm"),
+  languages: {
+    bash: grammar("bash"),
+    c: grammar("c"),
+    cpp: grammar("cpp"),
+    cSharp: grammar("c_sharp"),
+    go: grammar("go"),
+    java: grammar("java"),
+    javascript: grammar("javascript"),
+    php: grammar("php"),
+    python: grammar("python"),
+    ruby: grammar("ruby"),
+    rust: grammar("rust"),
+    tsx: grammar("tsx"),
+    typescript: grammar("typescript"),
+  },
+} satisfies TreeSitterAssets);
+
+function hunk(body: string, filePath = "example.ts"): Hunk {
   const parsed = parseFile(
-    `diff --git a/${path} b/${path}\n--- a/${path}\n+++ b/${path}\n${body}\n`,
-    path,
+    `diff --git a/${filePath} b/${filePath}\n--- a/${filePath}\n+++ b/${filePath}\n${body}\n`,
+    filePath,
   ).hunks[0];
   return { ...parsed, id: "hunk" };
 }
 
-function files(name: string, contents: string): FileDiffLoadedFiles {
+function files(
+  name: string,
+  oldContents: string,
+  newContents = oldContents,
+): FileDiffLoadedFiles {
   return {
-    oldFile: { name, contents },
-    newFile: { name, contents },
+    oldFile: { name, contents: oldContents },
+    newFile: { name, contents: newContents },
   };
 }
 
-test("uses declarations already present in patch context without loading a file", () => {
-  assert.equal(
-    inferVisibleHunkContext(
-      "example.ts",
-      hunk(
-        "@@ -20,5 +20,5 @@\n export function formatSubject(value: string) {\n   if (value) {\n-    return value;\n+    return value.trim();\n   }\n }",
-      ),
-    ),
-    "export function formatSubject(value: string) {",
-  );
-});
+async function context(
+  filePath: string,
+  patch: string,
+  oldContents: string,
+  newContents = oldContents,
+): Promise<string | undefined> {
+  return (
+    await inferHunkContexts(
+      filePath,
+      [hunk(patch, filePath)],
+      files(filePath, oldContents, newContents),
+    )
+  ).hunk;
+}
 
-test("does not name declarations introduced by the hunk itself", () => {
+test("does not name a declaration introduced by the hunk itself", async () => {
+  const oldContents = `fn snapshot() {\n    work();\n}\n`;
+  const newContents = `${oldContents}\nstruct SnapshotWaiter<B: BaseView> {\n    min_version: TableCursor,\n    sender: Sender<B>,\n}\n`;
   assert.equal(
-    inferVisibleHunkContext(
+    await context(
       "src/view.rs",
-      hunk(
-        "@@ -40,1 +40,8 @@\n }\n+\n+struct SnapshotWaiter<B: BaseView> {\n+    min_version: TableCursor,\n+    sender: Sender<B>,\n+}\n+\n+type SnapshotResult<B> = Result<ViewSnapshot<B>, HydrateError>;",
-        "src/view.rs",
-      ),
+      "@@ -2,2 +2,7 @@\n     work();\n }\n+\n+struct SnapshotWaiter<B: BaseView> {\n+    min_version: TableCursor,\n+    sender: Sender<B>,\n+}",
+      oldContents,
+      newContents,
     ),
     undefined,
   );
 });
 
-test("returns the active Rust scope, never a preceding closed function", () => {
-  const insideImpl = `impl<B: BaseView> PartitionData<B> {\n    fn hydration_task_mut(&mut self) -> Option<&mut HydrationTask<B>> {\n        match self {\n            Self::Hydrating { task } => Some(task),\n            _ => None,\n        }\n    }\n\n    fn publish_partition(&mut self) {\n        old_value();\n    }\n}\n`;
+test("returns the active Rust ancestor, never a preceding closed function", async () => {
+  const contents = `impl<B: BaseView> PartitionData<B> {\n    fn hydration_task_mut(&mut self) -> Option<&mut HydrationTask<B>> {\n        None\n    }\n\n    fn publish_partition(&mut self) {\n        old_value();\n    }\n}\n`;
   assert.equal(
-    inferHunkContext(
+    await context(
       "src/view.rs",
-      hunk(
-        "@@ -9,4 +9,4 @@\n     fn publish_partition(&mut self) {\n-        old_value();\n+        new_value();\n     }\n }",
-        "src/view.rs",
-      ),
-      files("src/view.rs", insideImpl),
+      "@@ -6,3 +6,3 @@\n     fn publish_partition(&mut self) {\n-        old_value();\n+        new_value();\n     }",
+      contents,
     ),
     "fn publish_partition(&mut self) {",
   );
 
-  const betweenMethods = `impl<B: BaseView> PartitionData<B> {\n    fn hydration_task_mut(&mut self) -> Option<&mut HydrationTask<B>> {\n        None\n    }\n\n    old_value();\n}\n`;
+  const oldContents = `impl<B: BaseView> PartitionData<B> {\n    fn hydration_task_mut(&mut self) {\n        work();\n    }\n`;
+  const newContents = `${oldContents}}\n\nimpl<B: BaseView> ViewData<B> {\n}\n`;
   assert.equal(
-    inferHunkContext(
+    await context(
       "src/view.rs",
-      hunk(
-        "@@ -5,3 +5,3 @@\n \n-    old_value();\n+    new_value();\n }",
-        "src/view.rs",
-      ),
-      files("src/view.rs", betweenMethods),
-    ),
-    "impl<B: BaseView> PartitionData<B> {",
-  );
-  assert.equal(
-    inferHunkContext(
-      "src/view.rs",
-      hunk(
-        "@@ -4,1 +4,4 @@\n     }\n+}\n+\n+impl<B: BaseView> ViewData<B> {",
-        "src/view.rs",
-      ),
-      files(
-        "src/view.rs",
-        "impl<B: BaseView> PartitionData<B> {\n    fn hydration_task_mut(&mut self) {\n        work();\n    }\n}\n\nimpl<B: BaseView> ViewData<B> {\n",
-      ),
+      "@@ -3,2 +3,5 @@\n         work();\n     }\n+}\n+\n+impl<B: BaseView> ViewData<B> {",
+      oldContents,
+      newContents,
     ),
     "impl<B: BaseView> PartitionData<B> {",
   );
 });
 
-test("returns no Rust context after the preceding scope has closed", () => {
-  const contents = `fn hydration_task_mut() {\n    old_value();\n}\n\nstruct Next {\n    value: usize,\n}\n`;
+test("returns no scope after the preceding Rust item has closed", async () => {
+  const oldContents = `fn hydration_task_mut() {\n    work();\n}\n`;
+  const newContents = `${oldContents}\nstruct Added;\n`;
   assert.equal(
-    inferHunkContext(
+    await context(
       "src/view.rs",
-      hunk(
-        "@@ -4,4 +4,4 @@\n \n struct Next {\n-    value: usize,\n+    value: u64,\n }",
-        "src/view.rs",
-      ),
-      files("src/view.rs", contents),
-    ),
-    "struct Next {",
-  );
-  assert.equal(
-    inferHunkContext(
-      "src/view.rs",
-      hunk("@@ -3,1 +3,3 @@\n }\n+\n+struct Added;", "src/view.rs"),
-      files("src/view.rs", "fn hydration_task_mut() {\n}\n\nstruct Added;\n"),
+      "@@ -2,2 +2,4 @@\n     work();\n }\n+\n+struct Added;",
+      oldContents,
+      newContents,
     ),
     undefined,
   );
 });
 
-test("finds enclosing declarations beyond the rendered diff context", () => {
-  const contents = `export async function deliverNotification(\n  notification: Notification,\n  send: Sender,\n): Promise<void> {\n  for (let attempt = 1; attempt <= 3; attempt++) {\n    const backoff = attempt * 100;\n    try {\n      await send(notification);\n    } catch (error) {\n      await delay(attempt);\n    }\n  }\n}\n`;
-  assert.equal(
-    inferHunkContext(
-      "src/notifications.ts",
-      hunk(
-        "@@ -7,3 +7,3 @@\n     } catch (error) {\n-      await delay(1);\n+      await delay(attempt);\n     }",
-      ),
-      files("src/notifications.ts", contents),
-    ),
-    "export async function deliverNotification(",
-  );
-});
-
-test("recognizes common language and test scopes without mistaking control flow", () => {
+test("finds complete TypeScript, Python, and Go ancestors", async () => {
   const cases = [
     {
+      path: "src/notifications.ts",
+      contents: `export async function deliverNotification(\n  notification: Notification,\n): Promise<void> {\n  if (notification.ready) {\n    oldValue();\n  }\n}\n`,
+      patch:
+        "@@ -4,3 +4,3 @@\n   if (notification.ready) {\n-    oldValue();\n+    newValue();\n   }",
+      expected:
+        "export async function deliverNotification( notification: Notification, ): Promise<void> {",
+    },
+    {
       path: "service.py",
-      contents: "class DeliveryService:\n    if enabled:\n        send_old()\n",
-      expected: "class DeliveryService:",
+      contents:
+        "class DeliveryService:\n    def send(self):\n        old_value()\n",
+      patch:
+        "@@ -1,3 +1,3 @@\n class DeliveryService:\n     def send(self):\n-        old_value()\n+        new_value()",
+      expected: "def send(self):",
     },
     {
       path: "worker.go",
       contents:
-        "func deliver(ctx context.Context) error {\n\tif ready {\n\t\treturn oldValue\n\t}\n}\n",
-      expected: "func deliver(ctx context.Context) error {",
-    },
-    {
-      path: "notifications.test.ts",
-      contents:
-        "describe('delivery', () => {\n  it('retries failures', () => {\n    expect(oldValue);\n  });\n});\n",
-      expected: "it('retries failures', () => {",
-    },
-    {
-      path: "guide.md",
-      contents: "## Retry policy\n\nThe old behavior applies.\n",
-      expected: "## Retry policy",
+        "type Worker struct{}\n\nfunc (w *Worker) Deliver() {\n\toldValue()\n}\n",
+      patch:
+        "@@ -3,3 +3,3 @@\n func (w *Worker) Deliver() {\n-\toldValue()\n+\tnewValue()\n }",
+      expected: "func (w *Worker) Deliver() {",
     },
   ];
-  for (const { path, contents, expected } of cases) {
-    const line = contents
-      .split("\n")
-      .findIndex((value) => value.includes("old"));
+  for (const item of cases)
     assert.equal(
-      inferHunkContext(
-        path,
-        hunk(
-          `@@ -${line + 1} +${line + 1} @@\n-${contents.split("\n")[line]}\n+replacement`,
-          path,
-        ),
-        files(path, contents),
-      ),
-      expected,
-      path,
+      await context(item.path, item.patch, item.contents),
+      item.expected,
+      item.path,
     );
-  }
+});
+
+test("handles Unicode offsets and named TypeScript expression scopes", async () => {
+  const unicode = `// 😀 recipient\nexport function deliver() {\n  oldValue();\n}\n`;
+  assert.equal(
+    await context(
+      "unicode.ts",
+      "@@ -2,3 +2,3 @@\n export function deliver() {\n-  oldValue();\n+  newValue();\n }",
+      unicode,
+    ),
+    "export function deliver() {",
+  );
+
+  const arrow = `export const deliver = () => {\n  oldValue();\n};\n`;
+  assert.equal(
+    await context(
+      "arrow.ts",
+      "@@ -1,3 +1,3 @@\n export const deliver = () => {\n-  oldValue();\n+  newValue();\n };",
+      arrow,
+    ),
+    "export const deliver = () => {",
+  );
+
+  const namespace = `export namespace Delivery {\n  let oldValue = 1;\n}\n`;
+  assert.equal(
+    await context(
+      "namespace.ts",
+      "@@ -1,3 +1,3 @@\n export namespace Delivery {\n-  let oldValue = 1;\n+  let newValue = 1;\n }",
+      namespace,
+    ),
+    "export namespace Delivery {",
+  );
+});
+
+test("supports the documented Tree-sitter language set", async () => {
+  const cases = [
+    {
+      path: "Example.java",
+      contents: "class Example {\n  int value() {\n    oldValue();\n  }\n}\n",
+      patch:
+        "@@ -2,3 +2,3 @@\n   int value() {\n-    oldValue();\n+    newValue();\n   }",
+      expected: "int value() {",
+    },
+    {
+      path: "example.c",
+      contents: "int value(void) {\n  old_value();\n}\n",
+      patch:
+        "@@ -1,3 +1,3 @@\n int value(void) {\n-  old_value();\n+  new_value();\n }",
+      expected: "int value(void) {",
+    },
+    {
+      path: "example.cpp",
+      contents: "class Example {\n  int value() {\n    old_value();\n  }\n};\n",
+      patch:
+        "@@ -2,3 +2,3 @@\n   int value() {\n-    old_value();\n+    new_value();\n   }",
+      expected: "int value() {",
+    },
+    {
+      path: "Example.cs",
+      contents: "class Example {\n  int Value() {\n    OldValue();\n  }\n}\n",
+      patch:
+        "@@ -2,3 +2,3 @@\n   int Value() {\n-    OldValue();\n+    NewValue();\n   }",
+      expected: "int Value() {",
+    },
+    {
+      path: "example.rb",
+      contents: "class Example\n  def value\n    old_value\n  end\nend\n",
+      patch:
+        "@@ -2,3 +2,3 @@\n   def value\n-    old_value\n+    new_value\n   end",
+      expected: "def value",
+    },
+    {
+      path: "example.php",
+      contents:
+        "<?php\nclass Example {\n  function value() {\n    old_value();\n  }\n}\n",
+      patch:
+        "@@ -3,3 +3,3 @@\n   function value() {\n-    old_value();\n+    new_value();\n   }",
+      expected: "function value() {",
+    },
+    {
+      path: "example.sh",
+      contents: "value() {\n  old_value\n}\n",
+      patch: "@@ -1,3 +1,3 @@\n value() {\n-  old_value\n+  new_value\n }",
+      expected: "value() {",
+    },
+  ];
+  for (const item of cases)
+    assert.equal(
+      await context(item.path, item.patch, item.contents),
+      item.expected,
+      item.path,
+    );
+});
+
+test("returns no label for unsupported or syntactically invalid files", async () => {
+  assert.deepEqual(
+    await inferHunkContexts(
+      "guide.md",
+      [hunk("@@ -1 +1 @@\n-old\n+new", "guide.md")],
+      files("guide.md", "old\n", "new\n"),
+    ),
+    {},
+  );
+  assert.equal(
+    await context(
+      "partly-broken.rs",
+      "@@ -1,3 +1,3 @@\n fn valid() {\n-    old_value();\n+    new_value();\n }",
+      "fn valid() {\n    old_value();\n}\nfn broken( {\n",
+    ),
+    undefined,
+  );
 });

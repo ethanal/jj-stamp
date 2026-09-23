@@ -17,7 +17,7 @@ import {
   type SelectedLineRange,
 } from "@pierre/diffs";
 import type { DiffFile, Selections } from "./types";
-import { inferHunkContexts, inferVisibleHunkContexts } from "./hunk-context";
+import { inferHunkContexts, supportsHunkContext } from "./hunk-context";
 import {
   selectionAnchor,
   selectionFromRange,
@@ -226,31 +226,23 @@ export function CodeDiff({
 }) {
   const root = useRef<HTMLDivElement>(null);
   const fileLoadKey = `${version}\u0000${file.path}`;
-  const visibleHunkContexts = useMemo(
-    () => inferVisibleHunkContexts(file.path, file.hunks),
-    [file.hunks, file.path],
-  );
+  const contextLoadKey = `${fileLoadKey}\u0000${file.patch}`;
   const [hydratedHunkContexts, setHydratedHunkContexts] = useState<{
     key: string;
-    hunkIds: string[];
     contexts: Record<string, string>;
   } | null>(null);
-  const hunkContexts = useMemo(() => {
-    if (hydratedHunkContexts?.key !== fileLoadKey) return visibleHunkContexts;
-    const hydratedIds = new Set(hydratedHunkContexts.hunkIds);
-    return Object.fromEntries(
-      file.hunks.flatMap((hunk) => {
-        const context = hydratedIds.has(hunk.id)
-          ? hydratedHunkContexts.contexts[hunk.id]
-          : visibleHunkContexts[hunk.id];
-        return context ? [[hunk.id, context]] : [];
-      }),
-    );
-  }, [file.hunks, fileLoadKey, hydratedHunkContexts, visibleHunkContexts]);
+  const hunkContexts =
+    hydratedHunkContexts?.key === contextLoadKey
+      ? hydratedHunkContexts.contexts
+      : {};
   const [editorError, setEditorError] = useState("");
   const loadedFile = useRef<{
     key: string;
     promise: Promise<FileDiffLoadedFiles>;
+  } | null>(null);
+  const loadedContexts = useRef<{
+    key: string;
+    promise: Promise<Record<string, string>>;
   } | null>(null);
   const loadFileRef = useRef(loadFile);
   loadFileRef.current = loadFile;
@@ -414,6 +406,57 @@ export function CodeDiff({
     loadedFile.current = { key: fileLoadKey, promise };
     return promise;
   }, [file.path, fileLoadKey, version]);
+  const getLoadedContexts = useCallback(() => {
+    if (loadedContexts.current?.key === contextLoadKey)
+      return loadedContexts.current.promise;
+    const promise = getLoadedFile()
+      .then(async (files) => {
+        try {
+          return await inferHunkContexts(file.path, file.hunks, files);
+        } finally {
+          if (loadedFile.current?.key === fileLoadKey)
+            loadedFile.current = null;
+        }
+      })
+      .catch((error) => {
+        if (loadedContexts.current?.promise === promise)
+          loadedContexts.current = null;
+        throw error;
+      });
+    loadedContexts.current = { key: contextLoadKey, promise };
+    return promise;
+  }, [contextLoadKey, file.hunks, file.path, fileLoadKey, getLoadedFile]);
+  useEffect(() => {
+    if (!root.current || !supportsHunkContext(file.path)) return;
+    let active = true;
+    const load = () => {
+      void getLoadedContexts()
+        .then((contexts) => {
+          if (active)
+            setHydratedHunkContexts({ key: contextLoadKey, contexts });
+        })
+        .catch(() => {
+          // Background metadata is optional; explicit context expansion reports
+          // file-loading failures and can retry the shared request.
+        });
+    };
+    if (!("IntersectionObserver" in window)) {
+      load();
+      return () => {
+        active = false;
+      };
+    }
+    const observer = new IntersectionObserver((entries) => {
+      if (!entries.some((entry) => entry.isIntersecting)) return;
+      observer.disconnect();
+      load();
+    });
+    observer.observe(root.current);
+    return () => {
+      active = false;
+      observer.disconnect();
+    };
+  }, [contextLoadKey, file.path, getLoadedContexts]);
   const fileDiff = useMemo(
     () =>
       parsePatchFiles(file.patch, `${file.path}:${file.patch}`, true)[0]
@@ -683,11 +726,9 @@ export function CodeDiff({
       loadDiffFiles: async () => {
         try {
           const files = await getLoadedFile();
-          setHydratedHunkContexts({
-            key: fileLoadKey,
-            hunkIds: file.hunks.map((hunk) => hunk.id),
-            contexts: inferHunkContexts(file.path, file.hunks, files),
-          });
+          void getLoadedContexts().then((contexts) =>
+            setHydratedHunkContexts({ key: contextLoadKey, contexts }),
+          );
           return files;
         } catch (error) {
           onError((error as Error).message);
@@ -734,8 +775,8 @@ export function CodeDiff({
     }),
     [
       file.path,
-      file.hunks,
-      fileLoadKey,
+      contextLoadKey,
+      getLoadedContexts,
       getLoadedFile,
       onError,
       style,
