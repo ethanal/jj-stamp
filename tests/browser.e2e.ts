@@ -63,6 +63,10 @@ async function drag(from: Locator, to: Locator) {
   assert(a && b);
   await page.mouse.move(a.x + Math.min(180, a.width / 2), a.y + a.height / 2);
   await page.mouse.down();
+  const filePicker = page.getByRole("navigation", { name: "Changed files" });
+  // Guard navigation during the drag without dimming the file picker.
+  await expect(filePicker).toHaveAttribute("aria-disabled", "true");
+  await expect(filePicker).toHaveCSS("opacity", "1");
   await page.mouse.move(b.x + Math.min(220, b.width / 2), b.y + b.height / 2, {
     steps: 8,
   });
@@ -73,6 +77,8 @@ async function drag(from: Locator, to: Locator) {
     page.locator("[data-line][data-fold-selection-start]").first(),
   ).toBeVisible();
   await page.mouse.up();
+  await expect(filePicker).toHaveAttribute("aria-disabled", "false");
+  await expect(filePicker).toHaveCSS("opacity", "1");
 }
 async function pressMutation(key: "s" | "u") {
   const endpoint = key === "s" ? "/api/squash-lines" : "/api/undo";

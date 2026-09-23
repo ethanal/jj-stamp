@@ -344,9 +344,6 @@ kbd {
   min-height: 0;
   min-width: 0;
 }
-.changed-files[aria-disabled="true"] {
-  opacity: 0.5;
-}
 .file-tree {
   --trees-font-family-override: "IBM Plex Mono", monospace;
   --trees-font-size-override: 11px;
