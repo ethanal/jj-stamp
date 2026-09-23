@@ -43,7 +43,7 @@ async function focus() {
 }
 async function settled() {
   await expect(refreshButton).toBeEnabled();
-  await expect(page.locator(".statusbar")).not.toContainText("refreshing");
+  await expect(page.locator(".statusbar")).not.toContainText("Refreshing…");
 }
 async function noReadSince(count: number) {
   await page.waitForTimeout(300); // Beyond the focus-event debounce.
@@ -167,14 +167,27 @@ async function expectCenteredHint() {
     "Status text changes do not move the copy hint",
   );
 }
+const changeLinks = page.locator(".log-change");
+const changeLinkAppearance = () =>
+  changeLinks.evaluateAll((links) =>
+    links.map((link) => {
+      const style = getComputedStyle(link);
+      return { color: style.color, opacity: style.opacity };
+    }),
+  );
+await expect(page.locator(".log-change:enabled").first()).toBeVisible();
+const linksBeforeRefresh = await changeLinkAppearance();
 before = reads;
 const heldRead = page.waitForResponse("**/api/state");
 await focus();
 await expect.poll(() => reads).toBe(before + 1);
 await expect(refreshButton).toBeDisabled();
 await readCaptured;
-await expect(page.locator(".statusbar")).toContainText("refreshing");
+await expect(page.locator(".statusbar")).toContainText("Refreshing…");
 await expectCenteredHint();
+// Change IDs keep their colors but cannot switch revisions during a refresh.
+await expect(page.locator(".log-change:enabled")).toHaveCount(0);
+assert.deepEqual(await changeLinkAppearance(), linksBeforeRefresh);
 // Refresh only locks mutations: sidebar appearance and navigation stay intact.
 const fileNavigation = page.getByRole("navigation", { name: "Changed files" });
 await expect(fileNavigation).toHaveCSS("opacity", "1");

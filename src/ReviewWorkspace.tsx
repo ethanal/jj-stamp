@@ -612,7 +612,7 @@ export function ReviewStatusBar({
   onClear: () => void;
 }) {
   const status = busy
-    ? `${busy}…`
+    ? `${busy === "refreshing" ? "Refreshing" : busy}…`
     : recovering
       ? "Reloading actual repository…"
       : halted
