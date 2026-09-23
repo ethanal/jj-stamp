@@ -39,6 +39,9 @@ try {
     assert(
       separatorBox.y + separatorBox.height <= contentBox.y + contentBox.height,
     );
+    await expect(
+      page.getByText("More unchanged context may be available").first(),
+    ).toBeHidden();
     await expect(page.locator("#file-loads")).toHaveText("0");
     if (layout === "split")
       await page.getByText("Layout", { exact: true }).click();

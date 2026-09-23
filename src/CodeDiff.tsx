@@ -91,7 +91,8 @@ const separatorCSS = `
 [data-expand-both]::before { content: '↕ 10'; }
 [data-expand-all-button] { display: none !important; }
 [data-separator-content] { font-size: 11px; color: var(--diff-separator-fg, #7e8895); gap: 10px; min-width: 0; }
-[data-separator-content][data-fold-has-hunk-context] [data-unmodified-lines] { display: none; }
+[data-separator-content][data-fold-has-hunk-context] [data-unmodified-lines],
+[data-separator-content][data-fold-hide-placeholder] [data-unmodified-lines] { display: none; }
 [data-fold-hunk-context] { color: var(--diff-hunk-context-fg, #b8c1cc); display: block; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 [data-fold-hunk-context]::before { content: '@@'; color: var(--diff-separator-fg, #7e8895); margin-right: 8px; }
 `;
@@ -376,6 +377,13 @@ export function CodeDiff({
         );
         const existing = content?.querySelector<HTMLElement>(
           "[data-fold-hunk-context]",
+        );
+        const unchanged = content?.querySelector<HTMLElement>(
+          "[data-unmodified-lines]",
+        );
+        content?.toggleAttribute(
+          "data-fold-hide-placeholder",
+          unchanged?.textContent === "More unchanged context may be available",
         );
         content?.toggleAttribute("data-fold-has-hunk-context", !!context);
         if (!content || !context) {
