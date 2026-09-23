@@ -67,6 +67,10 @@ async function drag(from: Locator, to: Locator) {
   // Guard navigation during the drag without dimming the file picker.
   await expect(filePicker).toHaveAttribute("aria-disabled", "true");
   await expect(filePicker).toHaveCSS("opacity", "1");
+  await expect(page.getByRole("button", { name: "settings" })).toBeDisabled();
+  for (const button of await page.locator("button:disabled").all()) {
+    await expect(button).toHaveCSS("opacity", "1");
+  }
   await page.mouse.move(b.x + Math.min(220, b.width / 2), b.y + b.height / 2, {
     steps: 8,
   });

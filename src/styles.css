@@ -174,7 +174,6 @@ button:hover:not(:disabled) {
 button:disabled,
 select:disabled {
   cursor: default;
-  opacity: 0.38;
 }
 button:focus-visible,
 select:focus-visible,
