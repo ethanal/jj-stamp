@@ -64,7 +64,7 @@ async function context(
       [hunk(patch, filePath)],
       files(filePath, oldContents, newContents),
     )
-  ).hunk?.label;
+  ).hunk?.scopes[0]?.label;
 }
 
 test("does not name a declaration introduced by the hunk itself", async () => {
@@ -83,13 +83,23 @@ test("does not name a declaration introduced by the hunk itself", async () => {
 
 test("returns the active Rust ancestor, never a preceding closed function", async () => {
   const contents = `impl<B: BaseView> PartitionData<B> {\n    fn hydration_task_mut(&mut self) -> Option<&mut HydrationTask<B>> {\n        None\n    }\n\n    fn publish_partition(&mut self) {\n        old_value();\n    }\n}\n`;
+  const nestedPatch =
+    "@@ -6,3 +6,3 @@\n     fn publish_partition(&mut self) {\n-        old_value();\n+        new_value();\n     }";
   assert.equal(
-    await context(
-      "src/view.rs",
-      "@@ -6,3 +6,3 @@\n     fn publish_partition(&mut self) {\n-        old_value();\n+        new_value();\n     }",
-      contents,
-    ),
+    await context("src/view.rs", nestedPatch, contents),
     "fn publish_partition(&mut self) {",
+  );
+  const nestedScopes = await inferHunkContexts(
+    "src/view.rs",
+    [hunk(nestedPatch, "src/view.rs")],
+    files("src/view.rs", contents),
+  );
+  assert.deepEqual(
+    nestedScopes.hunk?.scopes.map((scope) => scope.label),
+    [
+      "fn publish_partition(&mut self) {",
+      "impl<B: BaseView> PartitionData<B> {",
+    ],
   );
 
   const oldContents = `impl<B: BaseView> PartitionData<B> {\n    fn hydration_task_mut(&mut self) {\n        work();\n    }\n`;

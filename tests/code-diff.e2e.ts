@@ -55,6 +55,22 @@ try {
     });
     await expect(line(4)).toBeVisible();
     await expect(firstScope).toHaveCount(0);
+    const secondScope = page
+      .locator("[data-fold-hunk-context]")
+      .filter({ hasText: "function fixtureSection30() {" })
+      .first();
+    await secondScope.evaluate((label) => {
+      const wrapper = label.closest("[data-separator-wrapper]");
+      (wrapper?.querySelector("[data-expand-down]") as HTMLElement)?.click();
+    });
+    await expect(line(24)).toBeVisible();
+    await expect(secondScope).toHaveCount(0);
+    await expect(
+      page
+        .locator("[data-fold-hunk-context]")
+        .filter({ hasText: "namespace FixtureScope30 {" })
+        .first(),
+    ).toBeVisible();
     await expect(page.locator("#file-loads")).toHaveText("2");
     // A controlled anchor can be extended, replaced, cleared, and reset.
     await line(10).click();

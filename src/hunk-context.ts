@@ -25,15 +25,20 @@ export interface TreeSitterAssets {
   languages: Record<LanguageId, string>;
 }
 
-export interface HunkContext {
+export interface HunkScope {
   label: string;
   oldLine?: number;
   newLine?: number;
 }
 
+export interface HunkContext {
+  scopes: HunkScope[];
+}
+
 interface ScopeLocation {
   label: string;
   startLine: number;
+  type: string;
 }
 
 interface ScopeRule {
@@ -363,7 +368,7 @@ function scopeLocation(
   const opener = source.slice(body.startIndex, body.startIndex + 1);
   const label = compact(`${header}${opener === "{" ? " {" : ""}`);
   return label
-    ? { label, startLine: display.startPosition.row + 1 }
+    ? { label, startLine: display.startPosition.row + 1, type: node.type }
     : undefined;
 }
 
@@ -380,10 +385,11 @@ function contextAtLine(
   starts: number[],
   line: number,
   rules: Map<string, ScopeRule>,
-): ScopeLocation | undefined {
+): ScopeLocation[] {
+  const contexts: ScopeLocation[] = [];
   const row = line - 1;
   const lineStart = starts[row];
-  if (lineStart === undefined) return;
+  if (lineStart === undefined) return [];
   const lineEnd = starts[row + 1] ?? source.length;
   let point = lineStart;
   while (
@@ -402,11 +408,14 @@ function contextAtLine(
       !node.isMissing
     ) {
       const body = bodyFor(node, rule, point);
-      if (body && !body.hasError && !body.isMissing)
-        return scopeLocation(source, node, body, rule);
+      if (body && !body.hasError && !body.isMissing) {
+        const context = scopeLocation(source, node, body, rule);
+        if (context) contexts.push(context);
+      }
     }
     node = node.parent;
   }
+  return contexts;
 }
 
 function targetLine(hunk: Hunk, side: "old" | "new"): number | undefined {
@@ -443,7 +452,7 @@ async function contextsForSource(
   languageId: LanguageId,
   contents: string,
   targets: Target[],
-): Promise<Record<string, ScopeLocation>> {
+): Promise<Record<string, ScopeLocation[]>> {
   const bytes = new TextEncoder().encode(contents);
   if (bytes.length > MAX_PARSE_BYTES) return {};
   const loadedLanguage = await language(languageId);
@@ -464,7 +473,7 @@ async function contextsForSource(
           line,
           rules,
         );
-        return context ? [[id, context]] : [];
+        return context.length ? [[id, context]] : [];
       }),
     );
   } finally {
@@ -496,30 +505,35 @@ export async function inferHunkContexts(
   const [oldContexts, newContexts] = await Promise.all([
     pair.oldFile && oldTargets.length
       ? contextsForSource(languageId, pair.oldFile.contents, oldTargets)
-      : ({} as Record<string, ScopeLocation>),
+      : ({} as Record<string, ScopeLocation[]>),
     pair.newFile && newTargets.length
       ? contextsForSource(languageId, pair.newFile.contents, newTargets)
-      : ({} as Record<string, ScopeLocation>),
+      : ({} as Record<string, ScopeLocation[]>),
   ]);
   return Object.fromEntries(
     hunks.flatMap((hunk) => {
       const changed = firstChangedRow(hunk);
       if (!changed) return [];
-      const oldContext = oldContexts[hunk.id];
-      const newContext = newContexts[hunk.id];
-      const primary = changed.raw[0] === "-" ? oldContext : newContext;
-      if (!primary) return [];
+      const oldScopes = oldContexts[hunk.id] ?? [];
+      const newScopes = newContexts[hunk.id] ?? [];
+      const primaryScopes = changed.raw[0] === "-" ? oldScopes : newScopes;
+      if (!primaryScopes.length) return [];
       return [
         [
           hunk.id,
           {
-            label: primary.label,
-            ...(oldContext?.label === primary.label
-              ? { oldLine: oldContext.startLine }
-              : {}),
-            ...(newContext?.label === primary.label
-              ? { newLine: newContext.startLine }
-              : {}),
+            scopes: primaryScopes.map((primary) => {
+              const sameScope = (candidate: ScopeLocation) =>
+                candidate.type === primary.type &&
+                candidate.label === primary.label;
+              const oldScope = oldScopes.find(sameScope);
+              const newScope = newScopes.find(sameScope);
+              return {
+                label: primary.label,
+                ...(oldScope ? { oldLine: oldScope.startLine } : {}),
+                ...(newScope ? { newLine: newScope.startLine } : {}),
+              };
+            }),
           },
         ],
       ];

@@ -21,6 +21,7 @@ import {
   inferHunkContexts,
   supportsHunkContext,
   type HunkContext,
+  type HunkScope,
 } from "./hunk-context";
 import {
   selectionAnchor,
@@ -78,7 +79,7 @@ function renderedScopeLine(
   });
 }
 
-function scopeIsRendered(shadow: ShadowRoot, context: HunkContext): boolean {
+function scopeIsRendered(shadow: ShadowRoot, context: HunkScope): boolean {
   return (
     renderedScopeLine(shadow, context.newLine, "new") ||
     renderedScopeLine(shadow, context.oldLine, "old")
@@ -398,8 +399,9 @@ export function CodeDiff({
         const context = file.hunks[index]
           ? hunkContexts[file.hunks[index].id]
           : undefined;
-        const shownContext =
-          context && !scopeIsRendered(shadow, context) ? context : undefined;
+        const shownContext = context?.scopes.find(
+          (scope) => !scopeIsRendered(shadow, scope),
+        );
         const content = separator.querySelector<HTMLElement>(
           "[data-separator-content]",
         );

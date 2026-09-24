@@ -21,10 +21,12 @@ const copy = async () => {
   return page.evaluate(() => navigator.clipboard.readText());
 };
 const expectedLine = (line: number) => {
+  if (line === 1) return "namespace FixtureScope10 {";
+  if (line % 20 === 15) return `namespace FixtureScope${line + 15} {`;
   if (line % 20 === 4) return `function fixtureSection${line + 6}() {`;
   if (line % 20 === 10)
     return `  const fixtureValue${line} = "updated fixture line ${line}";`;
-  if (line % 20 === 13) return "}";
+  if (line % 20 === 13 || line % 20 === 14) return "}";
   return `// unchanged fixture line ${line}`;
 };
 const expected = (start: number, end: number) =>
