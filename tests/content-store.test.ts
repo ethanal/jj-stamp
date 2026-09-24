@@ -259,11 +259,10 @@ test("still-eligible in-flight work survives selection reprioritization", async 
   assert.equal(store.snapshot().discarded, 0);
 });
 
-test("pause suppresses scheduling and invalidates speculative completion even after an immediate resume", async () => {
+test("pause suppresses new scheduling but retains eligible immutable completions without refetching", async () => {
   const pending = deferred<PinnedCommit>();
-  let attempts = 0;
   const { store, calls } = fixture({
-    loadCommit: async (id) => (++attempts === 1 ? pending.promise : commit(id)),
+    loadCommit: async (id) => (id === "a" ? pending.promise : commit(id)),
   });
   store.setPaused(true);
   store.setCandidates([row("a"), row("b")], "selected");
@@ -272,11 +271,15 @@ test("pause suppresses scheduling and invalidates speculative completion even af
   store.setPaused(false);
   await settle();
   store.setPaused(true);
-  store.setPaused(false);
-  pending.resolve(commit("a"));
+  const value = commit("a");
+  pending.resolve(value);
   await settle();
-  assert.equal(store.snapshot().discarded, 1);
-  assert.deepEqual(calls, ["diff:a", "diff:a", "diff:b"]);
+  assert.strictEqual(store.peekCommit("a"), value);
+  assert.equal(store.snapshot().discarded, 0);
+  assert.deepEqual(calls, ["diff:a"]);
+  store.setPaused(false);
+  await settle();
+  assert.deepEqual(calls, ["diff:a", "diff:b"]);
 });
 
 test("separate speculative byte caps reserve before I/O and remember full-capacity rejections on unchanged refreshes", async () => {
@@ -711,4 +714,56 @@ test("rejections survive unrelated candidate changes but may retry at a strictly
   );
   await settle();
   assert.equal(calls.filter((call) => call === "diff:bad").length, 2);
+});
+
+test("transient pause/resume does not invalidate immutable work still in flight", async () => {
+  const pending = deferred<PinnedCommit>();
+  const { store, calls } = fixture({ loadCommit: () => pending.promise });
+  store.setCandidates([row("a")], "selected");
+  await settle();
+  store.setPaused(true);
+  store.setPaused(false);
+  const value = commit("a");
+  pending.resolve(value);
+  await settle();
+  assert.strictEqual(store.peekCommit("a"), value);
+  assert.deepEqual(calls, ["diff:a"]);
+  assert.equal(store.snapshot().discarded, 0);
+});
+
+test("paused speculative completion is still discarded if its candidate was removed", async () => {
+  const pending = deferred<PinnedCommit>();
+  const { store, calls } = fixture({
+    loadCommit: (id) =>
+      id === "a" ? pending.promise : Promise.resolve(commit(id)),
+  });
+  store.setCandidates([row("a")], "selected");
+  await settle();
+  store.setPaused(true);
+  store.setCandidates([row("b")], "selected");
+  pending.resolve(commit("a"));
+  await settle();
+  assert.equal(store.peekCommit("a"), undefined);
+  assert.equal(store.snapshot().discarded, 1);
+  assert.deepEqual(calls, ["diff:a"]);
+  store.setPaused(false);
+  await settle();
+  assert.deepEqual(calls, ["diff:a", "diff:b"]);
+});
+
+test("paused background full-file completion remains useful in a retained demand bucket after navigation", async () => {
+  const pending = deferred<FileContents>();
+  const { store, calls } = fixture({ loadFile: () => pending.promise });
+  store.seed(state("a", [file()]));
+  store.setCandidates([], "a");
+  await settle();
+  store.setPaused(true);
+  store.seed(state("b"));
+  store.setCandidates([], "b");
+  const value = contents();
+  pending.resolve(value);
+  await settle();
+  assert.equal(store.snapshot().discarded, 0);
+  assert.strictEqual(await store.getFile("a", "one.ts"), value);
+  assert.deepEqual(calls, ["file:a:one.ts"]);
 });

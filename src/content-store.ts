@@ -67,7 +67,6 @@ type Task = {
   kind: Kind;
   path?: string;
   demand: boolean;
-  epoch: number;
   promise: Promise<PinnedCommit | FileContents>;
 };
 
@@ -111,7 +110,6 @@ export class ContentStore {
   // and foreground mutation/refresh state. Demand reads always bypass this gate.
   private paused = true;
   private disposed = false;
-  private epoch = 0;
   private scheduled = false;
   private background: Task | undefined;
   private demandActive = 0;
@@ -275,14 +273,13 @@ export class ContentStore {
   setPaused(paused: boolean): void {
     if (this.disposed || paused === this.paused) return;
     this.paused = paused;
-    // Even pause/resume before a response arrives invalidates that response.
-    if (paused) this.epoch++;
+    // Pause gates new work only. Already-running immutable reads remain useful
+    // while their commit bucket is still retained and eligible.
     this.schedule();
   }
 
   dispose(): void {
     this.disposed = true;
-    this.epoch++;
     this.demand.clear();
     this.speculative.clear();
     this.targets = [];
@@ -470,8 +467,7 @@ export class ContentStore {
   private eligible(bucket: Bucket) {
     return (
       this.lookup(bucket.id) === bucket &&
-      (this.targets.includes(bucket.id) ||
-        (this.selected === bucket.id && this.demand.has(bucket.id)))
+      (this.targets.includes(bucket.id) || this.demand.has(bucket.id))
     );
   }
 
@@ -535,7 +531,6 @@ export class ContentStore {
       kind,
       path,
       demand,
-      epoch: this.epoch,
       promise: undefined!,
     };
     if (demand) this.demandActive++;
@@ -555,9 +550,7 @@ export class ContentStore {
         if (kind === "diff" && (value as PinnedCommit).commitId !== bucket.id)
           throw new Error("Pinned commit response identity mismatch");
         const current = task.bucket;
-        const valid =
-          task.demand ||
-          (!this.paused && task.epoch === this.epoch && this.eligible(current));
+        const valid = task.demand || this.eligible(current);
         if (this.disposed || !valid) this.counters.discarded++;
         else if (!this.admit(current, kind, value, task.demand, path))
           this.reject(key);
