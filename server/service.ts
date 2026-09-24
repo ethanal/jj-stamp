@@ -8,6 +8,7 @@ import { withDiffEditor } from "./diff-editor.ts";
 import type { DiffEditorPlan } from "./diff-editor.ts";
 import { editorExpression, resolveEditorPath } from "./editor.ts";
 import { ApiError } from "./errors.ts";
+import { ReadLane } from "./read-lane.ts";
 import {
   jj,
   processOutput,
@@ -15,6 +16,7 @@ import {
   formatCommand,
   run,
   ProcessError,
+  ProcessOutputLimitError,
 } from "./process.ts";
 import {
   parseRevisionRecord,
@@ -57,6 +59,13 @@ export interface ReviewFile {
   deletions: number;
   unsupported?: string;
   hunks: ReviewHunk[];
+}
+/** Display-only immutable content. Never a mutation authorization token. */
+export interface CommitContent {
+  repo: { name: string; path: string };
+  commitId: string;
+  baseCommitId: string | null;
+  files: ReviewFile[];
 }
 export interface State {
   repo: { name: string; path: string };
@@ -192,9 +201,11 @@ function stale(): never {
   );
 }
 
-/** All requests, including reads (which snapshot jj), share one serial queue. */
+/** Mutable-state requests are serialized; immutable display reads are isolated. */
 export class ReviewService {
   private queue: Promise<unknown> = Promise.resolve();
+  private serialPending = 0;
+  private readonly displayReads = new ReadLane();
   private activePath?: string;
   private history: SessionHistory = {};
   private readonly plans = new Map<string, Plan>();
@@ -229,9 +240,16 @@ export class ReviewService {
     this.requestedRevision = options.revision ?? "@";
   }
   private serial<T>(name: OperationName, task: () => Promise<T>): Promise<T> {
-    const result = this.queue.then(
-      this.timing ? this.timing.task(name, task) : task,
-    );
+    if (this.serialPending >= 64)
+      return Promise.reject(
+        new ApiError(503, "BUSY", "The state queue is full. Try again later."),
+      );
+    this.serialPending++;
+    const result = this.queue
+      .then(this.timing ? this.timing.task(name, task) : task)
+      .finally(() => {
+        this.serialPending--;
+      });
     this.queue = result.catch(() => undefined);
     return result;
   }
@@ -408,6 +426,17 @@ export class ReviewService {
         "--ignore-working-copy",
       ])
     ).stdout;
+    const files = this.parseFiles(diff, includeHunks);
+    if (!includeHunks) return files;
+    // Do not retain unsupported interpretations.
+    if (files.every((file) => !file.unsupported)) {
+      if (this.fileCache.size >= 16)
+        this.fileCache.delete(this.fileCache.keys().next().value!);
+      this.fileCache.set(key, structuredClone(files));
+    }
+    return files;
+  }
+  private parseFiles(diff: string, includeHunks = true): ReviewFile[] {
     const sections = diff.split(/(?=^diff --git )/m).filter(Boolean);
     const files: ReviewFile[] = [];
     const occurrences = new Map<string, number>();
@@ -458,12 +487,6 @@ export class ReviewService {
       throw new Error(
         "Duplicate hunk IDs across files; refusing ambiguous selections.",
       );
-    // Do not retain unsupported interpretations.
-    if (files.every((file) => !file.unsupported)) {
-      if (this.fileCache.size >= 16)
-        this.fileCache.delete(this.fileCache.keys().next().value!);
-      this.fileCache.set(key, structuredClone(files));
-    }
     return files;
   }
   /** One jj log reads all requested views; graph-only reads never snapshot. */
@@ -661,7 +684,7 @@ export class ReviewService {
   }
   /** Wait for all accepted requests before a graceful service shutdown. */
   async drain(): Promise<void> {
-    await this.queue;
+    await Promise.all([this.queue, this.displayReads.drain()]);
   }
   getState(): Promise<State> {
     return this.serial("state", () => this.readState());
@@ -857,6 +880,206 @@ export class ReviewService {
         );
       }
       return { ok: true };
+    });
+  }
+  private display<T>(
+    name: "commit" | "commit-file",
+    task: () => Promise<T>,
+  ): Promise<T> {
+    const limited = async () => {
+      try {
+        const result = await task();
+        if (Buffer.byteLength(JSON.stringify(result)) > 16 * 1024 * 1024)
+          throw new ProcessOutputLimitError();
+        return result;
+      } catch (error) {
+        if (error instanceof ProcessOutputLimitError)
+          throw new ApiError(413, "CONTENT_TOO_LARGE", error.message);
+        throw error;
+      }
+    };
+    return this.displayReads.run(
+      this.timing ? this.timing.task(name, limited) : limited,
+    );
+  }
+  private validateCommitInput(
+    input: { commitId: string; path?: string },
+    file = false,
+  ): void {
+    if (
+      !input ||
+      typeof input.commitId !== "string" ||
+      !/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(input.commitId) ||
+      Object.keys(input).some(
+        (key) => key !== "commitId" && !(file && key === "path"),
+      )
+    )
+      throw new ApiError(
+        400,
+        "INVALID_REQUEST",
+        "Supply one full hexadecimal commit ID (40 or 64 characters), not a revision expression.",
+      );
+    if (
+      file &&
+      (typeof input.path !== "string" ||
+        !input.path ||
+        input.path.length > 4096 ||
+        /[\s\x00-\x1f\x7f"\\]/.test(input.path) ||
+        input.path
+          .split("/")
+          .some((part) => !part || part === "." || part === ".."))
+    )
+      throw new ApiError(
+        400,
+        "INVALID_PATH",
+        "Choose a supported repository-relative changed file.",
+      );
+  }
+  /** Deliberately bypass init(), live views and the selected source's demand cache. */
+  private async pinnedContent(commitId: string): Promise<CommitContent> {
+    const root = await realpath(
+      (await this.pinnedRead(this.repoPath, ["root"], 64 * 1024)).stdout.trim(),
+    );
+    let metadata: string;
+    try {
+      metadata = (
+        await this.pinnedRead(
+          root,
+          [
+            "log",
+            "--no-graph",
+            "--config",
+            "ui.log-word-wrap=false",
+            "-r",
+            commitId,
+            "-T",
+            'commit_id ++ "\\n" ++ parents.map(|p| p.commit_id()).join("\\n")',
+          ],
+          64 * 1024,
+        )
+      ).stdout;
+    } catch (error) {
+      if (error instanceof ProcessError)
+        throw new ApiError(
+          404,
+          "COMMIT_UNAVAILABLE",
+          "The exact commit could not be read from this repository.",
+        );
+      throw error;
+    }
+    const [actual, ...parents] = metadata.trim().split("\n");
+    if (
+      actual !== commitId ||
+      parents.some((id) => !/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(id))
+    )
+      throw new ApiError(
+        404,
+        "COMMIT_UNAVAILABLE",
+        "The exact commit could not be resolved.",
+      );
+    if (parents.length > 1)
+      throw new ApiError(
+        422,
+        "UNSUPPORTED_DIFF",
+        "Display content requires a single parent; merge context is not supported.",
+      );
+    const diff = (
+      await this.pinnedRead(
+        root,
+        ["diff", "--git", "-r", commitId],
+        2 * 1024 * 1024,
+      )
+    ).stdout;
+    return {
+      repo: { name: path.basename(root), path: root },
+      commitId,
+      baseCommitId: parents[0] ?? null,
+      files: this.parseFiles(diff),
+    };
+  }
+  private async pinnedRead(
+    root: string,
+    args: string[],
+    maxOutputBytes: number,
+  ) {
+    const pinned = [...args];
+    const separator = pinned.indexOf("--");
+    // Global options must precede --; afterwards every argument is a fileset.
+    pinned.splice(
+      separator < 0 ? pinned.length : separator,
+      0,
+      "--ignore-working-copy",
+    );
+    const result = await this.jjRunner(root, pinned, { maxOutputBytes });
+    // Injected runners must obey the same postcondition as the production runner.
+    if (
+      Buffer.byteLength(result.stdout) + Buffer.byteLength(result.stderr) >
+        maxOutputBytes ||
+      (result.stdoutBytes && result.stdoutBytes.length > maxOutputBytes)
+    )
+      throw new ProcessOutputLimitError();
+    return result;
+  }
+  getCommit(input: { commitId: string }): Promise<CommitContent> {
+    return this.display("commit", async () => {
+      this.validateCommitInput(input);
+      return this.pinnedContent(input.commitId);
+    });
+  }
+  getCommitFile(input: {
+    commitId: string;
+    path: string;
+  }): Promise<FileContents> {
+    return this.display("commit-file", async () => {
+      this.validateCommitInput(input, true);
+      const content = await this.pinnedContent(input.commitId);
+      const file = content.files.find((entry) => entry.path === input.path);
+      if (!file)
+        throw new ApiError(
+          400,
+          "INVALID_PATH",
+          "Choose a file in this commit's diff.",
+        );
+      if (file.unsupported)
+        throw new ApiError(422, "UNSUPPORTED_DIFF", file.unsupported);
+      if (!content.baseCommitId)
+        throw new ApiError(
+          422,
+          "UNSUPPORTED_DIFF",
+          "File context requires exactly one source parent.",
+        );
+      const read = async (revision: string) => {
+        const result = await this.pinnedRead(
+          content.repo.path,
+          [
+            "file",
+            "show",
+            "-r",
+            revision,
+            "--",
+            `root-file:${JSON.stringify(file.path)}`,
+          ],
+          4 * 1024 * 1024,
+        );
+        if (
+          result.stdout.includes("\0") ||
+          (result.stdoutBytes &&
+            !Buffer.from(result.stdout).equals(result.stdoutBytes))
+        )
+          throw new ApiError(
+            422,
+            "UNSUPPORTED_DIFF",
+            "Only lossless UTF-8 text contents are supported.",
+          );
+        return { name: file.path, contents: result.stdout };
+      };
+      const oldFile = /^--- \/dev\/null$/m.test(file.patch)
+        ? null
+        : await read(content.baseCommitId);
+      const newFile = /^\+\+\+ \/dev\/null$/m.test(file.patch)
+        ? null
+        : await read(content.commitId);
+      return { oldFile, newFile };
     });
   }
   getFile(input: { version: string; path: string }): Promise<FileContents> {

@@ -71,6 +71,22 @@ export function createApi(service: ReviewService): express.Router {
       .parse(req.body);
     res.json(await service.openEditor(input));
   });
+  const commitId = z.string().regex(/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/);
+  router.post("/commit", async (req, res) => {
+    res.json(
+      await service.getCommit(z.object({ commitId }).strict().parse(req.body)),
+    );
+  });
+  router.post("/commit-file", async (req, res) => {
+    res.json(
+      await service.getCommitFile(
+        z
+          .object({ commitId, path: z.string().min(1).max(4096) })
+          .strict()
+          .parse(req.body),
+      ),
+    );
+  });
   router.post("/file", async (req, res) => {
     const input = z
       .object({ version, path: z.string().min(1).max(4096) })

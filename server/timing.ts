@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import { performance } from "node:perf_hooks";
 
 export type OperationName =
@@ -7,6 +8,8 @@ export type OperationName =
   | "log"
   | "editor"
   | "file"
+  | "commit"
+  | "commit-file"
   | "squash-lines"
   | "preview"
   | "squash"
@@ -14,7 +17,7 @@ export type OperationName =
 
 export interface SubprocessTiming {
   name: string;
-  /** Milliseconds from the serialized task's start, not from enqueue time. */
+  /** Milliseconds from the task's start, not from enqueue time. */
   startMs: number;
   durationMs: number;
   ok: boolean;
@@ -75,7 +78,10 @@ export function toolTimingName(args: string[]): string {
  * subprocess (including failed parallel reads) before advancing its queue. */
 export class ServiceTiming {
   private nextId = 0;
-  private current?: { start: number; record: OperationTiming };
+  private readonly context = new AsyncLocalStorage<{
+    start: number;
+    record: OperationTiming;
+  }>();
 
   constructor(
     private readonly observer: TimingObserver,
@@ -95,22 +101,22 @@ export class ServiceTiming {
         ok: false,
         subprocesses: [],
       };
-      this.current = { start, record };
-      try {
-        const result = await task();
-        record.ok = true;
-        return result;
-      } finally {
-        record.durationMs = this.now() - start;
-        this.current = undefined;
-        // Diagnostics must never turn an attributed mutation into a failure.
-        // Also absorb async observer failures without delaying the queue.
+      return this.context.run({ start, record }, async () => {
         try {
-          void Promise.resolve(this.observer(record)).catch(() => undefined);
-        } catch {
-          // Deliberately do not log observer errors (which may contain data).
+          const result = await task();
+          record.ok = true;
+          return result;
+        } finally {
+          record.durationMs = this.now() - start;
+          // Diagnostics must never turn an attributed mutation into a failure.
+          // Also absorb async observer failures without delaying the queue.
+          try {
+            void Promise.resolve(this.observer(record)).catch(() => undefined);
+          } catch {
+            // Deliberately do not log observer errors (which may contain data).
+          }
         }
-      }
+      });
     };
   }
 
@@ -120,7 +126,7 @@ export class ServiceTiming {
   ): (...args: Args) => Promise<Result> {
     const timing = this;
     return function (this: unknown, ...args: Args): Promise<Result> {
-      const current = timing.current;
+      const current = timing.context.getStore();
       if (!current) return runner.apply(this, args);
       const start = timing.now();
       const record: SubprocessTiming = {

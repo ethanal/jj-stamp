@@ -20,6 +20,16 @@ export class ProcessError extends Error {
   }
 }
 
+/** Only immutable reads opt in; history-writing subprocesses remain unlimited. */
+export interface ProcessLimits {
+  maxOutputBytes: number;
+}
+export class ProcessOutputLimitError extends Error {
+  constructor() {
+    super("Immutable display content exceeds the output limit.");
+  }
+}
+
 /** POSIX-shell quoting for copyable diagnostics only; execution never uses a shell. */
 export function formatCommand(command: string, args: string[]): string {
   return [command, ...args]
@@ -51,6 +61,7 @@ export function run(
   command: string,
   args: string[],
   cwd: string,
+  limits?: ProcessLimits,
 ): Promise<ProcessResult> {
   return new Promise((resolve, reject) => {
     const env: NodeJS.ProcessEnv = {
@@ -76,14 +87,32 @@ export function run(
     const stdoutChunks: Buffer[] = [];
     let stderr = "";
     child.stderr.setEncoding("utf8");
+    let outputBytes = 0;
+    let exceeded = false;
+    const accept = (chunk: Buffer | string): boolean => {
+      if (exceeded) return false;
+      outputBytes += Buffer.byteLength(chunk);
+      if (limits && outputBytes > limits.maxOutputBytes) {
+        exceeded = true;
+        // Only read-only callers supply a limit. Wait for close before rejecting
+        // so shutdown and admission accounting retain ownership of the child.
+        child.kill("SIGKILL");
+        return false;
+      }
+      return true;
+    };
     child.stdout.on("data", (chunk: Buffer) => {
-      stdoutChunks.push(chunk);
+      if (accept(chunk)) stdoutChunks.push(chunk);
     });
     child.stderr.on("data", (chunk) => {
-      stderr += chunk;
+      if (accept(chunk)) stderr += chunk;
     });
     child.on("error", reject);
     child.on("close", (code) => {
+      if (exceeded) {
+        reject(new ProcessOutputLimitError());
+        return;
+      }
       const stdoutBytes = Buffer.concat(stdoutChunks);
       const result = {
         stdout: stdoutBytes.toString("utf8"),
@@ -95,5 +124,5 @@ export function run(
     });
   });
 }
-export const jj = (cwd: string, args: string[]) =>
-  run("jj", ["--no-pager", "--color=never", ...args], cwd);
+export const jj = (cwd: string, args: string[], limits?: ProcessLimits) =>
+  run("jj", ["--no-pager", "--color=never", ...args], cwd, limits);
