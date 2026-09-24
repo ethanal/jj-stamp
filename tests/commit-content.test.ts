@@ -271,10 +271,12 @@ test("bounded read lane is independent in both directions, timing contexts are i
   await Promise.all(reads);
   await drain;
   assert.equal(records.filter((r) => r.name === "commit").length, 18);
-  assert.ok(
+  assert.equal(
     records
       .filter((r) => r.name === "commit")
-      .every((r) => r.subprocesses.length === 3),
+      .reduce((sum, r) => sum + r.subprocesses.length, 0),
+    3,
+    "one initiator owns all deduplicated descriptor subprocesses",
   );
   assert.equal(records.find((r) => r.name === "state")!.subprocesses.length, 7);
 
@@ -511,4 +513,141 @@ test("real jj large-file capture is bounded even when its changed patch is small
   await service.drain();
   assert.equal(await op(root), before);
   assert.equal((await service.getState()).source.commitId, commitId);
+});
+
+test("warm immutable file reads only show file sides; callers cannot poison descriptor membership", async (t) => {
+  const { root, commitId } = await fixture(t);
+  const calls: string[][] = [];
+  const service = new ReviewService({
+    repoPath: root,
+    jjRunner: async (cwd, args, limits) => {
+      calls.push(args);
+      return jj(cwd, args, limits);
+    },
+  });
+  const state = await service.getState();
+  calls.length = 0;
+  const content = await service.getCommit({ commitId });
+  assert.equal(calls.length, 3);
+  const expected = structuredClone(content);
+  content.repo.path = "/invalid";
+  content.baseCommitId = "0".repeat(40);
+  content.files[0].path = "injected.txt";
+  content.files[0].hunks[0].rows[0].raw = "+poisoned";
+  content.files.length = 1;
+  assert.deepEqual(await service.getCommit({ commitId }), expected);
+  await assert.rejects(
+    service.getCommitFile({ commitId, path: "injected.txt" }),
+    code("INVALID_PATH"),
+  );
+  calls.length = 0;
+  for (let i = 0; i < 2; i++)
+    for (const file of expected.files)
+      await service.getCommitFile({ commitId, path: file.path });
+  assert.equal(calls.length, expected.files.length * 4);
+  assert.ok(calls.every((args) => args[0] === "file" && args[1] === "show"));
+  assert.deepEqual(await service.getState(), state);
+});
+
+test("descriptor inflight errors are not cached and the next read retries", async (t) => {
+  const { root, commitId } = await fixture(t);
+  const entered = deferred(),
+    release = deferred();
+  let diffs = 0;
+  const service = new ReviewService({
+    repoPath: root,
+    jjRunner: async (cwd, args, limits) => {
+      if (limits && args[0] === "diff") {
+        diffs++;
+        if (diffs === 1) {
+          entered.resolve();
+          await release.promise;
+          throw new Error("transient read failure");
+        }
+      }
+      return jj(cwd, args, limits);
+    },
+  });
+  const first = service.getCommit({ commitId });
+  const second = service.getCommit({ commitId });
+  const failures = Promise.all([
+    assert.rejects(first, /transient read failure/),
+    assert.rejects(second, /transient read failure/),
+  ]);
+  await entered.promise;
+  release.resolve();
+  await failures;
+  assert.equal(diffs, 1);
+  assert.equal((await service.getCommit({ commitId })).commitId, commitId);
+  assert.equal(diffs, 2);
+  await service.getCommit({ commitId });
+  assert.equal(diffs, 2);
+});
+
+test("display descriptor LRU enforces both ten-entry and eight-MiB budgets without retaining oversized entries", async (t) => {
+  const { root } = await fixture(t);
+  const calls = new Map<string, number>();
+  const ids = Array.from({ length: 15 }, (_, i) =>
+    (i + 1).toString(16).padStart(40, "0"),
+  );
+  let rowLength = 1;
+  const service = new ReviewService({
+    repoPath: root,
+    jjRunner: async (_cwd, args) => {
+      const id = args[args.indexOf("-r") + 1];
+      if (args[0] === "diff") calls.set(id, (calls.get(id) ?? 0) + 1);
+      return {
+        stderr: "",
+        stdout:
+          args[0] === "root"
+            ? root
+            : args[0] === "log"
+              ? `${id}\n${"f".repeat(40)}`
+              : `diff --git a/file.txt b/file.txt\nnew file mode 100644\n--- /dev/null\n+++ b/file.txt\n@@ -0,0 +1 @@\n+${"x".repeat(rowLength)}\n`,
+      };
+    },
+  });
+  for (const commitId of ids.slice(0, 10))
+    await service.getCommit({ commitId });
+  await service.getCommit({ commitId: ids[0] }); // touch the oldest
+  await service.getCommit({ commitId: ids[10] });
+  await service.getCommit({ commitId: ids[0] });
+  assert.equal(calls.get(ids[0]), 1);
+  await service.getCommit({ commitId: ids[1] });
+  assert.equal(
+    calls.get(ids[1]),
+    2,
+    "eleventh entry evicted the least-recently used",
+  );
+
+  rowLength = 600000; // Each descriptor estimates >2 MiB; fewer than ten fit.
+  for (const commitId of ids.slice(11)) await service.getCommit({ commitId });
+  await service.getCommit({ commitId: ids[11] });
+  assert.equal(
+    calls.get(ids[11]),
+    2,
+    "byte budget evicted a large descriptor before the entry limit",
+  );
+  await service.getCommit({ commitId: ids[14] });
+  assert.equal(
+    calls.get(ids[14]),
+    1,
+    "recent retained descriptor remains warm",
+  );
+
+  rowLength = 2096900; // Fits the raw diff limit, exceeds estimated retention budget.
+  const oversized = "e".repeat(40);
+  await service.getCommit({ commitId: oversized });
+  await service.getCommit({ commitId: oversized });
+  assert.equal(
+    calls.get(oversized),
+    2,
+    "oversized descriptor was never retained",
+  );
+  await service.getCommit({ commitId: ids[14] });
+  assert.equal(
+    calls.get(ids[14]),
+    1,
+    "oversized descriptor did not evict useful cache entries",
+  );
 });

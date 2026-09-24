@@ -206,6 +206,16 @@ export class ReviewService {
   private queue: Promise<unknown> = Promise.resolve();
   private serialPending = 0;
   private readonly displayReads = new ReadLane();
+  // Display-only descriptors, entirely separate from mutation/state demand data.
+  private readonly displayContentCache = new Map<
+    string,
+    { content: CommitContent; bytes: number }
+  >();
+  private displayContentBytes = 0;
+  private readonly displayContentInflight = new Map<
+    string,
+    Promise<CommitContent>
+  >();
   private activePath?: string;
   private history: SessionHistory = {};
   private readonly plans = new Map<string, Plan>();
@@ -935,8 +945,54 @@ export class ReviewService {
         "Choose a supported repository-relative changed file.",
       );
   }
-  /** Deliberately bypass init(), live views and the selected source's demand cache. */
+  /** Called only inside the bounded read lane; shared work keeps its initiator's timing context. */
   private async pinnedContent(commitId: string): Promise<CommitContent> {
+    const cached = this.displayContentCache.get(commitId);
+    if (cached) {
+      this.displayContentCache.delete(commitId);
+      this.displayContentCache.set(commitId, cached);
+      return cached.content;
+    }
+    const inflight = this.displayContentInflight.get(commitId);
+    if (inflight) return inflight;
+    const pending = this.loadPinnedContent(commitId)
+      .then((content) => {
+        const serialized = JSON.stringify(content);
+        if (Buffer.byteLength(serialized) > 16 * 1024 * 1024)
+          throw new ProcessOutputLimitError();
+        // Conservative retained-byte estimate: UTF-16 serialization plus object/array
+        // overhead. Measure BEFORE retaining or evicting; oversized entries bypass.
+        let bytes = serialized.length * 2 + 256;
+        for (const file of content.files) {
+          bytes += 256;
+          for (const hunk of file.hunks) bytes += 128 + hunk.rows.length * 96;
+        }
+        if (
+          bytes <= 8 * 1024 * 1024 &&
+          content.files.every((file) => !file.unsupported)
+        ) {
+          while (
+            this.displayContentCache.size >= 10 ||
+            this.displayContentBytes + bytes > 8 * 1024 * 1024
+          ) {
+            const oldest = this.displayContentCache.keys().next().value!;
+            this.displayContentBytes -=
+              this.displayContentCache.get(oldest)!.bytes;
+            this.displayContentCache.delete(oldest);
+          }
+          this.displayContentCache.set(commitId, { content, bytes });
+          this.displayContentBytes += bytes;
+        }
+        return content;
+      })
+      .finally(() => {
+        this.displayContentInflight.delete(commitId);
+      });
+    this.displayContentInflight.set(commitId, pending);
+    return pending;
+  }
+  /** Deliberately bypass init(), live views and the selected source's demand cache. */
+  private async loadPinnedContent(commitId: string): Promise<CommitContent> {
     const root = await realpath(
       (await this.pinnedRead(this.repoPath, ["root"], 64 * 1024)).stdout.trim(),
     );
@@ -1023,7 +1079,7 @@ export class ReviewService {
   getCommit(input: { commitId: string }): Promise<CommitContent> {
     return this.display("commit", async () => {
       this.validateCommitInput(input);
-      return this.pinnedContent(input.commitId);
+      return structuredClone(await this.pinnedContent(input.commitId));
     });
   }
   getCommitFile(input: {
