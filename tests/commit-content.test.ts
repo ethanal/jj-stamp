@@ -594,8 +594,11 @@ test("display descriptor LRU enforces both ten-entry and eight-MiB budgets witho
   const service = new ReviewService({
     repoPath: root,
     jjRunner: async (_cwd, args) => {
-      const id = args[args.indexOf("-r") + 1];
-      if (args[0] === "diff") calls.set(id, (calls.get(id) ?? 0) + 1);
+      const expression = args[args.indexOf("-r") + 1];
+      const id = /^commit_id\("([0-9a-f]+)"\)$/.exec(expression)?.[1];
+      if (args.includes("-r"))
+        assert.ok(id, "explicit immutable revision function required");
+      if (args[0] === "diff") calls.set(id!, (calls.get(id!) ?? 0) + 1);
       return {
         stderr: "",
         stdout:
@@ -649,5 +652,82 @@ test("display descriptor LRU enforces both ten-entry and eight-MiB budgets witho
     calls.get(ids[14]),
     1,
     "oversized descriptor did not evict useful cache entries",
+  );
+});
+
+test("hex-named source and parent bookmarks cannot redirect cold or cached immutable reads", async (t) => {
+  const { root, commitId } = await fixture(t);
+  const warm = new ReviewService({ repoPath: root });
+  const content = await warm.getCommit({ commitId });
+  const filePath = content.files[0].path;
+  const expected = await warm.getCommitFile({ commitId, path: filePath });
+  assert.notEqual(expected.oldFile!.contents, expected.newFile!.contents);
+  await jj(root, [
+    "bookmark",
+    "create",
+    content.baseCommitId!,
+    "-r",
+    `commit_id("${commitId}")`,
+  ]);
+  await jj(root, [
+    "bookmark",
+    "create",
+    commitId,
+    "-r",
+    `commit_id("${content.baseCommitId}")`,
+  ]);
+  for (const service of [warm, new ReviewService({ repoPath: root })]) {
+    assert.deepEqual(await service.getCommit({ commitId }), content);
+    assert.deepEqual(
+      await service.getCommitFile({ commitId, path: filePath }),
+      expected,
+    );
+  }
+});
+
+test("source bookmark introduced between metadata and diff cannot poison the descriptor cache", async (t) => {
+  const { root, commitId } = await fixture(t);
+  const baseline = new ReviewService({ repoPath: root });
+  const expected = await baseline.getCommit({ commitId });
+  const filePath = expected.files[0].path;
+  const expectedFile = await baseline.getCommitFile({
+    commitId,
+    path: filePath,
+  });
+  let injected = false;
+  const calls: string[][] = [];
+  const service = new ReviewService({
+    repoPath: root,
+    jjRunner: async (cwd, args, limits) => {
+      calls.push(args);
+      if (args[0] === "diff" && !injected) {
+        injected = true;
+        await jj(root, [
+          "bookmark",
+          "create",
+          commitId,
+          "-r",
+          `commit_id("${expected.baseCommitId}")`,
+        ]);
+      }
+      return jj(cwd, args, limits);
+    },
+  });
+  assert.deepEqual(await service.getCommit({ commitId }), expected);
+  assert.ok(injected);
+  assert.deepEqual(await service.getCommit({ commitId }), expected);
+  assert.deepEqual(
+    await service.getCommitFile({ commitId, path: filePath }),
+    expectedFile,
+  );
+  assert.equal(calls.filter((args) => args[0] === "diff").length, 1);
+  for (const args of calls.filter((args) => args.includes("-r")))
+    assert.match(
+      args[args.indexOf("-r") + 1],
+      /^commit_id\("(?:[0-9a-f]{40}|[0-9a-f]{64})"\)$/,
+    );
+  assert.deepEqual(
+    await new ReviewService({ repoPath: root }).getCommit({ commitId }),
+    expected,
   );
 });

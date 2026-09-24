@@ -991,6 +991,10 @@ export class ReviewService {
     this.displayContentInflight.set(commitId, pending);
     return pending;
   }
+  private commitRevset(commitId: string): string {
+    // Bare hashes are symbols: a same-named bookmark takes precedence in jj.
+    return `commit_id(${JSON.stringify(commitId)})`;
+  }
   /** Deliberately bypass init(), live views and the selected source's demand cache. */
   private async loadPinnedContent(commitId: string): Promise<CommitContent> {
     const root = await realpath(
@@ -1007,7 +1011,7 @@ export class ReviewService {
             "--config",
             "ui.log-word-wrap=false",
             "-r",
-            commitId,
+            this.commitRevset(commitId),
             "-T",
             'commit_id ++ "\\n" ++ parents.map(|p| p.commit_id()).join("\\n")',
           ],
@@ -1042,7 +1046,7 @@ export class ReviewService {
     const diff = (
       await this.pinnedRead(
         root,
-        ["diff", "--git", "-r", commitId],
+        ["diff", "--git", "-r", this.commitRevset(commitId)],
         2 * 1024 * 1024,
       )
     ).stdout;
@@ -1111,7 +1115,7 @@ export class ReviewService {
             "file",
             "show",
             "-r",
-            revision,
+            this.commitRevset(revision),
             "--",
             `root-file:${JSON.stringify(file.path)}`,
           ],
