@@ -171,6 +171,43 @@ await expect(
   page.getByRole("button", { name: "Review change change-13", exact: true }),
 ).toHaveCount(0);
 assert.equal(contents.filter((id) => id === revisions[2].commitId).length, 1);
+
+// A cold tab must still navigate while speculative file I/O is indefinitely
+// slow. Hold the nearest background file, not the selected commit's demand read.
+let releaseBackground!: () => void;
+let capturedBackground!: () => void;
+const backgroundGate = new Promise<void>((resolve) => {
+  releaseBackground = resolve;
+});
+const backgroundCaptured = new Promise<void>((resolve) => {
+  capturedBackground = resolve;
+});
+let backgroundHeld = false;
+await page.route("**/api/commit-file", async (route) => {
+  if (
+    !backgroundHeld &&
+    route.request().postDataJSON().commitId !== revisions[2].commitId
+  ) {
+    backgroundHeld = true;
+    capturedBackground();
+    await backgroundGate;
+  }
+  await route.continue();
+});
+await page.reload();
+await backgroundCaptured;
+await choose(1);
+await expect(
+  page.getByRole("button", { name: "refresh r", exact: true }),
+).toBeEnabled();
+await expect(page.locator(".code-surface")).toContainText("new 1");
+assert.equal(
+  selected,
+  1,
+  "live revision selection did not wait for background file I/O",
+);
+releaseBackground();
+await page.waitForLoadState("networkidle");
 assert.deepEqual(errors, []);
 console.log(
   "Prefetch: nearest 10, commit reuse, immediate read-only previews, coalesced validated navigation passed.",
