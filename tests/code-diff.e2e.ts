@@ -227,7 +227,8 @@ try {
       "pointer",
     );
     await page.locator("[data-expand-up]").first().click();
-    await expect(page.locator("#file-loads")).toHaveText("3");
+    // Metadata-only refresh must not re-read unchanged pinned contents.
+    await expect(page.locator("#file-loads")).toHaveText("2");
     await expect(line(20)).toBeVisible();
     await page.evaluate(() => {
       (

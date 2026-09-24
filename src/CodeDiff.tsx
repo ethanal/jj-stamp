@@ -16,13 +16,15 @@ import {
   type FileDiffLoadedFiles,
   type SelectedLineRange,
 } from "@pierre/diffs";
+import { diffVirtualMetrics } from "./DiffRuntime";
 import type { DiffFile, Selections } from "./types";
 import {
-  inferHunkContexts,
+  inferCachedHunkContexts,
+  peekCachedHunkContexts,
   supportsHunkContext,
   type HunkContext,
-  type HunkScope,
-} from "./hunk-context";
+} from "./hunk-context-client";
+import type { HunkScope } from "./hunk-context";
 import {
   selectionAnchor,
   selectionFromRange,
@@ -226,6 +228,7 @@ class StableDiffViewport extends Component<{
 export function CodeDiff({
   file,
   version,
+  contentIdentity,
   style,
   colorScheme = "dark",
   selections,
@@ -239,6 +242,8 @@ export function CodeDiff({
 }: {
   file: DiffFile;
   version: string;
+  /** Repository + immutable full commit ID, independent of live authorization. */
+  contentIdentity: string;
   style: "unified" | "split";
   colorScheme?: ColorScheme;
   selections: Selections;
@@ -254,7 +259,7 @@ export function CodeDiff({
   loadFile: (path: string, version: string) => Promise<FileDiffLoadedFiles>;
 }) {
   const root = useRef<HTMLDivElement>(null);
-  const fileLoadKey = `${version}\u0000${file.path}`;
+  const fileLoadKey = `${contentIdentity}\u0000${file.path}`;
   const contextLoadKey = `${fileLoadKey}\u0000${file.patch}`;
   const [hydratedHunkContexts, setHydratedHunkContexts] = useState<{
     key: string;
@@ -429,6 +434,10 @@ export function CodeDiff({
   }, []);
   useLayoutEffect(paint, [paint, selections, file, style, range, hunkContexts]);
   const getLoadedFile = useCallback(() => {
+    if (current.current.contextDisabled)
+      return Promise.reject(
+        new Error("Wait for pending changes before loading context."),
+      );
     if (loadedFile.current?.key === fileLoadKey)
       return loadedFile.current.promise;
     const promise = loadFileRef.current(file.path, version).catch((error) => {
@@ -439,12 +448,19 @@ export function CodeDiff({
     return promise;
   }, [file.path, fileLoadKey, version]);
   const getLoadedContexts = useCallback(() => {
+    const cached = peekCachedHunkContexts(contextLoadKey, file.path);
+    if (cached) return Promise.resolve(cached);
     if (loadedContexts.current?.key === contextLoadKey)
       return loadedContexts.current.promise;
     const promise = getLoadedFile()
       .then(async (files) => {
         try {
-          return await inferHunkContexts(file.path, file.hunks, files);
+          return await inferCachedHunkContexts(
+            contextLoadKey,
+            file.path,
+            file.hunks,
+            files,
+          );
         } finally {
           if (loadedFile.current?.key === fileLoadKey)
             loadedFile.current = null;
@@ -459,7 +475,8 @@ export function CodeDiff({
     return promise;
   }, [contextLoadKey, file.hunks, file.path, fileLoadKey, getLoadedFile]);
   useEffect(() => {
-    if (!root.current || !supportsHunkContext(file.path)) return;
+    if (contextDisabled || !root.current || !supportsHunkContext(file.path))
+      return;
     let active = true;
     const load = () => {
       void getLoadedContexts()
@@ -488,12 +505,10 @@ export function CodeDiff({
       active = false;
       observer.disconnect();
     };
-  }, [contextLoadKey, file.path, getLoadedContexts]);
+  }, [contextLoadKey, contextDisabled, file.path, getLoadedContexts]);
   const fileDiff = useMemo(
-    () =>
-      parsePatchFiles(file.patch, `${file.path}:${file.patch}`, true)[0]
-        ?.files[0],
-    [file.patch, file.path],
+    () => parsePatchFiles(file.patch, contextLoadKey, true)[0]?.files[0],
+    [file.patch, contextLoadKey],
   );
   useEffect(() => () => stop.current?.(), []);
   useEffect(() => {
@@ -758,9 +773,13 @@ export function CodeDiff({
       loadDiffFiles: async () => {
         try {
           const files = await getLoadedFile();
-          void getLoadedContexts().then((contexts) =>
-            setHydratedHunkContexts({ key: contextLoadKey, contexts }),
-          );
+          void getLoadedContexts()
+            .then((contexts) =>
+              setHydratedHunkContexts({ key: contextLoadKey, contexts }),
+            )
+            .catch(() => {
+              /* Optional worker labels must not fail expansion. */
+            });
           return files;
         } catch (error) {
           onError((error as Error).message);
@@ -854,6 +873,7 @@ export function CodeDiff({
             key={file.patch}
             fileDiff={fileDiff}
             options={options}
+            metrics={diffVirtualMetrics}
             selectedLines={null}
           />
         )}

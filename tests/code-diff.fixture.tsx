@@ -125,6 +125,7 @@ function Fixture() {
         <CodeDiff
           file={makeFile(squashed)}
           version={String(epoch)}
+          contentIdentity={`fixture:${squashed ? "b" : "a"}`}
           style={style}
           colorScheme={theme}
           selections={selections}

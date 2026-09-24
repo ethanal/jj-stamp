@@ -33,13 +33,14 @@ const { page, url, errors } = fixture;
 // revision graph without requesting the logging-shaped compatibility URL.
 let blockedLogRequests = 0;
 const mutations: string[] = [];
-const rejectedReads: Array<{ path: string; code: string }> = [];
+const rejectedReads: Array<{ path: string; code: string; status: number }> = [];
 page.on("response", async (response) => {
-  if (response.status() === 409) {
+  if (response.status() === 409 || response.status() === 422) {
     const body = await response.json().catch(() => ({}));
     rejectedReads.push({
       path: new URL(response.url()).pathname,
       code: body.code,
+      status: response.status(),
     });
   }
 });
@@ -193,6 +194,8 @@ try {
     "true",
   );
   await reviewChange(initial.source.changeId).click();
+  // Cached content can appear before live selection validation finishes.
+  await expect(page.getByRole("button", { name: "refresh r" })).toBeEnabled();
   await expect(page.getByLabel("Current change ID")).toHaveAttribute(
     "title",
     initial.source.changeId,
@@ -999,22 +1002,30 @@ try {
   console.log(
     "✓ Missing pinned source identifies its full ID and permits explicit graph recovery without a loaded diff",
   );
+  await page.waitForLoadState("networkidle");
   assert(mutations.every((endpoint) => endpoint === "/api/squash-lines"));
-  // Fixture edits intentionally race outstanding read-only graph and optional
-  // Tree-sitter file-context reads. Any 409 must be one of those guards, never
-  // an unexpected mutation failure.
+  // Fixture edits intentionally race graph/state reads. Optional immutable
+  // prefetch may also encounter the deliberately unsupported merge fixture.
+  // Neither is an unexpected mutation failure.
   for (const rejected of rejectedReads)
     assert.ok(
       (rejected.path === "/api/graph" && rejected.code === "STALE_STATE") ||
         (rejected.path === "/api/file" && rejected.code === "STALE_STATE") ||
         (rejected.path === "/api/state" &&
-          rejected.code === "SOURCE_UNAVAILABLE"),
+          rejected.code === "SOURCE_UNAVAILABLE") ||
+        (rejected.status === 422 &&
+          ["/api/commit", "/api/commit-file"].includes(rejected.path) &&
+          rejected.code === "UNSUPPORTED_DIFF"),
       JSON.stringify(rejected),
     );
   if (rejectedReads.length) {
-    for (let i = 0; i < rejectedReads.length; i++) {
+    for (const rejected of rejectedReads) {
       const index = errors.findIndex((error) =>
-        error.includes("409 (Conflict)"),
+        error.includes(
+          rejected.status === 409
+            ? "409 (Conflict)"
+            : "422 (Unprocessable Entity)",
+        ),
       );
       if (index >= 0) errors.splice(index, 1);
     }

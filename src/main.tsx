@@ -17,6 +17,8 @@ import {
   specsForRefs,
   type RowRef,
 } from "./optimistic";
+import { ContentStore } from "./content-store";
+import { RevisionNavigation } from "./revision-navigation";
 import { SquashQueue } from "./squash-queue";
 import { api, errorMessage, errorDetails, type ErrorDetail } from "./api";
 import { useAppearancePreferences } from "./preferences";
@@ -38,8 +40,6 @@ import "@fontsource/ibm-plex-mono/500.css";
 import "@fontsource/ibm-plex-mono/700.css";
 import "./styles.css";
 
-const loadFile = (path: string, version: string) =>
-  api<FileDiffLoadedFiles>("file", { path, version });
 function readExpanded(side: "files" | "log"): boolean {
   try {
     return localStorage.getItem(`jj-stamp.${side}-expanded`) !== "false";
@@ -66,8 +66,40 @@ function App() {
       }),
   );
   const queued = useSyncExternalStore(queue.subscribe, queue.getSnapshot);
-  const state = queued.view;
-  const source = queued.confirmed?.source ?? state?.source;
+  // A pinned cached preview is display-only: never publish it to SquashQueue.
+  const [revisionPreview, setRevisionPreview] = useState<RepoState | null>(
+    null,
+  );
+  const state = revisionPreview ?? queued.view;
+  const source =
+    revisionPreview?.source ?? queued.confirmed?.source ?? state?.source;
+  const contentStore = useMemo(
+    () =>
+      queued.confirmed
+        ? new ContentStore(queued.confirmed.repo.path, {
+            loadCommit: (commitId) => api("commit", { commitId }),
+            loadFile: (commitId, path) =>
+              api("commit-file", { commitId, path }),
+          })
+        : null,
+    [queued.confirmed?.repo.path],
+  );
+  useEffect(() => () => contentStore?.dispose(), [contentStore]);
+  const loadFile = useCallback(
+    (path: string, version: string): Promise<FileDiffLoadedFiles> => {
+      if (!contentStore || !state || state.version !== version)
+        return Promise.reject(
+          new Error("The displayed revision changed; reopen its context."),
+        );
+      // Pierre's loader type excludes deleted sides; its renderer never hydrates
+      // new/deleted patches. Scope inference explicitly handles either null side.
+      return contentStore.getFile(
+        state.source.commitId,
+        path,
+      ) as Promise<FileDiffLoadedFiles>;
+    },
+    [contentStore, state?.source.commitId, state?.version],
+  );
   useEffect(() => {
     document.title = revisionPageTitle(source, state?.repo.path);
   }, [
@@ -81,6 +113,16 @@ function App() {
   const [picked, setPicked] = useState<RowRef[]>([]);
   const [dragging, setDragging] = useState(false);
   const [busy, setBusy] = useState("");
+  const busyRef = useRef("");
+  busyRef.current = busy;
+  const [visible, setVisible] = useState(
+    document.visibilityState === "visible",
+  );
+  useEffect(() => {
+    const update = () => setVisible(document.visibilityState === "visible");
+    document.addEventListener("visibilitychange", update);
+    return () => document.removeEventListener("visibilitychange", update);
+  }, []);
   const [localError, setLocalError] = useState<{
     message: string;
     details: ErrorDetail[];
@@ -98,8 +140,31 @@ function App() {
   const [notice, setNotice] = useState("");
   const [log, setLog] = useState<LogRow[]>([]);
   const [logLoading, setLogLoading] = useState(false);
+  useLayoutEffect(() => {
+    if (!contentStore) return;
+    contentStore.setPaused(
+      !visible ||
+        !!busy ||
+        !!queued.pending ||
+        queued.recovering ||
+        queued.halted,
+    );
+    if (queued.confirmed) contentStore.seed(queued.confirmed);
+    contentStore.setCandidates(log, source?.commitId ?? "");
+  }, [
+    contentStore,
+    queued.confirmed,
+    log,
+    source?.commitId,
+    visible,
+    busy,
+    queued.pending,
+    queued.recovering,
+    queued.halted,
+  ]);
   const logOperation = useRef<string | undefined>(undefined);
   const logVersion = useRef<string | undefined>(undefined);
+  const reuseGraphVersion = useRef<string | undefined>(undefined);
   const [graphRefresh, setGraphRefresh] = useState(0);
   const [showFiles, setShowFiles] = useState(() => readExpanded("files"));
   const [showLog, setShowLog] = useState(() => readExpanded("log"));
@@ -162,6 +227,7 @@ function App() {
   }, []);
   const replace = useCallback(
     (next: RepoState) => {
+      setRevisionPreview(null);
       queue.replace(next);
       clear();
       setActivePath((current) =>
@@ -185,6 +251,7 @@ function App() {
       lock.current = true;
       setBusy("refreshing");
       if (!automatic) {
+        reuseGraphVersion.current = undefined;
         setError("");
         setNotice("");
       }
@@ -196,6 +263,7 @@ function App() {
           replace(next);
       } catch (error) {
         setError(error);
+        reuseGraphVersion.current = undefined;
         setGraphRefresh((value) => value + 1);
       } finally {
         lock.current = false;
@@ -274,9 +342,17 @@ function App() {
       !showLog ||
       queued.pending ||
       queued.recovering ||
+      busy === "switching change" ||
       (!queued.confirmed && !graphRefresh)
     )
       return;
+    // A validated selection at the same operation changes the authorization
+    // token, not the already-rendered graph. Explicit refresh still re-reads it.
+    if (reuseGraphVersion.current === queued.confirmed?.version && log.length) {
+      logVersion.current = queued.confirmed?.version;
+      setLogLoading(false);
+      return;
+    }
     let cancelled = false;
     logVersion.current = undefined;
     setLogLoading(true);
@@ -311,6 +387,7 @@ function App() {
     queued.recovering,
     showLog,
     graphRefresh,
+    busy === "switching change",
   ]);
   useEffect(() => {
     if (queued.halted) clear();
@@ -329,7 +406,9 @@ function App() {
       // A read-only refresh need not interrupt browsing the current files.
       // Squash remains guarded by the operation lock until it completes.
       if (
-        (lock.current && busy !== "refreshing") ||
+        (lock.current &&
+          busy !== "refreshing" &&
+          busy !== "switching change") ||
         queue.getSnapshot().recovering
       )
         return;
@@ -417,36 +496,105 @@ function App() {
       setBusy("");
     }
   }, [queue, dragging, replace]);
+  const navigationIntent = useRef(0);
+  const navigationCallbacks = useRef({
+    onState: (_next: RepoState) => {},
+    onIntent: (_changeId: string) => {},
+    onError: (_error: unknown) => {},
+  });
+  navigationCallbacks.current = {
+    onState: (next) => {
+      navigationIntent.current++;
+      const previous = queue.getSnapshot().confirmed;
+      if (
+        previous?.operation === next.operation &&
+        logOperation.current === next.operation &&
+        log.length
+      )
+        reuseGraphVersion.current = next.version;
+      logVersion.current = next.version;
+      replace(next);
+      setActivePath(next.files[0]?.path ?? "");
+      scroll.current?.scrollTo(0, 0);
+    },
+    onIntent: (changeId) => {
+      const intent = ++navigationIntent.current;
+      clear();
+      setError("");
+      const revision = log.find(
+        (row) => row.revision?.changeId === changeId,
+      )?.revision;
+      if (!revision || !contentStore) return;
+      // A miss keeps the last useful view while the live selection loads. Never
+      // fetch a speculative preview ahead of the user's actual selection POST.
+      void contentStore
+        .getCommit(revision.commitId, false)
+        .then((cached) => {
+          if (
+            !cached ||
+            navigationIntent.current !== intent ||
+            busyRef.current !== "switching change"
+          )
+            return;
+          const confirmed = queue.getSnapshot().confirmed;
+          if (!confirmed) return;
+          void contentStore.getCommit(revision.commitId).catch(() => {}); // demand promotion
+          setRevisionPreview({
+            ...confirmed,
+            source: revision,
+            files: cached.files,
+            parent: null,
+            targets: [],
+            version: `preview:${revision.commitId}`,
+            operation: "",
+            canUndo: false,
+            squashUnavailable:
+              "Validating revision… Browsing cached content; squash is disabled.",
+          });
+          setActivePath(cached.files[0]?.path ?? "");
+          scroll.current?.scrollTo(0, 0);
+        })
+        .catch(() => {
+          /* A cache miss cannot fail revision selection. */
+        });
+    },
+    onError: (error) => {
+      navigationIntent.current++;
+      setRevisionPreview(null);
+      setError(error);
+      reuseGraphVersion.current = undefined;
+      setGraphRefresh((value) => value + 1);
+    },
+  };
+  const [navigation] = useState(
+    () =>
+      new RevisionNavigation({
+        select: (version, changeId) => api("revision", { version, changeId }),
+        onState: (next) => navigationCallbacks.current.onState(next),
+        onIntent: (changeId) => navigationCallbacks.current.onIntent(changeId),
+        onError: (error) => navigationCallbacks.current.onError(error),
+        onBusy: (value) => {
+          lock.current = value;
+          busyRef.current = value ? "switching change" : "";
+          setBusy(busyRef.current);
+        },
+      }),
+  );
+  useEffect(() => () => navigation.dispose(), [navigation]);
   const selectRevision = useCallback(
-    async (changeId: string) => {
+    (changeId: string) => {
       const current = queue.getSnapshot();
       if (
-        lock.current ||
+        (lock.current && busyRef.current !== "switching change") ||
         dragging ||
         current.pending ||
         current.recovering ||
         !logVersion.current
       )
         return;
-      lock.current = true;
-      setBusy("switching change");
-      setError("");
-      try {
-        const result = await api<{ state: RepoState }>("revision", {
-          version: logVersion.current,
-          changeId,
-        });
-        replace(result.state);
-        setActivePath(result.state.files[0]?.path ?? "");
-        scroll.current?.scrollTo(0, 0);
-      } catch (error) {
-        setError(error);
-      } finally {
-        lock.current = false;
-        setBusy("");
-      }
+      navigation.request(changeId, logVersion.current);
     },
-    [queue, dragging, replace],
+    [queue, dragging, navigation],
   );
   useEffect(() => {
     const key = (event: KeyboardEvent) => {
@@ -564,7 +712,9 @@ function App() {
           width={filesWidth}
           resizeDisabled={dragging}
           navigationDisabled={
-            dragging || queued.recovering || (!!busy && busy !== "refreshing")
+            dragging ||
+            queued.recovering ||
+            (!!busy && busy !== "refreshing" && busy !== "switching change")
           }
           onResize={setFilesWidth}
           onToggle={() => setShowFiles((value) => !value)}
@@ -574,7 +724,11 @@ function App() {
           state={state}
           source={source}
           file={file}
-          renderVersion={queued.confirmed?.version ?? state?.version ?? ""}
+          renderVersion={state?.version ?? ""}
+          contentIdentity={JSON.stringify([
+            state?.repo.path,
+            state?.source.commitId,
+          ])}
           fileView={fileView}
           style={style}
           colorScheme={colorScheme}
@@ -612,9 +766,11 @@ function App() {
           expanded={showLog}
           width={logWidth}
           pending={queued.pending}
-          loading={logLoading}
+          loading={busy === "switching change" ? false : logLoading}
           dragging={dragging}
-          idleActionDisabled={idleActionDisabled}
+          idleActionDisabled={
+            busy === "switching change" ? false : idleActionDisabled
+          }
           hasVersion={!!logVersion.current}
           onResize={setLogWidth}
           onToggle={() => setShowLog((value) => !value)}

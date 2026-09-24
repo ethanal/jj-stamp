@@ -261,6 +261,15 @@ try {
 
   // Shift on another file must not extend the old file's range. If line 80's
   // anchor leaked, this click would select every beta change from 20 through 80.
+  // Scroll like a user: virtualized offscreen rows do not exist for Playwright
+  // to auto-scroll to. Scrolling (unlike sidebar navigation) retains selection.
+  await viewport.evaluate((element, path) => {
+    const target = element.querySelector<HTMLElement>(
+      `[data-file-path="${path}"]`,
+    )!;
+    element.scrollTop +=
+      target.getBoundingClientRect().top - element.getBoundingClientRect().top;
+  }, secondPath);
   await addition(secondPath, 20).click({ modifiers: ["Shift"] });
   await expect(page.getByRole("status")).toContainText(
     "1 changed line selected",
@@ -282,10 +291,8 @@ try {
   );
   await allFiles.click();
   await expect(page.locator(".file-diff-section")).toHaveCount(3);
-  // Both remounted renderers must finish expanding before checking the scroll
-  // result: the first file growing asynchronously must not push the active
-  // second file back out of view.
-  await expect(addition(firstPath, 10)).toBeAttached();
+  // Offscreen files retain measured height, not their full row DOM. The active
+  // file must mount in place without being pushed out by background rendering.
   await expect(addition(secondPath, 20)).toBeAttached();
   await expect
     .poll(() =>
