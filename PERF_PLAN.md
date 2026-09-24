@@ -66,10 +66,14 @@ never publish current eligibility or replace those checks. Drain it on shutdown.
 Do not parallelize existing stateful requests wholesale.
 
 Use shared browser in-memory caches with in-flight deduplication and byte-budgeted
-LRU eviction. Key by backend-supplied repository identity, full commit/base
-identity, path, and representation version as appropriate—not change ID,
-workspace path alone, or the live operation token. Invalidate derived parser
-results by parser/schema version. Preserve absent-versus-empty file semantics.
+LRU eviction. All immutable-content and derived-result cache keys must be based
+on full commit IDs, never change IDs. Namespace by backend-supplied repository
+identity, and include path, base commit ID, and representation version where
+appropriate. File-side caches use that side's owning commit ID; diff caches use
+the source commit and pinned base identity. Workspace paths and live operation
+tokens are not substitutes for commit identity. Preserve absent-versus-empty
+file semantics. Refreshing metadata or switching the selected change must not
+invalidate content for unchanged commit IDs.
 
 Optimistic squash output must have a distinct identity: never pair a locally
 modified patch with cached pre-squash file sides. Disable context reads there
@@ -79,10 +83,22 @@ read and validate their pinned inputs; display caches do not authorize writes.
 ### 3. Keep the browser responsive
 
 Move scope parsing to a bounded worker, reuse grammar initialization, and cache
-its derived results. Render the diff first; optional labels/highlighting may
-arrive later. Reject obsolete worker results after navigation or a rewrite.
-Profile patch parsing/highlighting separately and move CPU work only where it
-helps; account for worker message-copy and retained-memory costs.
+its derived results across component unmounts, navigation, and metadata refresh.
+Deduplicate in-flight parsing as well as file reads. Cache hunk-scope results by
+repository, source/base commit IDs, path, diff representation, and grammar/scope
+extractor version. A matching entry needs neither a file fetch nor another parse.
+Cache empty/no-confident-scope results too; transient failures remain retryable.
+
+Start with compact derived scope results rather than retaining every syntax tree.
+If profiling justifies reuse across different hunk queries, add a worker-local
+LRU of syntax trees or per-file scope indexes keyed by the file side's full commit
+ID, path, and grammar/extractor version. Release WASM trees explicitly on eviction;
+only serializable derived results are candidates for later persistent storage.
+
+Render the diff first; optional labels/highlighting may arrive later. Reject
+obsolete worker results after navigation or a rewrite. Profile patch parsing/
+highlighting separately and move CPU work only where it helps; account for worker
+message-copy and retained-memory costs.
 
 If traces justify it, lazily mount/window offscreen file diffs and graph rows,
 then address oversized individual diffs. Preserve file jump targets, scroll
@@ -96,22 +112,43 @@ switches; an aborted HTTP request does not undo a server-side selection. Only
 confirmed server responses establish the active mutation state. Background
 refresh must not replace content underneath an active selection.
 
-### 4. Budgeted prefetch, not preload-everything
+### 4. Prefetch up to 30 commits from the displayed jj log
+
+The candidate set is the commits included in the app's jj log, not all repository
+history and not just graph rows currently inside the viewport. Deduplicate by
+full commit ID and take at most 30, prioritizing closeness to the inspected
+commit. Initially define closeness as absolute distance in commit-row order,
+ignoring connector rows, with deterministic ties. If the inspected commit is
+filtered out of the log, serve it on demand and use log order for the candidates.
+The selected commit counts toward the cap when present in the log.
 
 Priority order:
 
 1. Explicit demand: selected/visible file and context expansion.
-2. Other changed files in the inspected commit, near the viewport first.
-3. Diffs for hovered/focused and nearby visible graph revisions.
-4. Remaining graph diffs opportunistically within byte/time/work limits.
-5. Full contents for likely-next revisions only when the budget allows.
+2. Diff and full changed-file contents for the inspected commit.
+3. Diff and full changed-file contents for each remaining candidate, nearest
+   commit first. Within a commit, fetch its diff before its file sides.
 
 “Full contents” means the old/new sides of changed supported files, not complete
-repository trees. Start with one speculative request at a time; tune from traces.
-Pause on hidden tabs and during foreground mutations; promote matching pending
-work on demand and drop obsolete queued jobs. Bound response sizes, cache bytes,
-and per-file parsing costs. Cancel reads where safe; never cancel/retry mutations.
-Prefetch failures are optional misses, not global review errors.
+repository trees. Both diffs and contents for the entire capped candidate set
+are first-sprint goals, not limited to likely-next commits. Hover/focus can promote
+an explicit demand without expanding the background candidate set.
+
+Recompute priorities on selection/log updates, but retain cached and in-flight
+work for unchanged commit IDs. No time-based or operation-token-based content
+refetch. A rewrite creates a new commit ID and therefore new work; change IDs
+are never used to decide content-cache reuse. Network
+reads are needed only for missing content (cold cache, eviction, explicit cache
+clear, incompatible representation, or retry after a failed fetch).
+
+Start with one speculative request at a time; tune from traces. Pause on hidden
+tabs and during foreground mutations; promote matching pending work on demand
+and drop obsolete queued jobs. Keep byte/response-size and per-file parsing
+limits alongside the 30-commit cap: commit count alone does not bound memory.
+If the candidate set exceeds the byte budget, prefer nearer commits and avoid
+repeatedly prefetching entries just evicted from the same candidate generation.
+Cancel reads where safe; never cancel/retry mutations. Prefetch failures are
+optional misses, not global review errors.
 
 Separate graph topology/content reuse from its fresh selection-authorization
 version. Avoid rebuilding an unchanged graph just because the user selected a
@@ -136,7 +173,10 @@ different node, without reusing stale operation/configuration/eligibility data.
 
 Add deterministic tests for cache identity/isolation, eviction/deduplication,
 rewrites with stable change IDs, stale worker/network results, optional prefetch
-failures, bounded scheduling and foreground priority. Exercise optimistic squash,
+failures, bounded scheduling and foreground priority. Assert the 30-commit cap,
+nearest-first ordering ignoring graph connectors, unchanged-commit reuse across
+log refresh/selection, no eviction/refetch loops, and scope-result reuse without
+reparsing. Exercise optimistic squash,
 undo, unsupported/large files, absent sides, graph recovery, rapid navigation,
 and multiple tabs sharing one selected revision. Keep all mutation race tests.
 
