@@ -112,15 +112,16 @@ switches; an aborted HTTP request does not undo a server-side selection. Only
 confirmed server responses establish the active mutation state. Background
 refresh must not replace content underneath an active selection.
 
-### 4. Prefetch up to 30 commits from the displayed jj log
+### 4. Prefetch up to 10 commits from the displayed jj log
 
 The candidate set is the commits included in the app's jj log, not all repository
 history and not just graph rows currently inside the viewport. Deduplicate by
-full commit ID and take at most 30, prioritizing closeness to the inspected
-commit. Initially define closeness as absolute distance in commit-row order,
-ignoring connector rows, with deterministic ties. If the inspected commit is
-filtered out of the log, serve it on demand and use log order for the candidates.
-The selected commit counts toward the cap when present in the log.
+full commit ID and take at most 10 speculative candidates, prioritizing closeness
+to the inspected commit. Already demand-cached commits need no speculative slot.
+Initially define closeness as absolute distance in commit-row order, ignoring
+connector rows, with deterministic ties. If the inspected commit is filtered out
+of the log, serve it on demand and use log order for the candidates. The currently
+inspected commit belongs to the browsing cache, not the 10 speculative slots.
 
 Priority order:
 
@@ -144,7 +145,7 @@ clear, incompatible representation, or retry after a failed fetch).
 Start with one speculative request at a time; tune from traces. Pause on hidden
 tabs and during foreground mutations; promote matching pending work on demand
 and drop obsolete queued jobs. Keep byte/response-size and per-file parsing
-limits alongside the 30-commit cap: commit count alone does not bound memory.
+limits alongside the 10-commit prefetch cap: commit count alone does not bound memory.
 If the candidate set exceeds the byte budget, prefer nearer commits and avoid
 repeatedly prefetching entries just evicted from the same candidate generation.
 Cancel reads where safe; never cancel/retry mutations. Prefetch failures are
@@ -159,11 +160,16 @@ different node, without reusing stale operation/configuration/eligibility data.
 Use one commit-keyed entry store with separate retention policies, not a single
 LRU that treats background fetches as user accesses:
 
-- Demand-used entries belong to a byte-bounded browsing LRU. Only actual user
-  use updates its recency. Prefetch probes, writes, and background parsing do not.
-- Speculative-only entries belong to a separately budgeted working set ranked
-  by distance in the displayed log. Prefetch cannot evict demand-used entries.
-  On user access, promote an entry into the browsing LRU without copying bytes.
+- Demand-used entries belong to a browsing LRU capped at 30 distinct commits,
+  including the currently inspected commit, with an additional byte budget.
+  Only actual user use updates recency. Prefetch probes, writes, and background
+  parsing do not.
+- Speculative-only entries belong to a separate working set capped at 10 distinct
+  commits, with its own byte budget, ranked by distance in the displayed log.
+  Prefetch cannot evict demand-used entries. On user access, promote an entry
+  into the browsing LRU without copying bytes or counting it in both pools.
+  These are commit counts, not file counts: up to 30 browsing plus 10 speculative
+  commits, subject to the byte limits.
 - Keep the currently displayed content referenced independently of eviction;
   account for its memory and reduce speculative capacity accordingly. Oversized
   demand content can be displayed without retaining it as a reusable cache entry.
@@ -209,7 +215,8 @@ and foreground use displacing speculative capacity without a refill loop.
 
 Add deterministic tests for cache identity/isolation, eviction/deduplication,
 rewrites with stable change IDs, stale worker/network results, optional prefetch
-failures, bounded scheduling and foreground priority. Assert the 30-commit cap,
+failures, bounded scheduling and foreground priority. Assert the separate
+10-commit prefetch and 30-commit browsing caps, promotion without double counting,
 nearest-first ordering ignoring graph connectors, unchanged-commit reuse across
 log refresh/selection, no eviction/refetch loops, and scope-result reuse without
 reparsing. Exercise optimistic squash,
