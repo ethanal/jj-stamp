@@ -558,7 +558,6 @@ export function RevisionGraph({
                           !row.mutable ||
                           idleActionDisabled ||
                           dragging ||
-                          loading ||
                           !hasVersion
                         }
                         onClick={() => onSelectRevision(row.revision!.changeId)}

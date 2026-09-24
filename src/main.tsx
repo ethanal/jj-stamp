@@ -164,6 +164,13 @@ function App() {
   ]);
   const logOperation = useRef<string | undefined>(undefined);
   const logVersion = useRef<string | undefined>(undefined);
+  const logRequest = useRef(0);
+  // Fresh state can authorize navigation through the existing graph while its
+  // replacement loads. A later graph response can also supply a recovery token
+  // when the selected source is unavailable and no fresh state can be loaded.
+  useLayoutEffect(() => {
+    if (queued.confirmed) logVersion.current = queued.confirmed.version;
+  }, [queued.confirmed?.version]);
   const [graphRefresh, setGraphRefresh] = useState(0);
   const [showFiles, setShowFiles] = useState(() => readExpanded("files"));
   const [showLog, setShowLog] = useState(() => readExpanded("log"));
@@ -346,7 +353,13 @@ function App() {
     // Graph aliases/configuration can change without a repository operation.
     // Revalidate graph metadata even when immutable content is already cached.
     let cancelled = false;
-    logVersion.current = undefined;
+    const request = ++logRequest.current;
+    const confirmedVersion = queued.confirmed?.version;
+    const isCurrent = () =>
+      !cancelled &&
+      request === logRequest.current &&
+      confirmedVersion === queue.getSnapshot().confirmed?.version;
+    // Keep existing rows and their usable authorization token during the read.
     setLogLoading(true);
     // Load immediately on startup/change selection. Only debounce after history
     // changes, so graph reads don't get ahead of a burst of queued squashes.
@@ -356,17 +369,17 @@ function App() {
     const timer = setTimeout(() => {
       api<{ version: string; rows: LogRow[] }>("graph")
         .then((result) => {
-          if (!cancelled) {
+          if (isCurrent()) {
             setLog(result.rows);
             logVersion.current = result.version;
             logOperation.current = operation;
           }
         })
         .catch((error) => {
-          if (!cancelled) setError(error);
+          if (isCurrent()) setError(error);
         })
         .finally(() => {
-          if (!cancelled) setLogLoading(false);
+          if (isCurrent()) setLogLoading(false);
         });
     }, delay);
     return () => {
@@ -499,10 +512,17 @@ function App() {
       navigationIntent.current++;
       logVersion.current = next.version;
       replace(next);
+      // Also restart an invalidated graph read when reselecting the same change
+      // leaves the confirmed version unchanged.
+      setGraphRefresh((value) => value + 1);
       setActivePath(next.files[0]?.path ?? "");
       scroll.current?.scrollTo(0, 0);
     },
     onIntent: (changeId) => {
+      // Invalidate outstanding graph responses synchronously, before React's
+      // effect cleanup. Neither stale rows/tokens nor late failures may win over
+      // a click, even when several stateful selections are coalesced.
+      logRequest.current++;
       const intent = ++navigationIntent.current;
       clear();
       setError("");

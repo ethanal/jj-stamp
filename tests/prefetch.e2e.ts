@@ -60,7 +60,7 @@ app.get("/api/graph", (_req, res) => {
       )
       .flatMap((revision) => [
         { graph: "│" },
-        { graph: "○ ", revision, mutable: true },
+        { graph: "○ ", revision, mutable: revision !== revisions[12] },
       ]),
   });
 });
@@ -208,7 +208,80 @@ assert.equal(
 );
 releaseBackground();
 await page.waitForLoadState("networkidle");
+
+// Keep navigating while old graph responses are delayed. A fresh /state token
+// must replace the prior graph's token, and stale completions cannot overwrite
+// a later selection or clear its graph's updating indicator.
+const graphGates = Array.from({ length: 2 }, () => {
+  let release!: () => void;
+  let captured!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const ready = new Promise<void>((resolve) => {
+    captured = resolve;
+  });
+  return { gate, ready, release, captured };
+});
+let heldGraphs = 0;
+await page.route("**/api/graph", async (route) => {
+  const index = heldGraphs++;
+  const response = await route.fetch();
+  if (index < graphGates.length) {
+    graphGates[index].captured();
+    await graphGates[index].gate;
+  }
+  if (index === 1) {
+    // This read is obsolete by the time it fails; don't show its error over the
+    // newer selected revision.
+    await route.fulfill({
+      status: 500,
+      contentType: "application/json",
+      body: JSON.stringify({ error: "Obsolete graph failure" }),
+    });
+  } else await route.fulfill({ response });
+});
+generation++;
+await page.getByRole("button", { name: "refresh r", exact: true }).click();
+await graphGates[0].ready;
+await expect(page.locator(".log-status")).toHaveText("updating…");
+await expect(
+  page.getByRole("button", { name: "Review change change-3", exact: true }),
+).toBeEnabled();
+await expect(
+  page.getByRole("button", { name: "Review change change-12", exact: true }),
+).toBeDisabled();
+await choose(3);
+await graphGates[1].ready;
+assert.deepEqual(selections.at(-1), {
+  changeId: revisions[3].changeId,
+  version: "version-1-2",
+});
+await expect(page.locator(".code-surface")).toContainText("new 3");
+const staleGraph = page.waitForResponse(
+  (response) =>
+    response.url().endsWith("/api/graph") && response.status() === 200,
+);
+graphGates[0].release();
+await staleGraph;
+// Give the obsolete response's .then/.finally time to run before checking it.
+await page.waitForTimeout(100);
+await expect(page.locator(".log-status")).toHaveText("updating…");
+await choose(4);
+await expect.poll(() => selected).toBe(4);
+await expect(
+  page.getByRole("button", { name: "refresh r", exact: true }),
+).toBeEnabled();
+assert.deepEqual(selections.at(-1), {
+  changeId: revisions[4].changeId,
+  version: "version-3-2",
+});
+graphGates[1].release();
+await page.waitForLoadState("networkidle");
+await expect(page.locator(".log-status")).toHaveText("");
+await expect(page.getByRole("alert")).toHaveCount(0);
+await expect(page.locator(".code-surface")).toContainText("new 4");
 assert.deepEqual(errors, []);
 console.log(
-  "Prefetch: nearest 10, commit reuse, immediate read-only previews, coalesced validated navigation passed.",
+  "Prefetch: nearest 10, commit reuse, read-only previews, coalesced navigation during stalled file/graph reads, and stale graph suppression passed.",
 );

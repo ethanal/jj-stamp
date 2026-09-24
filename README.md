@@ -136,8 +136,11 @@ loops. Source contents are cached **in memory only**, not localStorage or disk.
 A prefetched revision can appear immediately while its live selection validates.
 The viewer explicitly marks it as cached/pending and disables squash; it never
 becomes mutation authority. Rapid graph clicks coalesce to the latest unsent
-selection, with one stateful selection request at a time. Graph metadata is still
-revalidated, since graph configuration can change without a history operation.
+selection, with one stateful selection request at a time. Existing log entries
+remain clickable while the graph shows “updating…”; navigation uses the latest
+validated version, and obsolete graph responses cannot overwrite a newer
+selection. Graph metadata is still revalidated, since graph configuration can
+change without a history operation.
 
 Tree-sitter scope extraction runs in a bounded worker and caches compact scope
 results across file revisits. Syntax highlighting uses at most two workers, and
