@@ -59,6 +59,7 @@ const settle = async () => {
 function fixture(
   overrides: Partial<ContentLoaders> = {},
   limits: Partial<ContentStoreLimits> = {},
+  paused = false,
 ) {
   const calls: string[] = [];
   const store = new ContentStore(
@@ -75,6 +76,7 @@ function fixture(
     },
     limits,
   );
+  if (!paused) store.setPaused(false);
   return { store, calls };
 }
 
@@ -391,7 +393,7 @@ test("full file reads deduplicate, preserve null versus empty sides, and survive
   const pending = deferred<FileContents>();
   const { store, calls } = fixture({ loadFile: () => pending.promise });
   store.seed(state("root", [file()]));
-  assert.equal((await store.getCommit("root")).baseCommitId, null);
+  assert.equal((await store.getCommit("root")).baseCommitId, undefined);
   const a = store.getFile("root", "one.ts");
   const b = store.getFile("root", "one.ts");
   assert.strictEqual(a, b);
@@ -616,4 +618,97 @@ test("full-file speculative I/O is adopted by demand and survives candidate remo
   assert.strictEqual(await foreground, value);
   assert.strictEqual(await store.getFile("a", "one.ts"), value);
   assert.deepEqual(calls, ["diff:a", "file:a:one.ts"]);
+});
+
+test("stores start paused; explicit file demand works while paused and active remaining files warm without a log", async () => {
+  const { store, calls } = fixture({}, {}, true);
+  assert.equal(store.snapshot().paused, true);
+  store.seed(state("active", [file("visible.ts"), file("remaining.ts")]));
+  store.setCandidates([], "active");
+  await settle();
+  assert.deepEqual(calls, []);
+  await store.getFile("active", "visible.ts");
+  await settle();
+  assert.deepEqual(calls, ["file:active:visible.ts"]);
+  assert.equal(store.snapshot().paused, true);
+  store.setPaused(false);
+  await settle();
+  assert.deepEqual(calls, [
+    "file:active:visible.ts",
+    "file:active:remaining.ts",
+  ]);
+});
+
+test("peekCommit is synchronous and does not promote, touch recency, fetch, or update stats", async () => {
+  const { store, calls } = fixture();
+  store.seed(state("active"));
+  store.setCandidates([row("a")], "active");
+  await settle();
+  const before = store.snapshot();
+  const cached = store.peekCommit("a");
+  assert.equal(cached?.commitId, "a");
+  assert.equal(store.peekCommit("missing"), undefined);
+  assert.equal(store.peekCommit("active")?.commitId, "active");
+  assert.deepEqual(store.snapshot(), before);
+  assert.deepEqual(calls, ["diff:a"]);
+  assert.strictEqual(await store.getCommit("a"), cached);
+});
+
+test("seeded missing eligible parent is unknown, whereas a backend's explicit null base stays null", async () => {
+  const { store } = fixture({
+    loadCommit: async (id) => ({ ...commit(id), baseCommitId: null }),
+  });
+  store.seed(state("seeded"));
+  assert.equal(store.peekCommit("seeded")?.baseCommitId, undefined);
+  assert.equal((await store.getCommit("pinned")).baseCommitId, null);
+  store.seed({
+    ...state("parent-known"),
+    parent: row("actual-parent").revision!,
+  });
+  assert.equal(store.peekCommit("parent-known")?.baseCommitId, "actual-parent");
+});
+
+test("background selected-file failures do not retry on refresh, visibility changes, or irrelevant log reorder", async () => {
+  const { store, calls } = fixture({
+    loadFile: async () => {
+      throw new Error("optional file failure");
+    },
+  });
+  store.seed(state("active", [file()]));
+  store.setCandidates([row("a"), row("active"), row("b")], "active");
+  await settle();
+  store.seed({ ...state("active", [file()]), version: "refreshed" });
+  store.setCandidates([row("b"), row("active"), row("a")], "active");
+  store.setPaused(true);
+  store.setPaused(false);
+  await settle();
+  assert.equal(calls.filter((call) => call === "file:active:one.ts").length, 1);
+  await assert.rejects(
+    store.getFile("active", "one.ts"),
+    /optional file failure/,
+  );
+  assert.equal(calls.filter((call) => call === "file:active:one.ts").length, 2);
+});
+
+test("rejections survive unrelated candidate changes but may retry at a strictly closer rank", async () => {
+  const { store, calls } = fixture({
+    loadCommit: async (id) => {
+      if (id === "bad") throw new Error("optional diff failure");
+      return commit(id);
+    },
+  });
+  store.setCandidates([row("near"), row("bad"), row("far")], "absent");
+  await settle();
+  store.setCandidates(
+    [row("near"), row("bad"), row("far"), row("extra")],
+    "absent",
+  );
+  await settle();
+  assert.equal(calls.filter((call) => call === "diff:bad").length, 1);
+  store.setCandidates(
+    [row("bad"), row("near"), row("far"), row("extra")],
+    "absent",
+  );
+  await settle();
+  assert.equal(calls.filter((call) => call === "diff:bad").length, 2);
 });

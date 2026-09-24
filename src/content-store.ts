@@ -4,7 +4,11 @@ import type { DiffFile, LogRow, RepoState } from "./types";
 export interface PinnedCommit {
   repo: { name: string; path: string };
   commitId: string;
-  baseCommitId: string | null;
+  /** Undefined for seeded live states with no eligible parent descriptor.
+   * Null is reserved for a pinned backend response with no single base.
+   * This display-only descriptor must never establish mutation eligibility.
+   */
+  baseCommitId?: string | null;
   files: DiffFile[];
 }
 
@@ -19,6 +23,9 @@ export interface ContentLoaders {
   loadFile(commitId: string, path: string): Promise<FileContents>;
 }
 
+/** Raw diff/file retention only. Derived scope/parser caches have independent
+ * budgets owned by their worker/cache layer, not charged or invalidated here.
+ */
 export interface ContentStoreLimits {
   demandCommits: number;
   speculativeCommits: number;
@@ -92,11 +99,17 @@ export class ContentStore {
   private readonly demand = new Map<string, Bucket>();
   private readonly speculative = new Map<string, Bucket>();
   private readonly inflight = new Map<string, Task>();
-  private readonly rejected = new Set<string>();
+  private readonly rejected = new Map<
+    string,
+    { rank: number; headroom: number }
+  >();
+  private ranks = new Map<string, number>();
   private targets: string[] = [];
   private selected = "";
   private signature = "";
-  private paused = false;
+  // The owner must explicitly enable speculation after establishing visibility
+  // and foreground mutation/refresh state. Demand reads always bypass this gate.
+  private paused = true;
   private disposed = false;
   private epoch = 0;
   private scheduled = false;
@@ -146,13 +159,19 @@ export class ContentStore {
         : {
             repo: state.repo,
             commitId: id,
-            baseCommitId: state.parent?.commitId ?? null,
+            baseCommitId: state.parent?.commitId,
             files: state.files,
           });
     this.displayedBytes = contentBytes(this.displayed);
     if (!bucket.commit) this.admit(bucket, "diff", this.displayed, true);
     this.shrinkSpeculation();
     this.schedule();
+  }
+
+  /** Synchronous display probe: no I/O, promotion, recency or hit-stat changes. */
+  peekCommit(commitId: string): PinnedCommit | undefined {
+    this.assertOpen();
+    return this.knownCommit(commitId);
   }
 
   getCommit(commitId: string): Promise<PinnedCommit>;
@@ -220,17 +239,35 @@ export class ContentStore {
       .map(({ id }) => id);
     this.signature = signature;
     this.selected = selectedCommitId;
+    this.ranks = new Map(
+      ids.map((id, index) => [
+        id,
+        selectedIndex < 0 ? index : Math.abs(index - selectedIndex),
+      ]),
+    );
+    this.ranks.set(selectedCommitId, -1);
     // Freeze the target slots for this candidate generation. Promotion must not
     // immediately refill the vacated slot with a farther eleventh candidate.
     this.targets = ranked
       .filter((id) => !this.demand.has(id))
       .slice(0, this.limits.speculativeCommits);
-    this.rejected.clear();
     for (const [id] of this.speculative) {
       if (!this.targets.includes(id)) {
         this.speculative.delete(id);
         this.counters.speculativeEvictions++;
       }
+    }
+    // Reordering metadata is not a retry signal. Keep each rejection's actual
+    // admission conditions, including across selection/log updates. Only an
+    // improved distance or increased free capacity permits another attempt.
+    for (const [key, rejected] of this.rejected) {
+      const [id, kind] = JSON.parse(key) as [string, Kind];
+      if (
+        !this.ranks.has(id) ||
+        this.rank(id) < rejected.rank ||
+        this.headroom(id, kind) > rejected.headroom
+      )
+        this.rejected.delete(key);
     }
     this.schedule();
   }
@@ -249,6 +286,7 @@ export class ContentStore {
     this.demand.clear();
     this.speculative.clear();
     this.targets = [];
+    this.ranks.clear();
     this.displayed = undefined;
     this.displayedBytes = 0;
     this.rejected.clear();
@@ -407,9 +445,26 @@ export class ContentStore {
     return JSON.stringify([id, kind, path]);
   }
 
+  private rank(id: string) {
+    return this.ranks.get(id) ?? Infinity;
+  }
+
+  private headroom(id: string, kind: Kind) {
+    const demanded = this.demand.has(id);
+    return Math.min(
+      this.budget(demanded, kind) -
+        this.bytes(demanded ? this.demand : this.speculative, kind),
+      this.totalHeadroom(),
+    );
+  }
+
   private reject(key: string) {
     if (!this.rejected.has(key)) this.counters.rejected++;
-    this.rejected.add(key);
+    const [id, kind] = JSON.parse(key) as [string, Kind];
+    this.rejected.set(key, {
+      rank: this.rank(id),
+      headroom: this.headroom(id, kind),
+    });
   }
 
   private eligible(bucket: Bucket) {
