@@ -1,4 +1,16 @@
-# Responsiveness sprint — proposed plan
+# Responsiveness sprint — plan and implementation status
+
+**Implemented:** immutable read lane and commit-keyed caching, 10-commit nearest
+prefetch / 30-commit browsing LRU, bounded admission/rejection metadata, cached
+scope worker, worker highlighting and virtualized diff rows, and coalesced cached
+revision previews. Full regression suite passes. See [PERF_RESULTS.md](PERF_RESULTS.md)
+for measured outcomes, remaining cold-start work, and exact validation scope.
+Graph metadata still revalidates after selection: operation-only reuse was rejected
+because configuration can change independently of history. Persistent caching,
+watchers, and raw syntax-tree retention remain deferred.
+
+The original proposal follows; its latency targets are goals, not a claim that
+every target has been met.
 
 Goal: browsing, scrolling, selecting lines, expanding context, and switching
 changes should not visibly hang. This is a proposal, not an implementation or a

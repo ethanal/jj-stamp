@@ -77,7 +77,7 @@ This is a **single-user local tool**, not a network service. Host and Origin che
 - Run **one jj-stamp process per repository**. Selection is shared by all tabs connected to that process; do not mutate from multiple tabs simultaneously.
 - **Avoid concurrent file edits or jj operations while squashing or undoing.** The in-process queue cannot lock external processes. A race can be detected after a rewrite rather than prevented.
 - Each operation validates the exact patch, changed-row indices, source and immediate parent, operation version, conflicts, and mutability. Execution pins full commit IDs and preserves the destination description and emptied source change.
-- Conflicts elsewhere in the repository are allowed; the selected source and squash destination must be conflict-free. A conflicted immediate parent disables squashing. Renames/copies, binary or mode changes, missing final newlines, and ambiguous paths/formats are read-only. Merge context is unsupported. Very large diffs are not yet virtualized.
+- Conflicts elsewhere in the repository are allowed; the selected source and squash destination must be conflict-free. A conflicted immediate parent disables squashing. Renames/copies, binary or mode changes, missing final newlines, and ambiguous paths/formats are read-only. Merge context is unsupported. Large diff rows are virtualized; optional full-file context reads have size limits.
 - Undo uses **`jj op revert` for the attributed app operation**, never `jj op restore`.
 - If a queued job fails, unsent jobs are canceled and the actual repository is reloaded. Completed jobs are not rolled back. Failed mutations are never automatically retried.
 - Do not close the browser with queued work. An accepted request can finish after a disconnection, but unsent browser-local jobs are lost.
@@ -117,6 +117,35 @@ Tests use isolated real jj repositories. They cover exact line squashes, optimis
 
 `@pierre/trees` is pinned to a beta release; review its API when upgrading.
 
+## Responsive browsing
+
+The browser prefetches diffs and full **changed-file** contents for up to **10**
+commits from the displayed jj log, nearest to the inspected commit first (commit
+row distance, ignoring connectors). It also warms the inspected commit's other
+changed files. This is not a preload of entire repository trees.
+
+Actually viewed content is promoted into a separate **30-commit browsing LRU**.
+Speculative reads cannot evict or update recency in that LRU. Both pools have
+separate diff/content byte budgets; oversized entries may bypass caching. Shared
+in-flight requests are deduplicated, and unchanged full commit IDs reuse cached
+content across navigation and live-state refreshes. Cache keys never use change
+IDs or operation versions. Prefetch pauses while the tab is hidden or foreground
+work is pending; already-running pinned reads can finish without causing refetch
+loops. Source contents are cached **in memory only**, not localStorage or disk.
+
+A prefetched revision can appear immediately while its live selection validates.
+The viewer explicitly marks it as cached/pending and disables squash; it never
+becomes mutation authority. Rapid graph clicks coalesce to the latest unsent
+selection, with one stateful selection request at a time. Graph metadata is still
+revalidated, since graph configuration can change without a history operation.
+
+Tree-sitter scope extraction runs in a bounded worker and caches compact scope
+results across file revisits. Syntax highlighting uses at most two workers, and
+diff rendering virtualizes offscreen rows, including in all-files mode. Worker
+failure leaves browsing available with optional scope labels omitted or local
+highlighting fallback. All mutation validation and recovery guards remain live;
+display caches do not authorize writes.
+
 ## Performance diagnostics
 
 Run a newly built version with tracing enabled, reproduce a few slow change switches and squashes, then stop normally with Ctrl-C:
@@ -125,7 +154,7 @@ Run a newly built version with tracing enabled, reproduce a few slow change swit
 jj-stamp --trace -R /path/to/workspace 2> /tmp/jj-stamp-trace.log
 ```
 
-Each `[jj-stamp timing]` line is a JSON record for one completed backend request (including startup). It contains the operation name, time waiting in the shared queue, execution time, success/failure, and the start offset/duration of every service-launched subprocess. Timings are milliseconds. The native diff-editor callback is included in the `jj squash (native editor)` duration, not listed separately. Parallel spans overlap; don't sum them to estimate request wall time. Browser rendering, network transfer, and JSON response serialization are outside these backend timings.
+Each `[jj-stamp timing]` line is a JSON record for one completed backend request (including startup). It contains the operation name, queue wait (stateful queue or independent immutable-read lane), execution time, success/failure, and the start offset/duration of every service-launched subprocess. Timings are milliseconds. The native diff-editor callback is included in the `jj squash (native editor)` duration, not listed separately. Parallel spans overlap; don't sum them to estimate request wall time. Browser rendering, network transfer, and JSON response serialization are outside these backend timings.
 
 Trace records contain no repository paths, revision IDs, command arguments, file contents, or subprocess output. Ordinary errors on stderr can still contain sensitive details. To share only the diagnostic records:
 
@@ -141,6 +170,19 @@ The isolated benchmark also measures cold/cached revision switches, squash, undo
 npm run benchmark -- --runs 3 --extra-files 50 --trace
 ```
 
+For production browser readiness, duplicate reads, and main-thread long tasks:
+
+```sh
+npm run build
+npm run benchmark:browser -- --runs 3 --extra-files 50 --scope-functions 200 \
+  --output /tmp/jj-stamp-responsiveness.json
+```
+
+This uses disposable repositories and an ephemeral loopback port. The readiness
+metric includes browser automation and two animation frames; it is not INP or a
+compositor paint measurement. See [baseline methodology](PERF_BASELINE.md) and
+[sprint results](PERF_RESULTS.md). Wall-clock assertions are not used in CI.
+
 ## Source
 
 - `cli.ts` — arguments, local startup, browser launch, shutdown
@@ -151,6 +193,8 @@ npm run benchmark -- --runs 3 --extra-files 50 --trace
 - `src/main.tsx` — review state, queue coordination and shortcuts
 - `src/ReviewWorkspace.tsx`, `src/ReviewToolbar.tsx` — sidebars, revision graph, viewer, status and settings
 - `src/ChangedFilesTree.tsx`, `src/CodeDiff.tsx` — Pierre rendering and selection
+- `src/content-store.ts`, `src/revision-navigation.ts` — commit-keyed prefetch/cache and coalesced revision selection
+- `src/DiffRuntime.tsx`, `src/hunk-context-client.ts` — virtualized diff rendering and bounded highlighting/scope workers
 - `src/optimistic.ts`, `src/squash-queue.ts` — speculative UI and sequential dispatch
 - `tests/browser-fixture.ts` — shared browser-test setup and teardown
 - `flake.nix`, `nix/` — reproducible package, runtime tools, installed-package checks
