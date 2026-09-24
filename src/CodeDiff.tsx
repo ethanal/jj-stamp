@@ -18,6 +18,7 @@ import {
 } from "@pierre/diffs";
 import { diffVirtualMetrics } from "./DiffRuntime";
 import type { DiffFile, Selections } from "./types";
+import { selectHunkBreadcrumb, type ScopePosition } from "./hunk-breadcrumb";
 import {
   inferCachedHunkContexts,
   peekCachedHunkContexts,
@@ -64,28 +65,46 @@ function deepElementAt(x: number, y: number): Element | null {
   }
   return element;
 }
-function renderedScopeLine(
+function renderedScopePosition(
   shadow: ShadowRoot,
+  separator: HTMLElement,
   line: number | undefined,
   side: "old" | "new",
-): boolean {
-  if (line === undefined) return false;
-  return [
+): ScopePosition | undefined {
+  if (line === undefined) return;
+  const separatorBox = separator.getBoundingClientRect();
+  const rows = [
     ...shadow.querySelectorAll<HTMLElement>(`[data-line="${line}"]`),
-  ].some((row) => {
+  ].filter((row) => {
     const inDeletions = !!row.closest("[data-deletions]");
     const inAdditions = !!row.closest("[data-additions]");
     if (side === "old")
       return !inAdditions && row.dataset.lineType !== "change-addition";
     return !inDeletions && row.dataset.lineType !== "change-deletion";
   });
+  if (
+    rows.some((row) => row.getBoundingClientRect().bottom <= separatorBox.top)
+  )
+    return "above";
+  if (
+    rows.some((row) => row.getBoundingClientRect().top >= separatorBox.bottom)
+  )
+    return "below";
 }
 
-function scopeIsRendered(shadow: ShadowRoot, context: HunkScope): boolean {
-  return (
-    renderedScopeLine(shadow, context.newLine, "new") ||
-    renderedScopeLine(shadow, context.oldLine, "old")
-  );
+function displayedScope(
+  shadow: ShadowRoot,
+  separator: HTMLElement,
+  context: HunkContext,
+): HunkScope | undefined {
+  return selectHunkBreadcrumb(context.scopes, (scope) => {
+    const positions = [
+      renderedScopePosition(shadow, separator, scope.newLine, "new"),
+      renderedScopePosition(shadow, separator, scope.oldLine, "old"),
+    ];
+    if (positions.includes("above")) return "above";
+    if (positions.includes("below")) return "below";
+  });
 }
 
 const separatorCSS = `
@@ -404,9 +423,9 @@ export function CodeDiff({
         const context = file.hunks[index]
           ? hunkContexts[file.hunks[index].id]
           : undefined;
-        const shownContext = context?.scopes.find(
-          (scope) => !scopeIsRendered(shadow, scope),
-        );
+        const shownContext = context
+          ? displayedScope(shadow, separator, context)
+          : undefined;
         const content = separator.querySelector<HTMLElement>(
           "[data-separator-content]",
         );
