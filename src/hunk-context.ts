@@ -1,24 +1,11 @@
+import { languageForPath, type LanguageId } from "./hunk-context-language";
+export { supportsHunkContext } from "./hunk-context-language";
 import { Language, Parser, type Node } from "web-tree-sitter";
 import type { FileDiffLoadedFiles } from "@pierre/diffs";
 import type { Hunk } from "./types";
 
 const MAX_CONTEXT_LENGTH = 140;
 const MAX_PARSE_BYTES = 2 * 1024 * 1024;
-
-type LanguageId =
-  | "bash"
-  | "c"
-  | "cpp"
-  | "cSharp"
-  | "go"
-  | "java"
-  | "javascript"
-  | "php"
-  | "python"
-  | "ruby"
-  | "rust"
-  | "tsx"
-  | "typescript";
 
 export interface TreeSitterAssets {
   core: string;
@@ -269,59 +256,6 @@ async function language(id: LanguageId): Promise<Language> {
     languagePromises.set(id, pending);
   }
   return pending;
-}
-
-function languageForPath(path: string): LanguageId | undefined {
-  const name = path.split("/").at(-1)?.toLowerCase() ?? "";
-  if (name === "rakefile") return "ruby";
-  const extension = name.includes(".") ? name.split(".").at(-1) : undefined;
-  switch (extension) {
-    case "rs":
-      return "rust";
-    case "ts":
-    case "mts":
-    case "cts":
-      return "typescript";
-    case "tsx":
-      return "tsx";
-    case "js":
-    case "jsx":
-    case "mjs":
-    case "cjs":
-      return "javascript";
-    case "py":
-      return "python";
-    case "go":
-      return "go";
-    case "java":
-      return "java";
-    case "c":
-      return "c";
-    case "cc":
-    case "cpp":
-    case "cxx":
-    case "hh":
-    case "hpp":
-    case "hxx":
-      return "cpp";
-    case "cs":
-      return "cSharp";
-    case "rb":
-    case "rake":
-      return "ruby";
-    case "php":
-    case "phtml":
-      return "php";
-    case "sh":
-    case "bash":
-      return "bash";
-    default:
-      return;
-  }
-}
-
-export function supportsHunkContext(path: string): boolean {
-  return languageForPath(path) !== undefined;
 }
 
 function compact(value: string): string {
