@@ -45,6 +45,7 @@ const commits: string[] = [];
 const contents: string[] = [];
 const selections: { changeId: string; version: string }[] = [];
 let graphReads = 0;
+let hideLastRevision = false;
 const app = express();
 app.use(express.json());
 app.get("/api/state", (_req, res) => res.json(state()));
@@ -52,10 +53,15 @@ app.get("/api/graph", (_req, res) => {
   graphReads++;
   res.json({
     version: state().version,
-    rows: revisions.flatMap((revision) => [
-      { graph: "│" },
-      { graph: "○ ", revision, mutable: true },
-    ]),
+    rows: revisions
+      .filter(
+        (_revision, index) =>
+          !hideLastRevision || index !== revisions.length - 1,
+      )
+      .flatMap((revision) => [
+        { graph: "│" },
+        { graph: "○ ", revision, mutable: true },
+      ]),
   });
 });
 app.post("/api/commit", (req, res) => {
@@ -137,6 +143,9 @@ const choose = (index: number) =>
       exact: true,
     })
     .click();
+// Graph aliases can change without changing repository history. A validated
+// selection must still refresh graph metadata; immutable content stays cached.
+hideLastRevision = true;
 await choose(4);
 await expect(page.locator(".code-surface")).toContainText("new 4");
 await expect(page.locator(".squash-unavailable")).toContainText(
@@ -157,7 +166,10 @@ assert.deepEqual(selections, [
   { changeId: revisions[4].changeId, version: "version-5-1" },
   { changeId: revisions[2].changeId, version: "version-4-1" },
 ]);
-assert.equal(graphReads, 2, "same-operation navigation reuses graph topology");
+await expect.poll(() => graphReads).toBe(3);
+await expect(
+  page.getByRole("button", { name: "Review change change-13", exact: true }),
+).toHaveCount(0);
 assert.equal(contents.filter((id) => id === revisions[2].commitId).length, 1);
 assert.deepEqual(errors, []);
 console.log(

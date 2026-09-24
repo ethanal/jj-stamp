@@ -164,7 +164,6 @@ function App() {
   ]);
   const logOperation = useRef<string | undefined>(undefined);
   const logVersion = useRef<string | undefined>(undefined);
-  const reuseGraphVersion = useRef<string | undefined>(undefined);
   const [graphRefresh, setGraphRefresh] = useState(0);
   const [showFiles, setShowFiles] = useState(() => readExpanded("files"));
   const [showLog, setShowLog] = useState(() => readExpanded("log"));
@@ -251,7 +250,6 @@ function App() {
       lock.current = true;
       setBusy("refreshing");
       if (!automatic) {
-        reuseGraphVersion.current = undefined;
         setError("");
         setNotice("");
       }
@@ -263,7 +261,6 @@ function App() {
           replace(next);
       } catch (error) {
         setError(error);
-        reuseGraphVersion.current = undefined;
         setGraphRefresh((value) => value + 1);
       } finally {
         lock.current = false;
@@ -346,13 +343,8 @@ function App() {
       (!queued.confirmed && !graphRefresh)
     )
       return;
-    // A validated selection at the same operation changes the authorization
-    // token, not the already-rendered graph. Explicit refresh still re-reads it.
-    if (reuseGraphVersion.current === queued.confirmed?.version && log.length) {
-      logVersion.current = queued.confirmed?.version;
-      setLogLoading(false);
-      return;
-    }
+    // Graph aliases/configuration can change without a repository operation.
+    // Revalidate graph metadata even when immutable content is already cached.
     let cancelled = false;
     logVersion.current = undefined;
     setLogLoading(true);
@@ -505,13 +497,6 @@ function App() {
   navigationCallbacks.current = {
     onState: (next) => {
       navigationIntent.current++;
-      const previous = queue.getSnapshot().confirmed;
-      if (
-        previous?.operation === next.operation &&
-        logOperation.current === next.operation &&
-        log.length
-      )
-        reuseGraphVersion.current = next.version;
       logVersion.current = next.version;
       replace(next);
       setActivePath(next.files[0]?.path ?? "");
@@ -562,7 +547,6 @@ function App() {
       navigationIntent.current++;
       setRevisionPreview(null);
       setError(error);
-      reuseGraphVersion.current = undefined;
       setGraphRefresh((value) => value + 1);
     },
   };
