@@ -154,6 +154,42 @@ Separate graph topology/content reuse from its fresh selection-authorization
 version. Avoid rebuilding an unchanged graph just because the user selected a
 different node, without reusing stale operation/configuration/eligibility data.
 
+### Cache admission: speculative work must not churn the browsing LRU
+
+Use one commit-keyed entry store with separate retention policies, not a single
+LRU that treats background fetches as user accesses:
+
+- Demand-used entries belong to a byte-bounded browsing LRU. Only actual user
+  use updates its recency. Prefetch probes, writes, and background parsing do not.
+- Speculative-only entries belong to a separately budgeted working set ranked
+  by distance in the displayed log. Prefetch cannot evict demand-used entries.
+  On user access, promote an entry into the browsing LRU without copying bytes.
+- Keep the currently displayed content referenced independently of eviction;
+  account for its memory and reduce speculative capacity accordingly. Oversized
+  demand content can be displayed without retaining it as a reusable cache entry.
+- Admit nearest candidates first and reserve space for in-flight speculative
+  reads. Unknown-size responses need a bounded allowance/response-size limit;
+  reject oversized results rather than pushing out protected entries. Stop when
+  the speculative budget is full instead of evicting earlier, nearer prefetches
+  to admit later, farther ones. Distance ties retain existing entries.
+- Reconcile the target set by commit ID, retaining its overlap across log and
+  selection updates. A closer newly relevant entry may replace a farther
+  speculative-only entry, never a demand-used entry. Reject obsolete completions
+  that no longer meet admission criteria.
+- Remember capacity-rejected/evicted candidates while their admission conditions
+  remain unchanged. A routine refresh or priority recomputation must not restart
+  a fetch/evict loop. Retry only on explicit demand or a material improvement in
+  eligibility/capacity; do not immediately refill speculation displaced by demand.
+- Give diffs, full source contents, and parser results separate byte allowances
+  so a large source file cannot evict the entire useful diff set. Apply these
+  rules to backend caches too, not just the browser cache.
+
+Test a candidate set larger than capacity: after the initial warmup, repeated
+refreshes with the same commits must cause zero successful-content refetches,
+zero demand-entry evictions from prefetch, and no demand-LRU recency changes.
+Also test out-of-order responses, size-estimate overruns, set overlap, promotion,
+and foreground use displacing speculative capacity without a refill loop.
+
 ### 5. Optional follow-ups, contingent on measured benefit
 
 - Persistent cache: IndexedDB behind the same cache interface, not localStorage.
