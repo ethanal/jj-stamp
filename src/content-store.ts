@@ -38,6 +38,11 @@ export interface ContentStoreLimits {
   fileReservationBytes: number;
   maxDiffBytes: number;
   maxFileBytes: number;
+  /** Bounds path-keyed optional-failure tombstones, independently of file count.
+   * Overflow falls back to one suppression marker per eligible commit.
+   */
+  maxRejectedTasks: number;
+  maxRejectedBytes: number;
 }
 
 const MiB = 1024 * 1024;
@@ -52,6 +57,8 @@ const defaults: ContentStoreLimits = {
   fileReservationBytes: MiB,
   maxDiffBytes: 8 * MiB,
   maxFileBytes: 8 * MiB,
+  maxRejectedTasks: 128,
+  maxRejectedBytes: 64 * 1024,
 };
 
 type Kind = "diff" | "file";
@@ -101,6 +108,10 @@ export class ContentStore {
   private readonly rejected = new Map<
     string,
     { rank: number; headroom: number }
+  >();
+  private readonly suppressed = new Map<
+    string,
+    { kind: Kind; rank: number; headroom: number }
   >();
   private ranks = new Map<string, number>();
   private targets: string[] = [];
@@ -255,18 +266,10 @@ export class ContentStore {
         this.counters.speculativeEvictions++;
       }
     }
-    // Reordering metadata is not a retry signal. Keep each rejection's actual
-    // admission conditions, including across selection/log updates. Only an
-    // improved distance or increased free capacity permits another attempt.
-    for (const [key, rejected] of this.rejected) {
-      const [id, kind] = JSON.parse(key) as [string, Kind];
-      if (
-        !this.ranks.has(id) ||
-        this.rank(id) < rejected.rank ||
-        this.headroom(id, kind) > rejected.headroom
-      )
-        this.rejected.delete(key);
+    for (const id of this.ranks.keys()) {
+      if (!this.backgroundCandidate(id)) this.ranks.delete(id);
     }
+    this.pruneRejections(true);
     this.schedule();
   }
 
@@ -287,6 +290,7 @@ export class ContentStore {
     this.displayed = undefined;
     this.displayedBytes = 0;
     this.rejected.clear();
+    this.suppressed.clear();
     // Loaders need not support cancellation. Existing callers still resolve,
     // but completions cannot repopulate a disposed store.
   }
@@ -311,7 +315,16 @@ export class ContentStore {
         : 0,
       externalDisplayedBytes: this.externalDisplayedBytes(),
       targets: [...this.targets],
-      rejectedTasks: this.rejected.size,
+      rejectedTasks: this.rejected.size + this.suppressed.size,
+      rejectedTaskEntries: this.rejected.size,
+      rejectedTaskBytes: this.rejectionTaskBytes(),
+      suppressedCommits: this.suppressed.size,
+      rejectionMetadataBytes:
+        this.rejectionTaskBytes() +
+        [...this.suppressed.keys()].reduce(
+          (bytes, id) => bytes + this.rejectionBytes(id),
+          0,
+        ),
       paused: this.paused,
       disposed: this.disposed,
     };
@@ -344,6 +357,7 @@ export class ContentStore {
     this.trimDemand("diff", bucket);
     this.trimDemand("file", bucket);
     if (shrink) this.shrinkSpeculation();
+    this.pruneRejections(false);
     return bucket;
   }
 
@@ -443,7 +457,7 @@ export class ContentStore {
   }
 
   private rank(id: string) {
-    return this.ranks.get(id) ?? Infinity;
+    return id === this.selected ? -1 : (this.ranks.get(id) ?? Infinity);
   }
 
   private headroom(id: string, kind: Kind) {
@@ -455,13 +469,89 @@ export class ContentStore {
     );
   }
 
+  private backgroundCandidate(id: string) {
+    return (
+      this.targets.includes(id) || (id === this.selected && this.demand.has(id))
+    );
+  }
+
+  private rejectionBytes(key: string) {
+    return key.length * 2 + 64;
+  }
+
+  private rejectionTaskBytes() {
+    let bytes = 0;
+    for (const key of this.rejected.keys()) bytes += this.rejectionBytes(key);
+    return bytes;
+  }
+
+  private pruneRejections(retryImproved: boolean) {
+    const obsolete = (
+      id: string,
+      kind: Kind,
+      condition: { rank: number; headroom: number },
+    ) =>
+      !this.backgroundCandidate(id) ||
+      (retryImproved &&
+        (this.rank(id) < condition.rank ||
+          this.headroom(id, kind) > condition.headroom));
+    for (const [key, condition] of this.rejected) {
+      const [id, kind] = JSON.parse(key) as [string, Kind];
+      if (obsolete(id, kind, condition)) this.rejected.delete(key);
+    }
+    for (const [id, condition] of this.suppressed) {
+      if (obsolete(id, condition.kind, condition)) this.suppressed.delete(id);
+    }
+  }
+
+  private suppress(id: string, kind: Kind) {
+    if (
+      this.disposed ||
+      !this.backgroundCandidate(id) ||
+      this.suppressed.has(id)
+    )
+      return;
+    this.counters.rejected++;
+    this.suppressed.set(id, {
+      kind,
+      rank: this.rank(id),
+      headroom: this.headroom(id, kind),
+    });
+    // One bounded commit marker replaces path tombstones, without forgetting
+    // failures and accidentally restarting the same fetch/rejection sequence.
+    for (const key of this.rejected.keys()) {
+      if ((JSON.parse(key) as [string])[0] === id) this.rejected.delete(key);
+    }
+  }
+
   private reject(key: string) {
-    if (!this.rejected.has(key)) this.counters.rejected++;
     const [id, kind] = JSON.parse(key) as [string, Kind];
+    if (
+      this.disposed ||
+      !this.backgroundCandidate(id) ||
+      this.suppressed.has(id)
+    )
+      return;
+    if (!this.rejected.has(key)) {
+      if (
+        this.rejected.size >= this.limits.maxRejectedTasks ||
+        this.rejectionTaskBytes() + this.rejectionBytes(key) >
+          this.limits.maxRejectedBytes
+      ) {
+        this.suppress(id, kind);
+        return;
+      }
+      this.counters.rejected++;
+    }
     this.rejected.set(key, {
       rank: this.rank(id),
       headroom: this.headroom(id, kind),
     });
+    if (
+      this.rejected.size >= this.limits.maxRejectedTasks ||
+      this.rejectionTaskBytes() >= this.limits.maxRejectedBytes
+    )
+      this.suppress(id, kind);
   }
 
   private eligible(bucket: Bucket) {
@@ -581,25 +671,23 @@ export class ContentStore {
   private pump() {
     if (this.disposed || this.paused || this.background || this.demandActive)
       return;
+    this.pruneRejections(false);
     const ids = [
       ...(this.demand.has(this.selected) ? [this.selected] : []),
       ...this.targets,
     ];
     for (const id of ids) {
+      if (this.suppressed.has(id)) continue;
       let bucket = this.lookup(id);
       if (!bucket) {
         if (this.speculative.size >= this.limits.speculativeCommits) return;
         bucket = this.create(id);
       }
       const known = this.knownCommit(id, bucket);
-      const missing: { kind: Kind; path?: string }[] = known
-        ? known.files
-            .filter(
-              (file) => !file.unsupported && !bucket!.files.has(file.path),
-            )
-            .map((file) => ({ kind: "file", path: file.path }))
-        : [{ kind: "diff" }];
-      for (const { kind, path } of missing) {
+      for (const file of known ? known.files : [undefined]) {
+        if (file && (file.unsupported || bucket.files.has(file.path))) continue;
+        const kind: Kind = file ? "file" : "diff";
+        const path = file?.path;
         const key = this.key(id, kind, path);
         if (this.rejected.has(key) || this.inflight.has(key)) continue;
         const demanded = this.demand.has(id);
@@ -609,8 +697,10 @@ export class ContentStore {
             this.budget(demanded, kind) ||
           this.reservation(kind) > this.totalHeadroom()
         ) {
-          this.reject(key);
-          continue;
+          // All remaining files share this exhausted budget/reservation. Do
+          // not allocate one rejected path string for every file in the diff.
+          this.suppress(id, kind);
+          break;
         }
         if (!this.lookup(id)) this.speculative.set(id, bucket);
         void this.read(bucket, kind, false, path).catch(() => {

@@ -767,3 +767,148 @@ test("paused background full-file completion remains useful in a retained demand
   assert.strictEqual(await store.getFile("a", "one.ts"), value);
   assert.deepEqual(calls, ["file:a:one.ts"]);
 });
+
+test("100 graph commits with 100 budget-rejected files retain only current eligible rejection metadata", async () => {
+  const { store, calls } = fixture(
+    {},
+    {
+      demandCommits: 1,
+      speculativeCommits: 0,
+      demandFileBytes: 0,
+      speculativeFileBytes: 0,
+      fileReservationBytes: 1,
+    },
+  );
+  const log = Array.from({ length: 100 }, (_, index) => row(`c${index}`));
+  const files = Array.from({ length: 100 }, (_, index) => file(`f${index}.ts`));
+  for (const item of log) {
+    const id = item.revision!.commitId;
+    store.seed(state(id, files));
+    store.setCandidates(log, id);
+    await settle();
+    const stats = store.snapshot();
+    assert.equal(stats.demand.entries, 1);
+    assert.equal(stats.rejectedTaskEntries, 0);
+    assert.equal(stats.rejectedTaskBytes, 0);
+    assert.equal(stats.suppressedCommits, 1);
+    assert.ok(stats.rejectionMetadataBytes <= 80);
+  }
+  assert.deepEqual(calls, []);
+  assert.equal(store.snapshot().rejectedTasks, 1);
+});
+
+test("many-file failure overflow replaces tombstones with one marker and never restarts on unchanged conditions", async () => {
+  const { store, calls } = fixture(
+    {
+      loadFile: async () => {
+        throw new Error("optional failure");
+      },
+    },
+    {
+      maxRejectedTasks: 3,
+      maxRejectedBytes: 1024,
+    },
+  );
+  const files = Array.from({ length: 1000 }, (_, index) =>
+    file(`f${index}.ts`),
+  );
+  store.seed(state("active", files));
+  store.setCandidates([], "active");
+  await settle();
+  assert.deepEqual(calls, [
+    "file:active:f0.ts",
+    "file:active:f1.ts",
+    "file:active:f2.ts",
+  ]);
+  assert.equal(store.snapshot().rejectedTaskEntries, 0);
+  assert.equal(store.snapshot().suppressedCommits, 1);
+  assert.ok(store.snapshot().rejectionMetadataBytes <= 80);
+  for (let index = 0; index < 20; index++) {
+    store.seed({ ...state("active", files), version: `refresh${index}` });
+    store.setCandidates([], "active");
+    store.setPaused(true);
+    store.setPaused(false);
+    await settle();
+  }
+  assert.equal(calls.length, 3);
+  await assert.rejects(store.getFile("active", "f999.ts"), /optional failure/);
+  await settle();
+  assert.equal(calls.length, 4);
+  assert.equal(store.snapshot().suppressedCommits, 1);
+});
+
+test("oversized path tombstones are replaced by bounded commit markers instead of exceeding metadata byte budget", async () => {
+  const { store, calls } = fixture(
+    {
+      loadFile: async () => {
+        throw new Error("optional failure");
+      },
+    },
+    {
+      maxRejectedTasks: 128,
+      maxRejectedBytes: 80,
+    },
+  );
+  store.seed(state("active", [file("x".repeat(10000)), file("second.ts")]));
+  store.setCandidates([], "active");
+  await settle();
+  assert.equal(calls.length, 1);
+  assert.equal(store.snapshot().rejectedTaskEntries, 0);
+  assert.equal(store.snapshot().rejectedTaskBytes, 0);
+  assert.equal(store.snapshot().suppressedCommits, 1);
+  assert.ok(store.snapshot().rejectionMetadataBytes <= 80);
+  store.setPaused(true);
+  store.setPaused(false);
+  await settle();
+  assert.equal(calls.length, 1);
+});
+
+test("suppression markers are eligible-commit bounded and file pressure can retry after material capacity improves", async () => {
+  const unit = contentBytes(contents());
+  const { store, calls } = fixture(
+    {
+      loadCommit: async (id) => commit(id, id === "new" ? [] : [file()]),
+    },
+    { speculativeFileBytes: unit, fileReservationBytes: 1 },
+  );
+  store.setCandidates([row("a"), row("b")], "absent");
+  await settle();
+  assert.deepEqual(calls, ["diff:a", "file:a:one.ts", "diff:b"]);
+  assert.equal(store.snapshot().suppressedCommits, 1);
+  // b's rank is unchanged; removing a creates file capacity for b to retry.
+  store.setCandidates([row("new"), row("b")], "absent");
+  await settle();
+  assert.deepEqual(calls, [
+    "diff:a",
+    "file:a:one.ts",
+    "diff:b",
+    "diff:new",
+    "file:b:one.ts",
+  ]);
+  assert.equal(store.snapshot().suppressedCommits, 0);
+});
+
+test("failure-cap suppression may retry at an improved rank, without affecting explicit demand", async () => {
+  const { store, calls } = fixture(
+    {
+      loadCommit: async (id) => commit(id, id === "bad" ? [file()] : []),
+      loadFile: async () => {
+        throw new Error("optional failure");
+      },
+    },
+    { maxRejectedTasks: 1 },
+  );
+  store.setCandidates([row("near"), row("bad")], "absent");
+  await settle();
+  assert.equal(store.snapshot().suppressedCommits, 1);
+  store.setCandidates([row("near"), row("bad"), row("far")], "absent");
+  await settle();
+  assert.equal(calls.filter((call) => call === "file:bad:one.ts").length, 1);
+  store.setCandidates([row("bad"), row("near"), row("far")], "absent");
+  await settle();
+  assert.equal(calls.filter((call) => call === "file:bad:one.ts").length, 2);
+  assert.equal(store.snapshot().suppressedCommits, 1);
+  store.setCandidates([], "absent");
+  await settle();
+  assert.equal(store.snapshot().rejectionMetadataBytes, 0);
+});
