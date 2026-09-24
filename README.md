@@ -180,8 +180,7 @@ npm run benchmark:browser -- --runs 3 --extra-files 50 --scope-functions 200 \
 
 This uses disposable repositories and an ephemeral loopback port. The readiness
 metric includes browser automation and two animation frames; it is not INP or a
-compositor paint measurement. See [baseline methodology](PERF_BASELINE.md) and
-[sprint results](PERF_RESULTS.md). Wall-clock assertions are not used in CI.
+compositor paint measurement. Wall-clock assertions are not used in CI.
 
 ## Source
 
