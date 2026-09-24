@@ -17,7 +17,11 @@ import {
   type SelectedLineRange,
 } from "@pierre/diffs";
 import type { DiffFile, Selections } from "./types";
-import { inferHunkContexts, supportsHunkContext } from "./hunk-context";
+import {
+  inferHunkContexts,
+  supportsHunkContext,
+  type HunkContext,
+} from "./hunk-context";
 import {
   selectionAnchor,
   selectionFromRange,
@@ -57,6 +61,30 @@ function deepElementAt(x: number, y: number): Element | null {
   }
   return element;
 }
+function renderedScopeLine(
+  shadow: ShadowRoot,
+  line: number | undefined,
+  side: "old" | "new",
+): boolean {
+  if (line === undefined) return false;
+  return [
+    ...shadow.querySelectorAll<HTMLElement>(`[data-line="${line}"]`),
+  ].some((row) => {
+    const inDeletions = !!row.closest("[data-deletions]");
+    const inAdditions = !!row.closest("[data-additions]");
+    if (side === "old")
+      return !inAdditions && row.dataset.lineType !== "change-addition";
+    return !inDeletions && row.dataset.lineType !== "change-deletion";
+  });
+}
+
+function scopeIsRendered(shadow: ShadowRoot, context: HunkContext): boolean {
+  return (
+    renderedScopeLine(shadow, context.newLine, "new") ||
+    renderedScopeLine(shadow, context.oldLine, "old")
+  );
+}
+
 const separatorCSS = `
 [data-code] { padding-top: 0; padding-bottom: 0; }
 [data-line], [data-column-number] { cursor: default; touch-action: none; }
@@ -229,7 +257,7 @@ export function CodeDiff({
   const contextLoadKey = `${fileLoadKey}\u0000${file.patch}`;
   const [hydratedHunkContexts, setHydratedHunkContexts] = useState<{
     key: string;
-    contexts: Record<string, string>;
+    contexts: Record<string, HunkContext>;
   } | null>(null);
   const hunkContexts =
     hydratedHunkContexts?.key === contextLoadKey
@@ -242,7 +270,7 @@ export function CodeDiff({
   } | null>(null);
   const loadedContexts = useRef<{
     key: string;
-    promise: Promise<Record<string, string>>;
+    promise: Promise<Record<string, HunkContext>>;
   } | null>(null);
   const loadFileRef = useRef(loadFile);
   loadFileRef.current = loadFile;
@@ -370,6 +398,8 @@ export function CodeDiff({
         const context = file.hunks[index]
           ? hunkContexts[file.hunks[index].id]
           : undefined;
+        const shownContext =
+          context && !scopeIsRendered(shadow, context) ? context : undefined;
         const content = separator.querySelector<HTMLElement>(
           "[data-separator-content]",
         );
@@ -383,15 +413,15 @@ export function CodeDiff({
           "data-fold-hide-placeholder",
           unchanged?.textContent === "More unchanged context may be available",
         );
-        content?.toggleAttribute("data-fold-has-hunk-context", !!context);
-        if (!content || !context) {
+        content?.toggleAttribute("data-fold-has-hunk-context", !!shownContext);
+        if (!content || !shownContext) {
           existing?.remove();
           return;
         }
         const label = existing ?? document.createElement("span");
         label.setAttribute("data-fold-hunk-context", "");
-        label.textContent = context;
-        label.title = context;
+        label.textContent = shownContext.label;
+        label.title = shownContext.label;
         if (!existing) content.append(label);
       });
   }, []);

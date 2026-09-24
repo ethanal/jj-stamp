@@ -64,7 +64,7 @@ async function context(
       [hunk(patch, filePath)],
       files(filePath, oldContents, newContents),
     )
-  ).hunk;
+  ).hunk?.label;
 }
 
 test("does not name a declaration introduced by the hunk itself", async () => {

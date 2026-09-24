@@ -45,6 +45,17 @@ try {
     await expect(page.locator("#file-loads")).toHaveText("1");
     if (layout === "split")
       await page.getByText("Layout", { exact: true }).click();
+    const firstScope = page
+      .locator("[data-fold-hunk-context]")
+      .filter({ hasText: "function fixtureSection10() {" })
+      .first();
+    await firstScope.evaluate((label) => {
+      const wrapper = label.closest("[data-separator-wrapper]");
+      (wrapper?.querySelector("[data-expand-button]") as HTMLElement)?.click();
+    });
+    await expect(line(4)).toBeVisible();
+    await expect(firstScope).toHaveCount(0);
+    await expect(page.locator("#file-loads")).toHaveText("2");
     // A controlled anchor can be extended, replaced, cleared, and reset.
     await line(10).click();
     await line(30).click({ modifiers: ["Shift"] });

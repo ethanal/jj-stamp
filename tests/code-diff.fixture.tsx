@@ -12,7 +12,7 @@ const base = Array.from(
   (_, i) => `// unchanged fixture line ${i + 1}`,
 );
 for (let line = 10; line <= 290; line += 20) {
-  base[line - 4] = `function fixtureSection${line}() {`;
+  base[line - 7] = `function fixtureSection${line}() {`;
   base[line - 1] =
     `  const fixtureValue${line} = "unchanged fixture line ${line}";`;
   base[line + 2] = "}";

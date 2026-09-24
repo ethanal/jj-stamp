@@ -25,6 +25,17 @@ export interface TreeSitterAssets {
   languages: Record<LanguageId, string>;
 }
 
+export interface HunkContext {
+  label: string;
+  oldLine?: number;
+  newLine?: number;
+}
+
+interface ScopeLocation {
+  label: string;
+  startLine: number;
+}
+
 interface ScopeRule {
   type: string;
   bodyFields?: string[];
@@ -340,18 +351,20 @@ function displayNode(node: Node, rule: ScopeRule): Node | null {
   return rule.requireDisplayParent && display.equals(node) ? null : display;
 }
 
-function headerText(
+function scopeLocation(
   source: string,
   node: Node,
   body: Node,
   rule: ScopeRule,
-): string | undefined {
+): ScopeLocation | undefined {
   const display = displayNode(node, rule);
   if (!display || display.startIndex >= body.startIndex) return;
   let header = source.slice(display.startIndex, body.startIndex);
   const opener = source.slice(body.startIndex, body.startIndex + 1);
-  header = compact(`${header}${opener === "{" ? " {" : ""}`);
-  return header || undefined;
+  const label = compact(`${header}${opener === "{" ? " {" : ""}`);
+  return label
+    ? { label, startLine: display.startPosition.row + 1 }
+    : undefined;
 }
 
 function lineStarts(source: string): number[] {
@@ -367,7 +380,7 @@ function contextAtLine(
   starts: number[],
   line: number,
   rules: Map<string, ScopeRule>,
-): string | undefined {
+): ScopeLocation | undefined {
   const row = line - 1;
   const lineStart = starts[row];
   if (lineStart === undefined) return;
@@ -390,9 +403,34 @@ function contextAtLine(
     ) {
       const body = bodyFor(node, rule, point);
       if (body && !body.hasError && !body.isMissing)
-        return headerText(source, node, body, rule);
+        return scopeLocation(source, node, body, rule);
     }
     node = node.parent;
+  }
+}
+
+function targetLine(hunk: Hunk, side: "old" | "new"): number | undefined {
+  const first = hunk.rows.findIndex(
+    (row) => row.raw[0] === "+" || row.raw[0] === "-",
+  );
+  if (first < 0) return;
+  let last = first;
+  while (
+    last + 1 < hunk.rows.length &&
+    (hunk.rows[last + 1].raw[0] === "+" || hunk.rows[last + 1].raw[0] === "-")
+  )
+    last++;
+  const coordinate = side === "old" ? "oldLine" : "newLine";
+  const marker = side === "old" ? "-" : "+";
+  for (let index = first; index <= last; index++)
+    if (hunk.rows[index].raw[0] === marker) return hunk.rows[index][coordinate];
+  for (let index = last + 1; index < hunk.rows.length; index++) {
+    const line = hunk.rows[index][coordinate];
+    if (line !== undefined) return line;
+  }
+  for (let index = first - 1; index >= 0; index--) {
+    const line = hunk.rows[index][coordinate];
+    if (line !== undefined) return line + 1;
   }
 }
 
@@ -405,7 +443,7 @@ async function contextsForSource(
   languageId: LanguageId,
   contents: string,
   targets: Target[],
-): Promise<Record<string, string>> {
+): Promise<Record<string, ScopeLocation>> {
   const bytes = new TextEncoder().encode(contents);
   if (bytes.length > MAX_PARSE_BYTES) return {};
   const loadedLanguage = await language(languageId);
@@ -440,7 +478,7 @@ export async function inferHunkContexts(
   path: string,
   hunks: Hunk[],
   files: FileDiffLoadedFiles,
-): Promise<Record<string, string>> {
+): Promise<Record<string, HunkContext>> {
   const languageId = languageForPath(path);
   if (!languageId) return {};
   const pair = files as {
@@ -450,20 +488,41 @@ export async function inferHunkContexts(
   const oldTargets: Target[] = [];
   const newTargets: Target[] = [];
   for (const hunk of hunks) {
-    const changed = firstChangedRow(hunk);
-    if (!changed) continue;
-    if (changed.raw[0] === "-" && changed.oldLine !== undefined)
-      oldTargets.push({ id: hunk.id, line: changed.oldLine });
-    else if (changed.raw[0] === "+" && changed.newLine !== undefined)
-      newTargets.push({ id: hunk.id, line: changed.newLine });
+    const oldLine = targetLine(hunk, "old");
+    const newLine = targetLine(hunk, "new");
+    if (oldLine !== undefined) oldTargets.push({ id: hunk.id, line: oldLine });
+    if (newLine !== undefined) newTargets.push({ id: hunk.id, line: newLine });
   }
   const [oldContexts, newContexts] = await Promise.all([
     pair.oldFile && oldTargets.length
       ? contextsForSource(languageId, pair.oldFile.contents, oldTargets)
-      : {},
+      : ({} as Record<string, ScopeLocation>),
     pair.newFile && newTargets.length
       ? contextsForSource(languageId, pair.newFile.contents, newTargets)
-      : {},
+      : ({} as Record<string, ScopeLocation>),
   ]);
-  return { ...oldContexts, ...newContexts };
+  return Object.fromEntries(
+    hunks.flatMap((hunk) => {
+      const changed = firstChangedRow(hunk);
+      if (!changed) return [];
+      const oldContext = oldContexts[hunk.id];
+      const newContext = newContexts[hunk.id];
+      const primary = changed.raw[0] === "-" ? oldContext : newContext;
+      if (!primary) return [];
+      return [
+        [
+          hunk.id,
+          {
+            label: primary.label,
+            ...(oldContext?.label === primary.label
+              ? { oldLine: oldContext.startLine }
+              : {}),
+            ...(newContext?.label === primary.label
+              ? { newLine: newContext.startLine }
+              : {}),
+          },
+        ],
+      ];
+    }),
+  );
 }

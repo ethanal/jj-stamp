@@ -21,7 +21,7 @@ const copy = async () => {
   return page.evaluate(() => navigator.clipboard.readText());
 };
 const expectedLine = (line: number) => {
-  if (line % 20 === 7) return `function fixtureSection${line + 3}() {`;
+  if (line % 20 === 4) return `function fixtureSection${line + 6}() {`;
   if (line % 20 === 10)
     return `  const fixtureValue${line} = "updated fixture line ${line}";`;
   if (line % 20 === 13) return "}";
