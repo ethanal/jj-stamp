@@ -597,7 +597,11 @@ export class ReviewService {
         );
       const targets = mutableSource.length
         ? metadata
-            .filter((entry) => entry.target && !entry.conflict)
+            // A resolution can be moved back into its conflicted parent in
+            // pieces. Keep older conflicted ancestors out of legacy targets.
+            .filter(
+              (entry) => entry.target && (!entry.conflict || entry.parent),
+            )
             .map((entry) => entry.revision)
         : [];
       const parents = metadata
@@ -613,11 +617,9 @@ export class ReviewService {
         ? "The current revision is immutable."
         : parents.length !== 1
           ? "Squashing requires exactly one immediate parent; merges are not supported."
-          : metadata.some((entry) => entry.parent && entry.conflict)
-            ? "The immediate parent contains conflicts; resolve it with jj before squashing."
-            : !parent
-              ? "The immediate parent is immutable; squashing into an older ancestor is not allowed."
-              : undefined;
+          : !parent
+            ? "The immediate parent is immutable; squashing into an older ancestor is not allowed."
+            : undefined;
       return {
         source,
         targets,
@@ -1286,7 +1288,7 @@ export class ReviewService {
       throw new ApiError(
         400,
         "INVALID_TARGET",
-        "Choose a conflict-free mutable ancestor of the current revision.",
+        "Choose a mutable immediate parent or a conflict-free mutable ancestor of the current revision.",
       );
     if (
       !Array.isArray(input.selections) ||
@@ -1362,7 +1364,7 @@ export class ReviewService {
       throw new ApiError(
         409,
         "SQUASH_UNAVAILABLE",
-        "Native selection requires a single conflict-free immediate parent.",
+        "Native selection requires a single mutable immediate parent.",
       );
     const editPlan: DiffEditorPlan = {
       version: 1,

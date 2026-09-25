@@ -147,13 +147,16 @@ for (const scenario of ["source", "parent", "unrelated"] as const) {
     } else {
       const state = await service.getState();
       assert.equal(reads.length, 2);
-      assert.ok(
-        !state.targets.some((target) => target.changeId === conflicted),
-      );
       if (scenario === "parent") {
-        assert.equal(state.parent, null);
-        assert.match(state.squashUnavailable!, /parent contains conflicts/);
+        assert.equal(state.parent!.changeId, conflicted);
+        assert.equal(state.squashUnavailable, undefined);
+        assert.ok(
+          state.targets.some((target) => target.changeId === conflicted),
+        );
       } else {
+        assert.ok(
+          !state.targets.some((target) => target.changeId === conflicted),
+        );
         assert.equal(state.source.changeId, clean);
         assert.ok(state.parent);
       }
@@ -201,10 +204,8 @@ test("scoped membership preserves custom conflicts() aliases", async (t) => {
       } else {
         const state = await service.getState();
         assert.equal(reads.length, 2);
-        if (alias.includes(parent)) {
-          assert.equal(state.parent, null);
-          assert.match(state.squashUnavailable!, /parent contains conflicts/);
-        } else assert.equal(state.parent!.changeId, parent);
+        assert.equal(state.parent!.changeId, parent);
+        assert.equal(state.squashUnavailable, undefined);
       }
     });
   }

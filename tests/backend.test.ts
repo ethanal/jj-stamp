@@ -703,39 +703,113 @@ test("new descendant conflicts still warn and allow exact undo", async () => {
   );
 });
 
-test("a clean source with a conflicted parent is reviewable but cannot squash into it", async () => {
-  const { root, state } = await fixture();
-  await jj(root, ["new", state.source.commitId, "-m", "Left"]);
-  await writeFile(path.join(root, "conflict.txt"), "left\n");
-  const left = (
-    await jj(root, ["log", "-r", "@", "--no-graph", "-T", "commit_id"])
-  ).stdout.trim();
-  await jj(root, ["new", state.source.commitId, "-m", "Right"]);
-  await writeFile(path.join(root, "conflict.txt"), "right\n");
-  await jj(root, ["new", left, "@", "-m", "Conflicted parent"]);
-  const parent = (
-    await jj(root, ["log", "-r", "@", "--no-graph", "-T", "change_id"])
-  ).stdout.trim();
-  await jj(root, ["new", "-m", "Resolved child"]);
-  await writeFile(path.join(root, "conflict.txt"), "resolved\n");
-  const service = new ReviewService({ repoPath: root });
-  const clean = await service.getState();
-  assert.equal(clean.parent, null);
-  assert.match(clean.squashUnavailable!, /parent contains conflicts/);
-  assert.ok(!clean.targets.some((target) => target.changeId === parent));
-  assert.ok(
-    clean.targets.length,
-    "clean older ancestors remain legacy targets",
-  );
-  await rejectsCode(
-    service.squashLines({ version: clean.version, selections: [] }),
-    "SQUASH_UNAVAILABLE",
-  );
-  await rejectsCode(
-    service.preview(input(clean, [], parent)),
-    "INVALID_TARGET",
-  );
-});
+for (const style of ["diff", "snapshot", "git"] as const) {
+  test(`conflicted parents accept incremental resolution squashes and undo (${style} markers)`, async () => {
+    const { root, state } = await fixture();
+    await jj(root, [
+      "config",
+      "set",
+      "--repo",
+      "ui.conflict-marker-style",
+      style,
+    ]);
+    const gap = Array.from({ length: 12 }, (_, i) => `context ${i}\n`).join("");
+    const contents = (side: string) => `${side} first\n${gap}${side} second\n`;
+    await jj(root, ["new", state.source.commitId, "-m", "Conflict base"]);
+    await writeFile(path.join(root, "conflict.txt"), contents("base"));
+    await writeFile(path.join(root, "other.txt"), "base other\n");
+    const base = (
+      await jj(root, ["log", "-r", "@", "--no-graph", "-T", "commit_id"])
+    ).stdout.trim();
+    await jj(root, ["new", base, "-m", "Left"]);
+    await writeFile(path.join(root, "conflict.txt"), contents("left"));
+    await writeFile(path.join(root, "other.txt"), "left other\n");
+    const left = (
+      await jj(root, ["log", "-r", "@", "--no-graph", "-T", "commit_id"])
+    ).stdout.trim();
+    await jj(root, ["new", base, "-m", "Right"]);
+    await writeFile(path.join(root, "conflict.txt"), contents("right"));
+    await writeFile(path.join(root, "other.txt"), "right other\n");
+    await jj(root, ["new", left, "@", "-m", "Conflicted parent"]);
+    const parent = (
+      await jj(root, ["log", "-r", "@", "--no-graph", "-T", "change_id"])
+    ).stdout.trim();
+    await jj(root, ["new", "-m", "Resolved child"]);
+    await writeFile(path.join(root, "conflict.txt"), contents("resolved"));
+    await writeFile(path.join(root, "other.txt"), "resolved other\n");
+    const service = new ReviewService({ repoPath: root });
+    const clean = await service.getState();
+    assert.equal(clean.parent!.changeId, parent);
+    assert.equal(clean.squashUnavailable, undefined);
+    assert.ok(clean.targets.some((target) => target.changeId === parent));
+    const original = await fileAt(root, "@-", "conflict.txt");
+    const other = await fileAt(root, "@-", "other.txt");
+    const file = clean.files.find((file) => file.path === "conflict.txt")!;
+    assert.equal(file.unsupported, undefined);
+    assert.equal(file.hunks.length, 2);
+    const first = file.hunks[0];
+    const partial = await service.squashLines({
+      version: clean.version,
+      selections: [{ id: first.id, lines: changes(first) }],
+    });
+    assert.equal(partial.warning, undefined);
+    assert.equal(partial.state.canUndo, true);
+    assert.equal(partial.state.parent!.changeId, parent);
+    assert.equal(partial.state.squashUnavailable, undefined);
+    const remaining = partial.state.files.find(
+      (file) => file.path === "conflict.txt",
+    )!;
+    assert.equal(remaining.hunks.length, 1);
+    const partialBytes = await fileAt(root, "@-", "conflict.txt");
+    assert.ok(partialBytes.startsWith("resolved first\n"));
+    assert.ok(partialBytes.includes("left second\n"));
+    assert.ok(partialBytes.includes("right second\n"));
+    assert.equal(await fileAt(root, "@-", "other.txt"), other);
+    assert.equal(await fileAt(root, "@", "conflict.txt"), contents("resolved"));
+    assert.equal((await service.getState()).version, partial.state.version);
+
+    // The legacy path must also accept the conflicted immediate parent.
+    const preview = await service.preview(
+      input(
+        partial.state,
+        partial.state.files.flatMap((file) =>
+          file.hunks.map((hunk) => ({
+            id: hunk.id,
+            lines: changes(hunk),
+          })),
+        ),
+        parent,
+      ),
+    );
+    const complete = await service.squash(preview.token);
+    assert.equal(complete.warning, undefined);
+    assert.equal(complete.state.files.length, 0);
+    assert.equal(
+      await fileAt(root, "@-", "conflict.txt"),
+      contents("resolved"),
+    );
+    assert.equal(await fileAt(root, "@-", "other.txt"), "resolved other\n");
+    assert.equal(
+      (
+        await jj(root, [
+          "log",
+          "--no-graph",
+          "-r",
+          "conflicts()",
+          "-T",
+          "change_id",
+        ])
+      ).stdout,
+      "",
+    );
+    const undone = await service.undo(complete.state.version);
+    assert.deepEqual(undone.state.files, partial.state.files);
+    assert.equal(undone.state.parent!.changeId, parent);
+    assert.equal(await fileAt(root, "@-", "conflict.txt"), partialBytes);
+    assert.equal(await fileAt(root, "@-", "other.txt"), other);
+    assert.notEqual(partialBytes, original);
+  });
+}
 
 test("immediate squash chooses only the exact parent, retains partial rows, and undoes", async () => {
   const { service, state, root } = await fixture();
