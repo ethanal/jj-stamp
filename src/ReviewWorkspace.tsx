@@ -554,12 +554,7 @@ export function RevisionGraph({
                         aria-label={`Review change ${row.revision.changeId}`}
                         aria-pressed={current}
                         title={`${row.revision.changeId}\n${row.revision.description}${row.mutable ? "" : "\nImmutable change"}`}
-                        disabled={
-                          !row.mutable ||
-                          idleActionDisabled ||
-                          dragging ||
-                          !hasVersion
-                        }
+                        disabled={idleActionDisabled || dragging || !hasVersion}
                         onClick={() => onSelectRevision(row.revision!.changeId)}
                       >
                         <ChangeId revision={row.revision} />

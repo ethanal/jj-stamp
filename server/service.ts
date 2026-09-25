@@ -94,13 +94,11 @@ interface UnavailableView {
 type ReviewView = RevisionView | UnavailableView;
 interface ViewSelection {
   allowUnavailable?: boolean;
-  allowConflicts?: boolean;
   changeId?: string;
-  requireMutable?: boolean;
+  requireAvailable?: boolean;
 }
 interface ViewOptions {
   selections?: ViewSelection[];
-  allowConflicts?: boolean;
   snapshot?: boolean;
 }
 export interface Selection {
@@ -502,7 +500,6 @@ export class ReviewService {
   /** One jj log reads all requested views; graph-only reads never snapshot. */
   private async readViews({
     selections = [{}],
-    allowConflicts = false,
     snapshot = true,
   }: ViewOptions = {}): Promise<ReviewView[]> {
     const revsets = selections.map((selection) => {
@@ -558,7 +555,7 @@ export class ReviewService {
       const sources = metadata
         .filter((entry) => entry.source)
         .map((entry) => entry.revision);
-      if (selection.requireMutable && sources.length !== 1)
+      if (selection.requireAvailable && sources.length !== 1)
         throw new ApiError(
           400,
           "INVALID_REVISION",
@@ -576,34 +573,24 @@ export class ReviewService {
         return unavailable;
       }
       const source = sources[0];
-      if (
-        !allowConflicts &&
-        !selection.allowConflicts &&
-        metadata.some((entry) => entry.source && entry.conflict)
-      )
-        throw new ApiError(
-          409,
-          "CONFLICTED_SOURCE",
-          "The selected revision contains conflicts. Resolve it with jj or select a clean revision before reviewing or squashing.",
-        );
-      const mutableSource = metadata.filter(
+      // Viewing is independent of mutation eligibility. Keep the reason in the
+      // versioned view so live conflict/config changes still invalidate writes.
+      const conflictedSource = metadata.some(
+        (entry) => entry.source && entry.conflict,
+      );
+      const mutableSource = metadata.some(
         (entry) => entry.source && entry.mutable,
       );
-      if (selection.requireMutable && !mutableSource.length)
-        throw new ApiError(
-          409,
-          "IMMUTABLE_SOURCE",
-          "Choose a mutable change. Immutable revisions cannot be selected for squashing.",
-        );
-      const targets = mutableSource.length
-        ? metadata
-            // A resolution can be moved back into its conflicted parent in
-            // pieces. Keep older conflicted ancestors out of legacy targets.
-            .filter(
-              (entry) => entry.target && (!entry.conflict || entry.parent),
-            )
-            .map((entry) => entry.revision)
-        : [];
+      const targets =
+        mutableSource && !conflictedSource
+          ? metadata
+              // A resolution can be moved back into its conflicted parent in
+              // pieces. Keep older conflicted ancestors out of legacy targets.
+              .filter(
+                (entry) => entry.target && (!entry.conflict || entry.parent),
+              )
+              .map((entry) => entry.revision)
+          : [];
       const parents = metadata
         .filter((entry) => entry.parent)
         .map((entry) => entry.revision);
@@ -613,13 +600,15 @@ export class ReviewService {
               (target) => target.commitId === parents[0].commitId,
             ) ?? null)
           : null;
-      const squashUnavailable = !mutableSource.length
-        ? "The current revision is immutable."
-        : parents.length !== 1
-          ? "Squashing requires exactly one immediate parent; merges are not supported."
-          : !parent
-            ? "The immediate parent is immutable; squashing into an older ancestor is not allowed."
-            : undefined;
+      const squashUnavailable = !mutableSource
+        ? "The current revision is immutable; viewing only."
+        : conflictedSource
+          ? "The current revision contains conflicts; viewing only. Resolve it with jj before squashing."
+          : parents.length !== 1
+            ? "Squashing requires exactly one immediate parent; merges are not supported."
+            : !parent
+              ? "The immediate parent is immutable; squashing into an older ancestor is not allowed."
+              : undefined;
       return {
         source,
         targets,
@@ -664,11 +653,10 @@ export class ReviewService {
   /** Capture pinned inputs for work that will perform its own final validation.
    * Never publish this state or authorize a mutation without revalidating it. */
   private async captureState(
-    allowConflicts = false,
     snapshot = true,
   ): Promise<{ state: State; views: ReviewView[] }> {
     await this.init(snapshot);
-    const views = await this.readViews({ allowConflicts, snapshot });
+    const views = await this.readViews({ snapshot });
     const view = this.requireView(views[0]);
     // The pinned diff does not depend on the operation query. Overlap these
     // reads, but drain BOTH even on failure before releasing the serial queue.
@@ -683,15 +671,9 @@ export class ReviewService {
     const files = filesResult.value;
     return { state: this.state(view, operation.id, files), views };
   }
-  private async readState(
-    allowConflicts = false,
-    snapshot = true,
-  ): Promise<State> {
-    const { state, views } = await this.captureState(allowConflicts, snapshot);
-    await this.validateViews(views, state.operation, {
-      allowConflicts,
-      snapshot,
-    });
+  private async readState(snapshot = true): Promise<State> {
+    const { state, views } = await this.captureState(snapshot);
+    await this.validateViews(views, state.operation, { snapshot });
     return state;
   }
   /** Wait for all accepted requests before a graceful service shutdown. */
@@ -720,8 +702,8 @@ export class ReviewService {
       // Resolve both identities and their live eligibility in one snapshot.
       // The candidate is not published until its diff and BOTH views validate.
       const selections = [
-        { allowUnavailable: true, allowConflicts: true },
-        { changeId: input.changeId, requireMutable: true },
+        { allowUnavailable: true },
+        { changeId: input.changeId, requireAvailable: true },
       ];
       const views = await this.readViews({ selections });
       const operation = await this.operation();
@@ -753,7 +735,7 @@ export class ReviewService {
       // source and its live availability; selection never silently follows @.
       const viewOptions: ViewOptions = {
         snapshot: false,
-        selections: [{ allowUnavailable: true, allowConflicts: true }],
+        selections: [{ allowUnavailable: true }],
       };
       const views = await this.readViews(viewOptions);
       const operation = await this.operation();
@@ -848,7 +830,7 @@ export class ReviewService {
           "Supply the current version, a repository-relative file path, and a positive integer line.",
         );
       // Unlike diff reads, an editor request must not even snapshot jj edits.
-      const before = await this.readState(false, false);
+      const before = await this.readState(false);
       this.requireVersion(before, input.version);
       const file = before.files.find((file) => file.path === input.path);
       if (!file)
@@ -864,7 +846,7 @@ export class ReviewService {
           "Deleted files cannot be opened in the workspace editor.",
         );
       await resolveEditorPath(this.root, input.path);
-      await this.revalidateVersion(before.version, false, false);
+      await this.revalidateVersion(before.version, false);
       const absolute = await resolveEditorPath(this.root, input.path);
       try {
         const result = await this.editorRunner(
@@ -1238,13 +1220,12 @@ export class ReviewService {
   }
   private async revalidateVersion(
     version: string,
-    allowConflicts = false,
     snapshot = true,
   ): Promise<void> {
     // Diff bytes are already pinned to immutable commit IDs. Recheck live
     // eligibility/configuration once, then the operation LAST; loading and
     // validating another complete state here only repeats the same checks.
-    const [view] = await this.readViews({ allowConflicts, snapshot });
+    const [view] = await this.readViews({ snapshot });
     const operation = await this.operation();
     if (!version || this.version(view, operation.id) !== version) stale();
   }
@@ -1283,6 +1264,8 @@ export class ReviewService {
   ): Promise<PreparedPreview> {
     this.requireVersion(state, input.version);
     this.assertNotPending();
+    if (state.squashUnavailable)
+      throw new ApiError(409, "SQUASH_UNAVAILABLE", state.squashUnavailable);
     const target = state.targets.find((rev) => rev.changeId === input.target);
     if (!target)
       throw new ApiError(
@@ -1584,7 +1567,7 @@ export class ReviewService {
       )
         warning =
           "The squash created a conflict. Undo this operation or resolve the affected revision with jj before editing it.";
-      after = await this.readState(true);
+      after = await this.readState();
       if (after.operation !== afterOp.id)
         throw new Error("Another operation followed the squash.");
     } catch (error) {
@@ -1661,7 +1644,7 @@ export class ReviewService {
   }
   undo(version: string): Promise<{ state: State; output: string }> {
     return this.serial("undo", async () => {
-      const state = await this.readState(true);
+      const state = await this.readState();
       this.requireVersion(state, version);
       this.assertNotPending();
       const undo = this.history.undo;

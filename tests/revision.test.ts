@@ -389,7 +389,7 @@ test("corrupt legacy journal is ignored on initialization and later reads", asyn
   assert.deepEqual((await readdir(options.dataDir)).sort(), entries);
 });
 
-test("initial conflicts do not clear pinned identity; legacy pending journals have no effect", async () => {
+test("initial conflicts remain pinned and readable; legacy pending journals have no effect", async () => {
   const options = await fixture();
   const original = await revisionId(options.repoPath, "@");
   await jj(options.repoPath, ["new", "-m", "Left"]);
@@ -408,9 +408,16 @@ test("initial conflicts do not clear pinned identity; legacy pending journals ha
   };
   await writeFile(legacyJournalPath(options), JSON.stringify(pending));
   const service = new ReviewService({ repoPath: options.repoPath });
-  await rejectsCode(service.getState(), "CONFLICTED_SOURCE");
+  const conflicted = await service.getState();
+  assert.equal(conflicted.source.changeId, conflictId);
+  assert.equal(conflicted.parent, null);
+  assert.deepEqual(conflicted.targets, []);
+  assert.match(conflicted.squashUnavailable!, /conflicts/);
   await jj(options.repoPath, ["edit", original]);
-  await rejectsCode(service.getState(), "CONFLICTED_SOURCE");
+  const pinned = await service.getState();
+  assert.equal(pinned.source.changeId, conflictId);
+  assert.equal(pinned.parent, null);
+  assert.deepEqual(pinned.targets, []);
   await jj(options.repoPath, ["abandon", conflictId]);
   await rejectsCode(service.getState(), "SOURCE_UNAVAILABLE");
   assert.deepEqual(
@@ -494,7 +501,7 @@ test("explicit selection switches to a mutable ancestor, invalidates previews an
   );
 });
 
-test("invalid and immutable choices retain source and previews; source prefixes use identity rather than bookmarks", async () => {
+test("invalid choices retain source and previews; immutable choices are readable and source prefixes use identity", async () => {
   const options = await fixture();
   const service = new ReviewService({ repoPath: options.repoPath });
   const original = await service.getState();
@@ -517,17 +524,23 @@ test("invalid and immutable choices retain source and previews; source prefixes 
     }),
     "INVALID_REVISION",
   );
-  const rootId = await revisionId(options.repoPath, "root()");
-  await rejectsCode(
-    service.selectRevision({ version: original.version, changeId: rootId }),
-    "IMMUTABLE_SOURCE",
-  );
   assert.deepEqual(await service.getState(), original);
   // Rejected selections did not consume an already validated preview.
   const squashed = await service.squash(preview.token);
-  const selected = (
+  const rootId = await revisionId(options.repoPath, "root()");
+  const immutable = (
     await service.selectRevision({
       version: squashed.state.version,
+      changeId: rootId,
+    })
+  ).state;
+  assert.equal(immutable.source.changeId, rootId);
+  assert.equal(immutable.parent, null);
+  assert.deepEqual(immutable.targets, []);
+  assert.match(immutable.squashUnavailable!, /immutable/);
+  const selected = (
+    await service.selectRevision({
+      version: immutable.version,
       changeId: original.parent!.changeId.slice(0, 12),
     })
   ).state;
@@ -717,7 +730,7 @@ test("structured log preserves actual jj graph prefixes, metadata, connector row
   );
   assert.ok(
     log.rows.some((row) => row.revision && !row.mutable),
-    "immutable nodes are represented as non-selectable",
+    "immutable nodes retain their eligibility metadata",
   );
   const renderedIds = (
     await jj(options.repoPath, [
@@ -1142,7 +1155,7 @@ test("unavailable-source recovery revalidates history before publishing a candid
   );
 });
 
-test("clean source above resolved ancestor conflicts and an empty parent is available; conflicted source can be explicitly left via graph", async () => {
+test("clean source above resolved ancestor conflicts stays writable; conflicted sources can be entered and left via graph", async () => {
   const options = await fixture();
   const base = await revisionId(options.repoPath, "@");
   await jj(options.repoPath, ["new", "-m", "Left branch"]);
@@ -1153,7 +1166,11 @@ test("clean source above resolved ancestor conflicts and an empty parent is avai
   await jj(options.repoPath, ["new", left, "@", "-m", "Conflicted merge"]);
   const conflictId = await revisionId(options.repoPath, "@");
   const service = new ReviewService({ repoPath: options.repoPath });
-  await rejectsCode(service.getState(), "CONFLICTED_SOURCE");
+  const initialConflict = await service.getState();
+  assert.equal(initialConflict.source.changeId, conflictId);
+  assert.equal(initialConflict.parent, null);
+  assert.deepEqual(initialConflict.targets, []);
+  assert.match(initialConflict.squashUnavailable!, /conflicts/);
   await jj(options.repoPath, ["new", "-m", "Resolved descendant"]);
   await writeFile(path.join(options.repoPath, "conflict.txt"), "resolved\n");
   await jj(options.repoPath, ["new", "-m", "Empty parent"]);
@@ -1161,25 +1178,33 @@ test("clean source above resolved ancestor conflicts and an empty parent is avai
   await writeFile(path.join(options.repoPath, "healthy.txt"), "review me\n");
   const healthy = await revisionId(options.repoPath, "@");
   const graph = await service.getLog({ includeOutput: false });
-  await rejectsCode(service.getState(), "CONFLICTED_SOURCE");
+  assert.equal((await service.getState()).source.changeId, conflictId);
   const state = (
     await service.selectRevision({ version: graph.version, changeId: healthy })
   ).state;
   assert.equal(state.parent!.description, "Empty parent");
   assert.ok(!state.targets.some((target) => target.changeId === conflictId));
   assert.equal(state.squashUnavailable, undefined);
-  await rejectsCode(
-    service.selectRevision({ version: state.version, changeId: conflictId }),
-    "CONFLICTED_SOURCE",
-  );
-  assert.deepEqual(
-    await service.getState(),
-    state,
-    "a conflicted candidate is not published",
-  );
+  const conflict = (
+    await service.selectRevision({
+      version: state.version,
+      changeId: conflictId,
+    })
+  ).state;
+  assert.equal(conflict.source.changeId, conflictId);
+  assert.equal(conflict.parent, null);
+  assert.deepEqual(conflict.targets, []);
+  assert.match(conflict.squashUnavailable!, /conflicts/);
+  const returned = (
+    await service.selectRevision({
+      version: conflict.version,
+      changeId: healthy,
+    })
+  ).state;
+  assert.equal(returned.source.changeId, healthy);
   const result = await service.squashLines({
-    version: state.version,
-    selections: selections(state),
+    version: returned.version,
+    selections: selections(returned),
   });
   assert.equal(result.state.source.changeId, healthy);
   assert.deepEqual(result.state.files, []);

@@ -97,6 +97,15 @@ async function pressMutation(key: "s" | "u") {
   await expect(page.locator('[role="alert"]')).toHaveCount(0);
   return result.json();
 }
+async function refreshState() {
+  const response = page.waitForResponse((response) =>
+    response.url().endsWith("/api/state"),
+  );
+  await page.keyboard.press("r");
+  const result = await response;
+  assert.equal(result.status(), 200, await result.text());
+  return result.json();
+}
 try {
   await page.route("**/api/log*", async (route) => {
     blockedLogRequests++;
@@ -203,6 +212,72 @@ try {
   await expect(codeLine(21)).toBeVisible();
   console.log(
     "✓ Click a mutable graph change, display its unique parent, clear old selection, and switch back",
+  );
+  const immutable = (
+    await jj(repoPath, ["log", "--no-graph", "-r", "@--", "-T", "change_id"])
+  ).stdout.trim();
+  await jj(repoPath, [
+    "config",
+    "set",
+    "--repo",
+    'revset-aliases."immutable_heads()"',
+    immutable,
+  ]);
+  await refreshState();
+  await expect(reviewChange(immutable)).toBeEnabled();
+  const selectedImmutable = page.waitForResponse((response) =>
+    response.url().endsWith("/api/revision"),
+  );
+  await reviewChange(immutable).click();
+  const immutableResponse = await selectedImmutable;
+  assert.equal(immutableResponse.status(), 200, await immutableResponse.text());
+  const immutableState = (await immutableResponse.json()).state;
+  assert.equal(immutableState.parent, null);
+  assert.deepEqual(immutableState.targets, []);
+  await expect(page.getByLabel("Current change ID")).toHaveAttribute(
+    "title",
+    immutable,
+  );
+  await expect(page.locator(".file-bar")).toContainText("src/notifications.ts");
+  await expect(treeRow("src/notifications.ts")).toBeVisible();
+  await expect(page.locator(".squash-unavailable")).toContainText("immutable");
+  await expect(page.getByRole("button", { name: "s squash" })).toBeDisabled();
+  await expect(
+    page.getByRole("button", { name: "Squash file src/notifications.ts" }),
+  ).toBeDisabled();
+  await expect(page.getByLabel("Squash destination change ID")).toHaveText("—");
+  const immutableMutationCount = mutations.length;
+  await page.keyboard.press("s");
+  await page.waitForTimeout(100);
+  assert.equal(mutations.length, immutableMutationCount);
+  await page.keyboard.press("Escape");
+  const selectedClean = page.waitForResponse((response) =>
+    response.url().endsWith("/api/revision"),
+  );
+  await reviewChange(initial.source.changeId).click();
+  const cleanResponse = await selectedClean;
+  assert.equal(cleanResponse.status(), 200, await cleanResponse.text());
+  await expect(page.getByLabel("Current change ID")).toHaveAttribute(
+    "title",
+    initial.source.changeId,
+  );
+  await expect(codeLine(21)).toBeVisible();
+  await expect(page.locator(".squash-unavailable")).toHaveCount(0);
+  await expect(
+    page.getByRole("button", { name: "Squash file src/notifications.ts" }),
+  ).toBeEnabled();
+  await jj(repoPath, [
+    "config",
+    "set",
+    "--repo",
+    'revset-aliases."immutable_heads()"',
+    "root()",
+  ]);
+  const resetImmutability = await refreshState();
+  assert.equal(resetImmutability.source.changeId, initial.source.changeId);
+  assert.equal(resetImmutability.squashUnavailable, undefined);
+  console.log(
+    "✓ Immutable graph change displays content with squashing disabled, rejects keyboard squash, then switches back cleanly",
   );
   const fileCounts = treeRow("tests/notifications.test.ts").locator(
     '[data-item-section="decoration"]',
@@ -839,15 +914,6 @@ try {
   await page.getByRole("button", { name: "Expand files sidebar" }).click();
   await page.getByRole("button", { name: "Expand log sidebar" }).click();
   await page.screenshot({ path: path.join(dataDir, "jj-stamp-mobile.png") });
-  const refreshState = async () => {
-    const response = page.waitForResponse((response) =>
-      response.url().endsWith("/api/state"),
-    );
-    await page.keyboard.press("r");
-    const result = await response;
-    assert.equal(result.status(), 200, await result.text());
-    return result.json();
-  };
   await jj(initial.repo.path, [
     "describe",
     "-m",
@@ -940,10 +1006,113 @@ try {
   console.log(
     "✓ Compact folder chains, collapse survives refresh, duplicate names, whole-file squash/undo, and fallback reveal",
   );
-  // A merge can be reviewed, but there is no single safe squash destination.
   const left = (
     await jj(repoPath, ["log", "--no-graph", "-r", "@", "-T", "change_id"])
   ).stdout.trim();
+  await jj(repoPath, ["new", left, "-m", "Original conflict parent"]);
+  await writeFile(
+    path.join(repoPath, "browser-conflict.txt"),
+    "original browser conflict\n",
+  );
+  await jj(repoPath, ["status"]);
+  await jj(repoPath, ["new", "-m", "Conflicted browser change"]);
+  await writeFile(
+    path.join(repoPath, "browser-conflict.txt"),
+    "child browser conflict\n",
+  );
+  await jj(repoPath, ["status"]);
+  const conflicted = (
+    await jj(repoPath, ["log", "--no-graph", "-r", "@", "-T", "change_id"])
+  ).stdout.trim();
+  await jj(repoPath, ["new", left, "-m", "Replacement conflict parent"]);
+  await writeFile(
+    path.join(repoPath, "browser-conflict.txt"),
+    "replacement browser conflict\n",
+  );
+  await jj(repoPath, ["status"]);
+  const replacementParent = (
+    await jj(repoPath, ["log", "--no-graph", "-r", "@", "-T", "change_id"])
+  ).stdout.trim();
+  await jj(repoPath, ["rebase", "-s", conflicted, "-d", replacementParent]);
+  const conflictParents = (
+    await jj(repoPath, [
+      "log",
+      "--no-graph",
+      "-r",
+      conflicted,
+      "-T",
+      'parents.map(|p| p.commit_id() ++ "\\n")',
+    ])
+  ).stdout
+    .trim()
+    .split("\n")
+    .filter(Boolean);
+  assert.equal(
+    conflictParents.length,
+    1,
+    "fixture must be a single-parent conflict",
+  );
+  await refreshState();
+  await expect(reviewChange(conflicted)).toBeEnabled();
+  const selectedConflict = page.waitForResponse((response) =>
+    response.url().endsWith("/api/revision"),
+  );
+  await reviewChange(conflicted).click();
+  const conflictResponse = await selectedConflict;
+  assert.equal(conflictResponse.status(), 200, await conflictResponse.text());
+  const conflictState = (await conflictResponse.json()).state;
+  assert.equal(conflictState.parent, null);
+  assert.deepEqual(conflictState.targets, []);
+  assert.deepEqual(
+    conflictState.files.map((file: { path: string }) => file.path),
+    ["browser-conflict.txt"],
+  );
+  await expect(page.getByLabel("Current change ID")).toHaveAttribute(
+    "title",
+    conflicted,
+  );
+  await expect(page.locator(".file-bar")).toContainText("browser-conflict.txt");
+  await expect(treeRow("browser-conflict.txt")).toBeVisible();
+  await expect(
+    page.getByRole("region", { name: "Diff for browser-conflict.txt" }),
+  ).toContainText("browser conflict");
+  await expect(page.locator(".squash-unavailable")).toContainText("conflicts");
+  await expect(page.getByRole("button", { name: "s squash" })).toBeDisabled();
+  await expect(
+    page.getByRole("button", { name: "Squash file browser-conflict.txt" }),
+  ).toBeDisabled();
+  await expect(page.getByLabel("Squash destination change ID")).toHaveText("—");
+  const conflictMutationCount = mutations.length;
+  await page.keyboard.press("s");
+  await page.waitForTimeout(100);
+  assert.equal(mutations.length, conflictMutationCount);
+  await page.keyboard.press("Escape");
+  const selectedLeft = page.waitForResponse((response) =>
+    response.url().endsWith("/api/revision"),
+  );
+  await reviewChange(left).click();
+  const leftResponse = await selectedLeft;
+  assert.equal(leftResponse.status(), 200, await leftResponse.text());
+  const leftState = (await leftResponse.json()).state;
+  assert(leftState.parent);
+  assert.equal(leftState.squashUnavailable, undefined);
+  await expect(page.getByLabel("Current change ID")).toHaveAttribute(
+    "title",
+    left,
+  );
+  await expect(page.locator(".squash-unavailable")).toHaveCount(0);
+  await expect(page.getByLabel("Squash destination change ID")).not.toHaveText(
+    "—",
+  );
+  if (leftState.files[0])
+    await expect(page.locator(".file-bar")).toContainText(
+      leftState.files[0].path,
+    );
+  console.log(
+    "✓ Single-parent conflicted graph change displays content with squashing disabled, rejects keyboard squash, then switches back cleanly",
+  );
+  await jj(repoPath, ["edit", left]);
+  // A merge can be reviewed, but there is no single safe squash destination.
   await jj(repoPath, ["new", "@-", "-m", "Other branch"]);
   await jj(repoPath, ["new", left, "@", "-m", "Two-parent merge"]);
   const merge = (

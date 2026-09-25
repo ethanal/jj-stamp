@@ -3,7 +3,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { ApiError, ReviewService } from "../server/service.ts";
+import { ReviewService } from "../server/service.ts";
 import { jj } from "../server/process.ts";
 import { createDemo } from "./fixtures.ts";
 
@@ -138,28 +138,23 @@ for (const scenario of ["source", "parent", "unrelated"] as const) {
       jjRunner: runner,
       revision: scenario === "unrelated" ? clean : "@",
     });
+    const state = await service.getState();
+    assert.equal(reads.length, 2);
     if (scenario === "source") {
-      await assert.rejects(
-        service.getState(),
-        (error: unknown) =>
-          error instanceof ApiError && error.code === "CONFLICTED_SOURCE",
-      );
+      assert.equal(state.source.changeId, conflicted);
+      assert.equal(state.parent, null);
+      assert.deepEqual(state.targets, []);
+      assert.match(state.squashUnavailable!, /conflicts/);
+    } else if (scenario === "parent") {
+      assert.equal(state.parent!.changeId, conflicted);
+      assert.equal(state.squashUnavailable, undefined);
+      assert.ok(state.targets.some((target) => target.changeId === conflicted));
     } else {
-      const state = await service.getState();
-      assert.equal(reads.length, 2);
-      if (scenario === "parent") {
-        assert.equal(state.parent!.changeId, conflicted);
-        assert.equal(state.squashUnavailable, undefined);
-        assert.ok(
-          state.targets.some((target) => target.changeId === conflicted),
-        );
-      } else {
-        assert.ok(
-          !state.targets.some((target) => target.changeId === conflicted),
-        );
-        assert.equal(state.source.changeId, clean);
-        assert.ok(state.parent);
-      }
+      assert.ok(
+        !state.targets.some((target) => target.changeId === conflicted),
+      );
+      assert.equal(state.source.changeId, clean);
+      assert.ok(state.parent);
     }
     reads.length = 0;
     assert.ok((await service.getLog({ includeOutput: false })).rows.length);
@@ -195,15 +190,13 @@ test("scoped membership preserves custom conflicts() aliases", async (t) => {
       assert.ok(graph.rows.length);
       assert.equal(reads.length, 2);
       reads.length = 0;
+      const state = await service.getState();
+      assert.equal(reads.length, 2);
       if (alias === "all()" || alias.includes(source)) {
-        await assert.rejects(
-          service.getState(),
-          (error: unknown) =>
-            error instanceof ApiError && error.code === "CONFLICTED_SOURCE",
-        );
+        assert.equal(state.parent, null);
+        assert.deepEqual(state.targets, []);
+        assert.match(state.squashUnavailable!, /conflicts/);
       } else {
-        const state = await service.getState();
-        assert.equal(reads.length, 2);
         assert.equal(state.parent!.changeId, parent);
         assert.equal(state.squashUnavailable, undefined);
       }

@@ -248,9 +248,11 @@ await expect(page.locator(".log-status")).toHaveText("updating…");
 await expect(
   page.getByRole("button", { name: "Review change change-3", exact: true }),
 ).toBeEnabled();
+// Immutable revisions remain navigable while graph metadata refreshes;
+// live state, not the graph's mutability flag, controls squash eligibility.
 await expect(
   page.getByRole("button", { name: "Review change change-12", exact: true }),
-).toBeDisabled();
+).toBeEnabled();
 await choose(3);
 await graphGates[1].ready;
 assert.deepEqual(selections.at(-1), {

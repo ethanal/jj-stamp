@@ -56,6 +56,8 @@ const races = [
   { api: "direct", boundary: "baseline", change: "edit" },
   { api: "legacy", boundary: "baseline", change: "config" },
   { api: "direct", boundary: "final metadata", change: "history" },
+  { api: "direct", boundary: "file bytes", change: "conflict eligibility" },
+  { api: "legacy", boundary: "baseline", change: "conflict eligibility" },
 ] as const;
 
 for (const scenario of races) {
@@ -87,8 +89,12 @@ for (const scenario of races) {
           "config",
           "set",
           "--repo",
-          'revset-aliases."immutable_heads()"',
-          before.parent!.commitId,
+          scenario.change === "conflict eligibility"
+            ? 'revset-aliases."conflicts()"'
+            : 'revset-aliases."immutable_heads()"',
+          scenario.change === "conflict eligibility"
+            ? `change_id("${before.source.changeId}")`
+            : before.parent!.commitId,
         ]);
       }
     }
@@ -148,15 +154,24 @@ for (const scenario of races) {
     assert.equal(error.details?.pending, undefined);
     assert.deepEqual(calls.slice(-3), ["baseline", "metadata", "op"]);
     if (token) await rejectsCode(service.squash(token), "STALE_PREVIEW");
-    if (scenario.change === "config") {
+    if (
+      scenario.change === "config" ||
+      scenario.change === "conflict eligibility"
+    ) {
       // Prove this was an eligibility-only race, not an operation-head race.
-      assert.equal((await service.getState()).operation, before.operation);
+      const readOnly = await service.getState();
+      assert.equal(readOnly.operation, before.operation);
+      assert.equal(readOnly.parent, null);
+      if (scenario.change === "conflict eligibility")
+        assert.match(readOnly.squashUnavailable!, /contains conflicts/);
       await jj(root, [
         "config",
         "set",
         "--repo",
-        'revset-aliases."immutable_heads()"',
-        "root()",
+        scenario.change === "conflict eligibility"
+          ? 'revset-aliases."conflicts()"'
+          : 'revset-aliases."immutable_heads()"',
+        scenario.change === "conflict eligibility" ? "none()" : "root()",
       ]);
     }
     const refreshed = await service.getState();

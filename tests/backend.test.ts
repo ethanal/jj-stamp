@@ -625,21 +625,33 @@ test("unrelated conflicts allow review, squash, and undo; immutable ancestors ar
   const conflicted = (
     await jj(root, ["log", "-r", "@", "--no-graph", "-T", "change_id"])
   ).stdout.trim();
-  await rejectsCode(
-    new ReviewService({ repoPath: root }).getState(),
-    "CONFLICTED_SOURCE",
-  );
+  const startupConflict = await new ReviewService({
+    repoPath: root,
+  }).getState();
+  assert.equal(startupConflict.source.changeId, conflicted);
+  assert.equal(startupConflict.parent, null);
+  assert.deepEqual(startupConflict.targets, []);
+  assert.match(startupConflict.squashUnavailable!, /conflicts/);
   const clean = await service.getState();
   assert.deepEqual(clean.files, restricted.files);
   assert.ok((await service.getLog()).rows.length);
-  await rejectsCode(
-    service.selectRevision({ version: clean.version, changeId: conflicted }),
-    "CONFLICTED_SOURCE",
-  );
-  assert.equal(
-    (await service.getState()).source.changeId,
-    clean.source.changeId,
-  );
+  const selectedConflict = (
+    await service.selectRevision({
+      version: clean.version,
+      changeId: conflicted,
+    })
+  ).state;
+  assert.equal(selectedConflict.source.changeId, conflicted);
+  assert.equal(selectedConflict.parent, null);
+  assert.deepEqual(selectedConflict.targets, []);
+  assert.match(selectedConflict.squashUnavailable!, /conflicts/);
+  const returned = (
+    await service.selectRevision({
+      version: selectedConflict.version,
+      changeId: clean.source.changeId,
+    })
+  ).state;
+  assert.equal(returned.source.changeId, clean.source.changeId);
   await rejectsCode(
     service.preview(input(restricted, [{ id: hunk.id, lines: changes(hunk) }])),
     "STALE_STATE",
@@ -912,6 +924,195 @@ test("immutable immediate parent never falls back to an older candidate", async 
     "SQUASH_UNAVAILABLE",
   );
   assert.equal((await service.getState()).operation, restricted.operation);
+});
+
+test("immutable sources keep real diffs and file context across startup, switching and back, while mutations stay inert", async () => {
+  const { service, state, root } = await fixture();
+  const file = state.files[0];
+  const originalContext = await service.getFile({
+    version: state.version,
+    path: file.path,
+  });
+  await jj(root, [
+    "config",
+    "set",
+    "--repo",
+    'revset-aliases."immutable_heads()"',
+    state.source.changeId,
+  ]);
+  let mutationCalls = 0;
+  const startup = new ReviewService({
+    repoPath: root,
+    toolRunner: async () => {
+      mutationCalls++;
+      throw new Error("read-only sources must not invoke the mutation runner");
+    },
+  });
+  const immutable = await startup.getState();
+  assert.equal(immutable.source.changeId, state.source.changeId);
+  assert.equal(immutable.parent, null);
+  assert.deepEqual(immutable.targets, []);
+  assert.match(immutable.squashUnavailable!, /immutable/);
+  assert.deepEqual(immutable.files, state.files);
+  assert.deepEqual(
+    await startup.getFile({ version: immutable.version, path: file.path }),
+    originalContext,
+  );
+  assert.equal(
+    originalContext.oldFile!.contents,
+    await fileAt(root, state.parent!.commitId, file.path),
+  );
+  assert.equal(
+    originalContext.newFile!.contents,
+    await fileAt(root, state.source.commitId, file.path),
+  );
+  const picked = [{ id: file.hunks[0].id, lines: changes(file.hunks[0]) }];
+  await rejectsCode(
+    startup.squashLines({ version: immutable.version, selections: picked }),
+    "SQUASH_UNAVAILABLE",
+  );
+  await rejectsCode(
+    startup.preview({
+      version: immutable.version,
+      target: state.parent!.changeId,
+      selections: picked,
+    }),
+    "SQUASH_UNAVAILABLE",
+  );
+  const unchanged = await startup.getState();
+  assert.equal(unchanged.operation, immutable.operation);
+  assert.equal(unchanged.source.commitId, immutable.source.commitId);
+  assert.equal(mutationCalls, 0);
+
+  await jj(root, ["new", state.source.commitId, "-m", "Mutable child"]);
+  await writeFile(path.join(root, "mutable-child.txt"), "mutable\n");
+  await jj(root, ["new", "-m", "Mutable grandchild"]);
+  await writeFile(path.join(root, "mutable-grandchild.txt"), "mutable too\n");
+  const navigator = new ReviewService({ repoPath: root });
+  const grandchild = await navigator.getState();
+  const switched = (
+    await navigator.selectRevision({
+      version: grandchild.version,
+      changeId: state.source.changeId,
+    })
+  ).state;
+  assert.equal(switched.source.changeId, state.source.changeId);
+  assert.equal(switched.parent, null);
+  assert.deepEqual(switched.targets, []);
+  assert.deepEqual(switched.files, state.files);
+  assert.deepEqual(
+    await navigator.getFile({ version: switched.version, path: file.path }),
+    originalContext,
+  );
+  const back = (
+    await navigator.selectRevision({
+      version: switched.version,
+      changeId: grandchild.source.changeId,
+    })
+  ).state;
+  assert.equal(back.source.changeId, grandchild.source.changeId);
+  assert.equal(back.squashUnavailable, undefined);
+});
+
+test("conflicted one-parent sources expose conflict diffs and file context across startup, switching and back, while mutations stay inert", async () => {
+  const { state, root } = await fixture();
+  const file = state.files[0];
+  const removed = file.hunks
+    .flatMap((hunk) => hunk.rows)
+    .find((row) => row.raw.startsWith("-"))!;
+  await jj(root, [
+    "new",
+    state.parent!.commitId,
+    "-m",
+    "Conflicting destination",
+  ]);
+  const filePath = path.join(root, file.path);
+  const destinationBytes = (await readFile(filePath, "utf8")).replace(
+    removed.raw.slice(1),
+    "// incompatible destination edit",
+  );
+  await writeFile(filePath, destinationBytes);
+  await jj(root, ["status"]);
+  const destination = (
+    await jj(root, ["log", "--no-graph", "-r", "@", "-T", "change_id"])
+  ).stdout.trim();
+  await jj(root, ["rebase", "-s", state.source.changeId, "-d", destination]);
+  await jj(root, ["edit", state.source.changeId]);
+
+  let mutationCalls = 0;
+  const startup = new ReviewService({
+    repoPath: root,
+    toolRunner: async () => {
+      mutationCalls++;
+      throw new Error("read-only sources must not invoke the mutation runner");
+    },
+  });
+  const conflicted = await startup.getState();
+  assert.equal(conflicted.source.changeId, state.source.changeId);
+  assert.equal(conflicted.parent, null);
+  assert.deepEqual(conflicted.targets, []);
+  assert.match(conflicted.squashUnavailable!, /conflicts/);
+  const conflictFile = conflicted.files.find(
+    (candidate) => candidate.path === file.path,
+  )!;
+  assert.ok(conflictFile.hunks.length > 0);
+  assert.equal(conflictFile.unsupported, undefined);
+  assert.match(conflictFile.patch, /<<<<<<< conflict/);
+  const context = await startup.getFile({
+    version: conflicted.version,
+    path: conflictFile.path,
+  });
+  assert.equal(context.oldFile!.contents, destinationBytes);
+  assert.match(context.newFile!.contents, /<<<<<<< conflict/);
+  assert.equal(
+    context.newFile!.contents,
+    await fileAt(root, conflicted.source.commitId, file.path),
+  );
+  const picked = [
+    {
+      id: conflictFile.hunks[0].id,
+      lines: changes(conflictFile.hunks[0]),
+    },
+  ];
+  await rejectsCode(
+    startup.squashLines({ version: conflicted.version, selections: picked }),
+    "SQUASH_UNAVAILABLE",
+  );
+  await rejectsCode(
+    startup.preview({
+      version: conflicted.version,
+      target: destination,
+      selections: picked,
+    }),
+    "SQUASH_UNAVAILABLE",
+  );
+  const unchanged = await startup.getState();
+  assert.equal(unchanged.operation, conflicted.operation);
+  assert.equal(unchanged.source.commitId, conflicted.source.commitId);
+  assert.equal(mutationCalls, 0);
+
+  const clean = (
+    await startup.selectRevision({
+      version: conflicted.version,
+      changeId: destination,
+    })
+  ).state;
+  assert.equal(clean.source.changeId, destination);
+  assert.equal(clean.squashUnavailable, undefined);
+  const back = (
+    await startup.selectRevision({
+      version: clean.version,
+      changeId: state.source.changeId,
+    })
+  ).state;
+  assert.equal(back.source.changeId, state.source.changeId);
+  assert.equal(back.parent, null);
+  assert.deepEqual(back.targets, []);
+  assert.deepEqual(back.files, conflicted.files);
+  assert.deepEqual(
+    await startup.getFile({ version: back.version, path: file.path }),
+    context,
+  );
 });
 
 test("merge parents are unavailable rather than selecting any ancestor; file context fails closed", async () => {
@@ -1518,12 +1719,18 @@ test("revision API validates strict versioned identity input and returns the exp
   });
   assert.equal(stale.status, 409);
   assert.equal((await stale.json()).code, "STALE_STATE");
-  const immutable = await select({
+  const immutableResponse = await select({
     version: selected.version,
     changeId: "z".repeat(32),
   });
-  assert.equal(immutable.status, 409);
-  assert.equal((await immutable.json()).code, "IMMUTABLE_SOURCE");
+  assert.equal(immutableResponse.status, 200);
+  const { state: immutable } = (await immutableResponse.json()) as {
+    state: State;
+  };
+  assert.match(immutable.source.changeId, /^z+$/);
+  assert.equal(immutable.parent, null);
+  assert.deepEqual(immutable.targets, []);
+  assert.match(immutable.squashUnavailable!, /immutable/);
   const log = await (await fetch(`${base}/log`)).json();
   const rowLog = await (await fetch(`${base}/log?format=rows`)).json();
   assert.deepEqual(rowLog, { version: log.version, rows: log.rows });
@@ -1532,15 +1739,15 @@ test("revision API validates strict versioned identity input and returns the exp
   assert.equal(graphResponse.headers.get("cache-control"), "no-store");
   assert.deepEqual(await graphResponse.json(), rowLog);
   assert.equal((await fetch(`${base}/log?format=invalid`)).status, 400);
-  assert.equal(log.version, selected.version);
+  assert.equal(log.version, immutable.version);
   assert.equal(typeof log.output, "string");
   assert.ok(
     log.rows.some(
       (row: { revision?: { changeId: string }; mutable?: boolean }) =>
-        row.revision?.changeId === selected.source.changeId && row.mutable,
+        row.revision?.changeId === immutable.source.changeId && !row.mutable,
     ),
   );
-  assert.deepEqual(await service.getState(), selected);
+  assert.deepEqual(await service.getState(), immutable);
 });
 
 test("native callback failure includes its full invocation over HTTP and never retried by reads or restart", async (t) => {

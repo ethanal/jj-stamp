@@ -113,7 +113,7 @@ test("a cold graph read needs neither diffs nor the mutation runner and has the 
 });
 
 for (const affected of ["source", "candidate"] as const) {
-  test(`selection rechecks configuration-only mutability of ${affected} before publishing`, async (t) => {
+  test(`selection treats configuration-only eligibility changes to ${affected} as stale`, async (t) => {
     const options = await fixture(t);
     const original = (await new ReviewService(options).getState()).source;
     await jj(options.repoPath, [
@@ -164,9 +164,7 @@ for (const affected of ["source", "candidate"] as const) {
     await assert.rejects(
       service.selectRevision({ version: before.version, changeId: candidate }),
       (error: unknown) =>
-        error instanceof ApiError &&
-        error.code ===
-          (affected === "source" ? "STALE_STATE" : "IMMUTABLE_SOURCE"),
+        error instanceof ApiError && error.code === "STALE_STATE",
     );
     assert.equal(changed, true);
     const after = await service.getState();
