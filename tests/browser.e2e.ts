@@ -1130,6 +1130,9 @@ try {
   await expect(page.getByRole("button", { name: "s squash" })).toBeDisabled();
   await expect(page.getByLabel("Squash destination change ID")).toHaveText("—");
   await reviewChange(left).click();
+  // A silent cached preview has no banner before live selection completes.
+  // Wait for authorization before the next fixture history mutation.
+  await expect(page.getByRole("button", { name: "refresh r" })).toBeEnabled();
   await expect(page.locator(".squash-unavailable")).toHaveCount(0);
   console.log(
     "✓ Two-parent change shows an error and disables squashing; another mutable change remains selectable",

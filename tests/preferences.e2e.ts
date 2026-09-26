@@ -11,6 +11,12 @@ const source = {
   description: "Review toolbar preferences",
   author: "A. Reviewer",
 };
+const graphRows = [
+  { graph: "│ @  ", revision: source, mutable: true },
+  ...["│ ├─╮", "│ │ │", "│ │ │", "├─╯ │", "│   │", "│   ~", "│", "~"].map(
+    (graph) => ({ graph }),
+  ),
+];
 const app = express();
 app.get("/api/state", (_request, response) =>
   response.json({
@@ -36,13 +42,48 @@ app.get("/api/state", (_request, response) =>
 app.get("/api/graph", (_request, response) =>
   response.json({
     version: "fixture-v1",
-    rows: [{ graph: "@  ", revision: source, mutable: true }],
+    rows: graphRows,
   }),
 );
 const fixture = await createBrowserFixture({
   app,
 });
 const { page, url, errors, browser } = fixture;
+async function assertConnectedGraph() {
+  await expect(page.locator(".log-row")).toHaveCount(graphRows.length);
+  const metrics = await page.locator(".jj-log").evaluate(async (graph) => {
+    await document.fonts.ready;
+    const context = document.createElement("canvas").getContext("2d")!;
+    context.font = getComputedStyle(graph).font;
+    const stroke = context.measureText("│");
+    return {
+      strokeHeight:
+        stroke.actualBoundingBoxAscent + stroke.actualBoundingBoxDescent,
+      widths: [..." │─╭╯@◆○×~"].map((char) => context.measureText(char).width),
+      rows: [...graph.querySelectorAll(".log-row")].map((row) => {
+        const rect = row.getBoundingClientRect();
+        return { top: rect.top, bottom: rect.bottom, height: rect.height };
+      }),
+    };
+  });
+  for (const width of metrics.widths)
+    assert.ok(
+      Math.abs(width - metrics.widths[0]) < 0.01,
+      "spaces, node symbols, and box-drawing strokes must share a column width",
+    );
+  for (const [index, row] of metrics.rows.entries()) {
+    assert.ok(
+      row.height <= metrics.strokeHeight,
+      "vertical strokes must reach consecutive rows, without extra leading",
+    );
+    assert.equal(
+      row.height,
+      metrics.rows[0].height,
+      "revision buttons must not make their rows taller than connector rows",
+    );
+    if (index) assert.equal(row.top, metrics.rows[index - 1].bottom);
+  }
+}
 try {
   await page.goto(url);
   await expect(page).toHaveTitle(
@@ -67,6 +108,7 @@ try {
   assert(descriptionBox && commitBox);
   assert(commitBox.x - (descriptionBox.x + descriptionBox.width) <= 15);
   await expect(page.locator(".log-row.is-current")).toBeVisible();
+  await assertConnectedGraph();
   await expect(page.locator(".log-row.is-current")).toHaveCSS(
     "box-shadow",
     "none",
@@ -190,6 +232,7 @@ try {
   await page.setViewportSize({ width: 600, height: 800 });
   await expect(files).toBeVisible();
   await expect(log).not.toBeVisible();
+  await assertConnectedGraph();
   await expect(page.getByLabel("Reviewed revision")).toBeVisible();
   assert.equal(
     await page.evaluate(
@@ -224,7 +267,7 @@ try {
   await noStorage.close();
   assert.deepEqual(errors, []);
   console.log(
-    "Preference browser checks passed: drag/keyboard resize, persistence, themes, title/header, graph highlight, accessible settings, mobile, unavailable storage.",
+    "Preference browser checks passed: drag/keyboard resize, persistence, themes, title/header, graph highlight/connected strokes, accessible settings, mobile, unavailable storage.",
   );
 } finally {
   await fixture.close();

@@ -638,7 +638,11 @@ kbd {
   overflow: auto;
   margin: 0;
   padding: 14px 12px 14px 20px;
-  line-height: 1.8;
+  /* Keep jj's terminal grid intact: our Plex subsets omit box-drawing glyphs,
+     so mixing their spaces with fallback connectors shifts columns. Extra leading
+     also opens gaps between the vertical strokes on consecutive rows. */
+  font-family: monospace;
+  line-height: normal;
   font-size: 11px;
   white-space: pre;
   tab-size: 2;
