@@ -148,10 +148,10 @@ const choose = (index: number) =>
 hideLastRevision = true;
 await choose(4);
 await expect(page.locator(".code-surface")).toContainText("new 4");
-await expect(page.locator(".squash-unavailable")).toContainText(
-  "Validating revision",
-);
+await expect(page.locator(".squash-unavailable")).toHaveCount(0);
+await expect(page.getByRole("alert")).toHaveCount(0);
 await expect(page.locator(".squash-file")).toBeDisabled();
+await expect(page.getByRole("button", { name: "s squash" })).toBeDisabled();
 await expect(page.locator(".file-tree")).not.toHaveAttribute("inert", "");
 await choose(3);
 await expect(page.locator(".code-surface")).toContainText("new 3");

@@ -553,8 +553,9 @@ function App() {
             version: `preview:${revision.commitId}`,
             operation: "",
             canUndo: false,
-            squashUnavailable:
-              "Validating revision… Browsing cached content; squash is disabled.",
+            // Validate silently. The preview's null parent and navigation lock
+            // still prevent squashing; show eligibility notices only once known.
+            squashUnavailable: undefined,
           });
           setActivePath(cached.files[0]?.path ?? "");
           scroll.current?.scrollTo(0, 0);
