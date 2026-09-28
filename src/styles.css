@@ -660,8 +660,6 @@ kbd {
 }
 .log-change {
   color: var(--accent);
-  text-decoration: underline;
-  text-underline-offset: 3px;
   border-radius: 2px;
 }
 .log-change:hover:not(:disabled) {

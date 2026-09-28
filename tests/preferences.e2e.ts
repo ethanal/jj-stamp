@@ -94,6 +94,15 @@ try {
   ).toHaveCount(0);
   await expect(page.getByLabel("Current change ID")).toHaveText("abcdefgh");
   await expect(page.locator(".log-change strong")).toHaveCount(0);
+  await expect(page.locator(".log-change")).toHaveCSS(
+    "text-decoration-line",
+    "none",
+  );
+  await page.locator(".log-change").hover();
+  await expect(page.locator(".log-change")).toHaveCSS(
+    "text-decoration-line",
+    "none",
+  );
   await expect(page.getByLabel("Revision author")).toHaveCount(0);
   await expect(page.locator(".topbar")).not.toContainText(source.author);
   const heading = page.getByLabel("Reviewed revision");
