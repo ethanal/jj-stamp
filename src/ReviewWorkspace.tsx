@@ -389,11 +389,6 @@ export function ReviewViewer({
         onRefresh={onRefresh}
         onDismiss={onDismissError}
       />
-      {state?.squashUnavailable && (
-        <div className="error squash-unavailable" role="alert">
-          {state.squashUnavailable}
-        </div>
-      )}
       <DiffViewport className="viewer-scroll" ref={scrollRef}>
         <DiffRuntime colorScheme={colorScheme}>
           {!state ? (
@@ -585,6 +580,7 @@ export function ReviewStatusBar({
   halted,
   notice,
   queueNotice,
+  showSquash,
   canSquash,
   canUndo,
   working,
@@ -602,6 +598,7 @@ export function ReviewStatusBar({
   halted: boolean;
   notice: string;
   queueNotice: string;
+  showSquash: boolean;
   canSquash: boolean;
   canUndo: boolean;
   working: boolean;
@@ -642,9 +639,11 @@ export function ReviewStatusBar({
         Cmd/Ctrl+C to copy · Alt+drag for text
       </span>
       <div className="shortcuts">
-        <button onClick={onSquash} disabled={!canSquash} title={squashTitle}>
-          <kbd>s</kbd> squash
-        </button>
+        {showSquash && (
+          <button onClick={onSquash} disabled={!canSquash} title={squashTitle}>
+            <kbd>s</kbd> squash
+          </button>
+        )}
         <button
           onClick={onUndo}
           disabled={!canUndo}

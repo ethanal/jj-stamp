@@ -12,7 +12,10 @@ export function SquashFileButton({
   unavailable?: string;
   onSquash: (path: string) => void;
 }) {
-  const reason = file.unsupported || unavailable;
+  // Read-only revisions are quiet while browsing; the keyboard action explains
+  // why squashing is unavailable if the user explicitly attempts it.
+  if (unavailable) return null;
+  const reason = file.unsupported;
   return (
     <button
       className="squash-file"

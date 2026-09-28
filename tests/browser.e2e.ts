@@ -106,6 +106,47 @@ async function refreshState() {
   assert.equal(result.status(), 200, await result.text());
   return result.json();
 }
+async function expectConfirmedSquashUnavailable(
+  reason: string,
+  dismiss: "button" | "escape" = "button",
+) {
+  await expect(page.locator(".squash-unavailable")).toHaveCount(0);
+  await expect(page.getByRole("alert")).toHaveCount(0);
+  await expect(page.locator(".squash-file")).toHaveCount(0);
+  await expect(
+    page.getByRole("button", { name: "s squash", exact: true }),
+  ).toHaveCount(0);
+  await expect(page.locator("[data-line][data-fold-selected]")).toHaveCount(0);
+  // Keep shortcut focus outside the embedded diff. File-backed states use the
+  // explicit dismiss control; the fileless merge below covers Escape dismissal.
+  await page.getByRole("button", { name: "refresh r", exact: true }).focus();
+  const mutationCount = mutations.length;
+  await page.keyboard.press("s");
+  const alert = page.getByRole("alert");
+  await expect(alert).toBeVisible();
+  await expect(alert.locator(".error-summary")).toHaveText(reason);
+  await page.waitForTimeout(100);
+  assert.equal(mutations.length, mutationCount);
+  if (dismiss === "escape") await page.keyboard.press("Escape");
+  else await alert.getByRole("button", { name: "Dismiss error" }).click();
+  await expect(alert).toHaveCount(0);
+  await expect(page.locator(".squash-unavailable")).toHaveCount(0);
+  await expect(page.locator(".squash-file")).toHaveCount(0);
+  await expect(
+    page.getByRole("button", { name: "s squash", exact: true }),
+  ).toHaveCount(0);
+}
+async function expectSquashActions(path?: string) {
+  await expect(page.locator(".squash-unavailable")).toHaveCount(0);
+  await expect(page.getByRole("alert")).toHaveCount(0);
+  await expect(
+    page.getByRole("button", { name: "s squash", exact: true }),
+  ).toHaveCount(1);
+  if (path)
+    await expect(
+      page.getByRole("button", { name: `Squash file ${path}`, exact: true }),
+    ).toBeEnabled();
+}
 try {
   await page.route("**/api/log*", async (route) => {
     blockedLogRequests++;
@@ -202,8 +243,39 @@ try {
     "aria-pressed",
     "true",
   );
+  let releasePreview!: () => void;
+  let capturePreview!: () => void;
+  const previewGate = new Promise<void>((resolve) => {
+    releasePreview = resolve;
+  });
+  const previewCaptured = new Promise<void>((resolve) => {
+    capturePreview = resolve;
+  });
+  await page.route("**/api/revision", async (route) => {
+    capturePreview();
+    await previewGate;
+    await route.continue();
+  });
+  const selectedSource = page.waitForResponse((response) =>
+    response.url().endsWith("/api/revision"),
+  );
   await reviewChange(initial.source.changeId).click();
-  // Cached content can appear before live selection validation finishes.
+  await previewCaptured;
+  // A cached preview has no confirmed unavailability reason: retain both squash
+  // actions, disabled until the live selection validates its exact parent.
+  await expect(page.locator(".squash-unavailable")).toHaveCount(0);
+  await expect(page.locator(".squash-file")).toBeVisible();
+  await expect(page.locator(".squash-file")).toBeDisabled();
+  await expect(
+    page.getByRole("button", { name: "s squash", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "s squash", exact: true }),
+  ).toBeDisabled();
+  releasePreview();
+  const sourceResponse = await selectedSource;
+  assert.equal(sourceResponse.status(), 200, await sourceResponse.text());
+  await page.unroute("**/api/revision");
   await expect(page.getByRole("button", { name: "refresh r" })).toBeEnabled();
   await expect(page.getByLabel("Current change ID")).toHaveAttribute(
     "title",
@@ -224,6 +296,8 @@ try {
     immutable,
   ]);
   await refreshState();
+  // Select the now-immutable row before the refreshed graph drops immutable
+  // ancestors that are no longer the active review.
   await expect(reviewChange(immutable)).toBeEnabled();
   const selectedImmutable = page.waitForResponse((response) =>
     response.url().endsWith("/api/revision"),
@@ -234,23 +308,18 @@ try {
   const immutableState = (await immutableResponse.json()).state;
   assert.equal(immutableState.parent, null);
   assert.deepEqual(immutableState.targets, []);
+  assert.match(
+    immutableState.squashUnavailable,
+    /current revision is immutable/,
+  );
   await expect(page.getByLabel("Current change ID")).toHaveAttribute(
     "title",
     immutable,
   );
   await expect(page.locator(".file-bar")).toContainText("src/notifications.ts");
   await expect(treeRow("src/notifications.ts")).toBeVisible();
-  await expect(page.locator(".squash-unavailable")).toContainText("immutable");
-  await expect(page.getByRole("button", { name: "s squash" })).toBeDisabled();
-  await expect(
-    page.getByRole("button", { name: "Squash file src/notifications.ts" }),
-  ).toBeDisabled();
   await expect(page.getByLabel("Squash destination change ID")).toHaveText("—");
-  const immutableMutationCount = mutations.length;
-  await page.keyboard.press("s");
-  await page.waitForTimeout(100);
-  assert.equal(mutations.length, immutableMutationCount);
-  await page.keyboard.press("Escape");
+  await expectConfirmedSquashUnavailable(immutableState.squashUnavailable);
   const selectedClean = page.waitForResponse((response) =>
     response.url().endsWith("/api/revision"),
   );
@@ -262,10 +331,53 @@ try {
     initial.source.changeId,
   );
   await expect(codeLine(21)).toBeVisible();
-  await expect(page.locator(".squash-unavailable")).toHaveCount(0);
-  await expect(
-    page.getByRole("button", { name: "Squash file src/notifications.ts" }),
-  ).toBeEnabled();
+  await expectSquashActions("src/notifications.ts");
+
+  const selectedImmutableParent = page.waitForResponse((response) =>
+    response.url().endsWith("/api/revision"),
+  );
+  await reviewChange(initial.parent!.changeId).click();
+  const immutableParentResponse = await selectedImmutableParent;
+  assert.equal(
+    immutableParentResponse.status(),
+    200,
+    await immutableParentResponse.text(),
+  );
+  const immutableParentState = (await immutableParentResponse.json()).state;
+  assert.equal(immutableParentState.parent, null);
+  assert.deepEqual(immutableParentState.targets, []);
+  assert.match(
+    immutableParentState.squashUnavailable,
+    /immediate parent is immutable/,
+  );
+  const immutableParentPath = immutableParentState.files[0]?.path;
+  assert(immutableParentPath);
+  await expect(page.getByLabel("Current change ID")).toHaveAttribute(
+    "title",
+    initial.parent!.changeId,
+  );
+  await expect(page.locator(".file-bar")).toContainText(immutableParentPath);
+  await expect(treeRow(immutableParentPath)).toBeVisible();
+  await expect(page.getByLabel("Squash destination change ID")).toHaveText("—");
+  await expectConfirmedSquashUnavailable(
+    immutableParentState.squashUnavailable,
+  );
+  const selectedCleanParent = page.waitForResponse((response) =>
+    response.url().endsWith("/api/revision"),
+  );
+  await reviewChange(initial.source.changeId).click();
+  const cleanParentResponse = await selectedCleanParent;
+  assert.equal(
+    cleanParentResponse.status(),
+    200,
+    await cleanParentResponse.text(),
+  );
+  await expect(page.getByLabel("Current change ID")).toHaveAttribute(
+    "title",
+    initial.source.changeId,
+  );
+  await expect(codeLine(21)).toBeVisible();
+  await expectSquashActions("src/notifications.ts");
   await jj(repoPath, [
     "config",
     "set",
@@ -277,7 +389,7 @@ try {
   assert.equal(resetImmutability.source.changeId, initial.source.changeId);
   assert.equal(resetImmutability.squashUnavailable, undefined);
   console.log(
-    "✓ Immutable graph change displays content with squashing disabled, rejects keyboard squash, then switches back cleanly",
+    "✓ Immutable source and immutable-parent changes hide idle squash actions, show the exact keyboard error, dismiss quietly, and switch back cleanly",
   );
   const fileCounts = treeRow("tests/notifications.test.ts").locator(
     '[data-item-section="decoration"]',
@@ -1076,17 +1188,9 @@ try {
   await expect(
     page.getByRole("region", { name: "Diff for browser-conflict.txt" }),
   ).toContainText("browser conflict");
-  await expect(page.locator(".squash-unavailable")).toContainText("conflicts");
-  await expect(page.getByRole("button", { name: "s squash" })).toBeDisabled();
-  await expect(
-    page.getByRole("button", { name: "Squash file browser-conflict.txt" }),
-  ).toBeDisabled();
+  assert.match(conflictState.squashUnavailable, /contains conflicts/);
   await expect(page.getByLabel("Squash destination change ID")).toHaveText("—");
-  const conflictMutationCount = mutations.length;
-  await page.keyboard.press("s");
-  await page.waitForTimeout(100);
-  assert.equal(mutations.length, conflictMutationCount);
-  await page.keyboard.press("Escape");
+  await expectConfirmedSquashUnavailable(conflictState.squashUnavailable);
   const selectedLeft = page.waitForResponse((response) =>
     response.url().endsWith("/api/revision"),
   );
@@ -1100,7 +1204,6 @@ try {
     "title",
     left,
   );
-  await expect(page.locator(".squash-unavailable")).toHaveCount(0);
   await expect(page.getByLabel("Squash destination change ID")).not.toHaveText(
     "—",
   );
@@ -1108,8 +1211,9 @@ try {
     await expect(page.locator(".file-bar")).toContainText(
       leftState.files[0].path,
     );
+  await expectSquashActions(leftState.files[0]?.path);
   console.log(
-    "✓ Single-parent conflicted graph change displays content with squashing disabled, rejects keyboard squash, then switches back cleanly",
+    "✓ Single-parent conflict hides idle squash actions, shows the exact keyboard error, dismisses quietly, and switches back cleanly",
   );
   await jj(repoPath, ["edit", left]);
   // A merge can be reviewed, but there is no single safe squash destination.
@@ -1119,23 +1223,42 @@ try {
     await jj(repoPath, ["log", "--no-graph", "-r", "@", "-T", "change_id"])
   ).stdout.trim();
   await refreshState();
+  const selectedMerge = page.waitForResponse((response) =>
+    response.url().endsWith("/api/revision"),
+  );
   await reviewChange(merge).click();
+  const mergeResponse = await selectedMerge;
+  assert.equal(mergeResponse.status(), 200, await mergeResponse.text());
+  const mergeState = (await mergeResponse.json()).state;
+  assert.equal(mergeState.parent, null);
+  assert.match(mergeState.squashUnavailable, /exactly one immediate parent/);
   await expect(page.getByLabel("Current change ID")).toHaveAttribute(
     "title",
     merge,
   );
-  await expect(page.locator(".squash-unavailable")).toContainText(
-    "exactly one immediate parent",
-  );
-  await expect(page.getByRole("button", { name: "s squash" })).toBeDisabled();
   await expect(page.getByLabel("Squash destination change ID")).toHaveText("—");
+  await expectConfirmedSquashUnavailable(
+    mergeState.squashUnavailable,
+    "escape",
+  );
+  const selectedCleanMerge = page.waitForResponse((response) =>
+    response.url().endsWith("/api/revision"),
+  );
   await reviewChange(left).click();
-  // A silent cached preview has no banner before live selection completes.
+  const cleanMergeResponse = await selectedCleanMerge;
+  assert.equal(
+    cleanMergeResponse.status(),
+    200,
+    await cleanMergeResponse.text(),
+  );
+  const cleanMergeState = (await cleanMergeResponse.json()).state;
+  assert(cleanMergeState.parent);
+  assert.equal(cleanMergeState.squashUnavailable, undefined);
   // Wait for authorization before the next fixture history mutation.
   await expect(page.getByRole("button", { name: "refresh r" })).toBeEnabled();
-  await expect(page.locator(".squash-unavailable")).toHaveCount(0);
+  await expectSquashActions(cleanMergeState.files[0]?.path);
   console.log(
-    "✓ Two-parent change shows an error and disables squashing; another mutable change remains selectable",
+    "✓ Two-parent change hides idle squash actions, shows the exact keyboard error, dismisses quietly, and switches back cleanly",
   );
   // A healthy new @ does not resurrect an empty review that jj auto-abandoned.
   // Cold-page recovery must work without any successful /state response.

@@ -447,7 +447,6 @@ function App() {
       if (
         lock.current ||
         dragging ||
-        (!path && !count) ||
         !current.view ||
         current.recovering ||
         current.halted
@@ -460,6 +459,7 @@ function App() {
         );
         return;
       }
+      if (!path && !count) return;
       try {
         // Read the latest projection, not the original patch: earlier queued
         // selections may already have removed part (or all) of this file.
@@ -791,6 +791,7 @@ function App() {
         halted={queued.halted}
         notice={notice}
         queueNotice={queued.notice}
+        showSquash={!state?.squashUnavailable}
         canSquash={!!count && !squashDisabled}
         canUndo={
           !!queued.confirmed?.canUndo && !idleActionDisabled && !dragging

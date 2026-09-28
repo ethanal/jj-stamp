@@ -418,7 +418,7 @@ try {
   assert.equal(squashRefs.length, 22);
   await allFiles.click();
 
-  // Read-only destination guards disable header actions, not just line squash.
+  // Read-only destinations hide every squash control without an idle warning.
   serverState = {
     ...structuredClone(initialState),
     parent: null,
@@ -427,20 +427,34 @@ try {
     operation: "fixture-op-blocked",
   };
   await page.keyboard.press("r");
-  await expect(
-    section(firstPath).getByRole("button", {
-      name: `Squash file ${firstPath}`,
-      exact: true,
-    }),
-  ).toBeDisabled();
+  await expect(page.locator(".squash-file")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "s squash" })).toHaveCount(0);
+  await expect(page.getByRole("alert")).toHaveCount(0);
   await treeRow(firstPath).hover();
   await expect(sidebarSquash).toHaveCount(0);
-  await expect(
-    section(firstPath).getByRole("button", {
-      name: `Squash file ${firstPath}`,
-      exact: true,
-    }),
-  ).toHaveAttribute("title", "The parent is immutable.");
+  const beforeBlocked = squashInputs.length;
+  // The shortcut explains the restriction even without a line selection.
+  await page.keyboard.press("s");
+  await expect(page.getByRole("alert")).toContainText(
+    "The parent is immutable.",
+  );
+  assert.equal(squashInputs.length, beforeBlocked);
+  await page.getByRole("button", { name: "Dismiss error" }).click();
+  await expect(page.getByRole("alert")).toHaveCount(0);
+  await treeRow(firstPath).click();
+  await oneFile.click();
+  await expect(page.locator(".squash-file")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "s squash" })).toHaveCount(0);
+  await addition(firstPath, 10).click();
+  await page.keyboard.press("s");
+  await expect(page.getByRole("alert")).toContainText(
+    "The parent is immutable.",
+  );
+  assert.equal(squashInputs.length, beforeBlocked);
+  await page.getByRole("button", { name: "Dismiss error" }).click();
+  await expect(page.getByRole("alert")).toHaveCount(0);
+  await page.keyboard.press("Escape");
+  await allFiles.click();
 
   serverState = {
     ...serverState,
@@ -459,6 +473,30 @@ try {
     "No changes in this revision.",
   );
   await expect(allFiles).toHaveAttribute("aria-pressed", "true");
+  await expect(page.getByRole("alert")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "s squash" })).toHaveCount(0);
+  await page.keyboard.press("s");
+  await expect(page.getByRole("alert")).toContainText(
+    "The parent is immutable.",
+  );
+  assert.equal(squashInputs.length, beforeBlocked);
+  await page.keyboard.press("Escape");
+
+  serverState = {
+    ...structuredClone(initialState),
+    version: "fixture-writable-again",
+    operation: "fixture-op-writable-again",
+  };
+  await page.keyboard.press("r");
+  await expect(page.locator(".squash-file")).toHaveCount(3);
+  await expect(page.getByRole("button", { name: "s squash" })).toBeVisible();
+  await expect(
+    section(firstPath).getByRole("button", {
+      name: `Squash file ${firstPath}`,
+      exact: true,
+    }),
+  ).toBeEnabled();
+  await expect(page.getByRole("alert")).toHaveCount(0);
 
   assert.deepEqual(errors, []);
   console.log(
