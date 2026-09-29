@@ -27,6 +27,7 @@ export interface Revision {
 export interface LogRow {
   graph: string;
   revision?: Revision;
+  bookmarks?: string[];
   mutable?: boolean;
   isWorkingCopy?: boolean;
   isEmpty?: boolean;

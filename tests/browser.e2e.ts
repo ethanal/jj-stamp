@@ -13,6 +13,14 @@ import { createDemo } from "./fixtures.ts";
 // A real browser and real jj; only isolated, disposable fixture repositories.
 const dataDir = await mkdtemp(path.join(tmpdir(), "fold-browser-"));
 const repoPath = await createDemo(dataDir);
+await jj(repoPath, [
+  "bookmark",
+  "create",
+  "ethan/review",
+  "review-git-worktree",
+  "-r",
+  "@",
+]);
 let service = new ReviewService({ repoPath });
 let apiRouter = createApi(service);
 async function reviewWorkingCopy() {
@@ -186,6 +194,12 @@ try {
     page.getByLabel("Current change ID").locator("strong"),
   ).toHaveCount(0);
   await expect(page.locator(".log-change strong")).toHaveCount(0);
+  await expect(page.locator(".log-row.is-current .log-bookmarks")).toHaveText(
+    "ethan/review",
+  );
+  await expect(page.getByLabel("jj log output")).not.toContainText(
+    "review-git-worktree",
+  );
   assert.deepEqual(
     await page
       .getByLabel("Reviewed revision")
@@ -707,7 +721,7 @@ try {
     (row) =>
       row.graph +
       (row.revision
-        ? `${row.revision.changeId.slice(0, 8)} ${row.isEmpty ? "(empty) " : ""}${row.revision.description || "(no description)"}`
+        ? `${row.revision.changeId.slice(0, 8)} ${row.bookmarks?.length ? `${row.bookmarks.join(" ")} | ` : ""}${row.isEmpty ? "(empty) " : ""}${row.revision.description || "(no description)"}`
         : ""),
   );
   await expect(page.getByLabel("jj log output").locator(".log-row")).toHaveText(

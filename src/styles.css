@@ -22,6 +22,7 @@
   --muted: #8b949e;
   --border: #30363d;
   --accent: #9ac3e5;
+  --bookmark: #f778ba;
   --focus: #79a9d1;
   --added: #72b88a;
   --removed: #d28380;
@@ -58,6 +59,7 @@
   --muted: #a0adba;
   --border: #444c56;
   --accent: #a3cdf4;
+  --bookmark: #f0a6ca;
   --focus: #85b6ff;
   --added: #8ddb9b;
   --removed: #f0a4a8;
@@ -81,6 +83,7 @@
   --muted: #576574;
   --border: #c7cfd8;
   --accent: #075b9b;
+  --bookmark: #a3155b;
   --focus: #0969da;
   --added: #176b35;
   --removed: #a82c35;
@@ -110,6 +113,7 @@
   --muted: #839496;
   --border: #586e75;
   --accent: #2aa198;
+  --bookmark: #e875b2;
   --focus: #268bd2;
   --added: #859900;
   --removed: #dc322f;
@@ -140,6 +144,7 @@
   --muted: #657b83;
   --border: #d4cbb5;
   --accent: #006d9c;
+  --bookmark: #a3155b;
   --focus: #268bd2;
   --added: #657b00;
   --removed: #dc322f;
@@ -663,6 +668,12 @@ kbd {
 .log-row.is-current {
   color: var(--current-fg);
   background: var(--current-bg);
+}
+.log-bookmarks {
+  color: var(--bookmark);
+}
+.log-row.is-current .log-bookmarks {
+  color: inherit;
 }
 .log-change {
   color: var(--accent);

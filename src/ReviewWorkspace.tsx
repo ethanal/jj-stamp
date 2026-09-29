@@ -553,7 +553,18 @@ export function RevisionGraph({
                         onClick={() => onSelectRevision(row.revision!.changeId)}
                       >
                         <ChangeId revision={row.revision} />
-                      </button>{" "}
+                      </button>
+                      {row.bookmarks?.length ? (
+                        <>
+                          {" "}
+                          <span className="log-bookmarks">
+                            {row.bookmarks.join(" ")}
+                          </span>
+                          {" | "}
+                        </>
+                      ) : (
+                        " "
+                      )}
                       {row.isEmpty && <span>(empty) </span>}
                       <span title={row.revision.description}>
                         {row.revision.description || "(no description)"}

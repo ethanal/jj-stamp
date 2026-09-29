@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  parseGraphRevisionRecord,
   parseRevisionRecord,
   revisionFieldsTemplate,
   revisionTemplate,
@@ -60,4 +61,35 @@ test("revision templates compose fields without string surgery", () => {
   assert.equal(revisionTemplate, revisionFieldsTemplate + ' ++ "\\n"');
   assert.match(revisionFieldsTemplate, /^json\(change_id\)/);
   assert.doesNotMatch(revisionFieldsTemplate, /\\n/);
+});
+
+test("graph bookmark metadata is a strict string list separate from revision identity", () => {
+  for (const bookmarks of [
+    [],
+    ["main", "ethan/feature*", "topic@origin", '<tag>\t"quoted"'],
+  ]) {
+    const parsed = parseGraphRevisionRecord(
+      row(...identity, true, false, false, bookmarks),
+    );
+    assert.deepEqual(parsed.bookmarks, bookmarks);
+    assert.deepEqual(parsed.flags, [true, false, false]);
+    assert.deepEqual(
+      parsed.revision,
+      parseRevisionRecord(row(...identity), 0, "identity").revision,
+    );
+  }
+  for (const bookmarks of [null, "main", {}, [42], [null], [""]])
+    assert.throws(
+      () =>
+        parseGraphRevisionRecord(
+          row(...identity, true, false, false, bookmarks),
+        ),
+      /Unrecognized bookmarks/,
+    );
+  assert.throws(() =>
+    parseGraphRevisionRecord(row(...identity, true, false, false)),
+  );
+  assert.throws(() =>
+    parseGraphRevisionRecord(row(...identity, true, false, "false", [])),
+  );
 });

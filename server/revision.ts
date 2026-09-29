@@ -56,3 +56,27 @@ export function parseRevisionRecord(
     flags: flags as boolean[],
   };
 }
+
+/** Graph-only display metadata; never part of a revision's mutation identity. */
+export const graphBookmarksTemplate =
+  'json(bookmarks.filter(|b| !b.name().ends_with("-git-worktree")).map(|b| stringify(b)))';
+
+export function parseGraphRevisionRecord(
+  line: string,
+): RevisionRecord & { bookmarks: string[] } {
+  // JSON escapes tabs/newlines in bookmark labels, so the last literal tab is
+  // unambiguously the boundary after the existing identity and boolean fields.
+  const separator = line.lastIndexOf("\t");
+  const record = parseRevisionRecord(
+    line.slice(0, separator),
+    3,
+    "Unrecognized revision in jj graph.",
+  );
+  const bookmarks: unknown = JSON.parse(line.slice(separator + 1));
+  if (
+    !Array.isArray(bookmarks) ||
+    bookmarks.some((name) => typeof name !== "string" || !name)
+  )
+    throw new Error("Unrecognized bookmarks in jj graph.");
+  return { ...record, bookmarks };
+}

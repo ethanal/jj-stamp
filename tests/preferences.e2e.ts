@@ -11,8 +11,39 @@ const source = {
   description: "Review toolbar preferences",
   author: "A. Reviewer",
 };
+const maliciousBookmark = '<script>alert("bookmark")</script>';
+const bookmarks = [
+  "main",
+  "feature*",
+  "name@origin",
+  "conflicted??",
+  maliciousBookmark,
+];
+const labeledRevision = {
+  changeId: "ponmlkjihgfedcb",
+  commitId: "1234567890abcdef",
+  description: "Labeled revision",
+};
+const noBookmarkRevision = {
+  changeId: "zyxwvutsrqponml",
+  commitId: "fedcba0987654321",
+  description: "No bookmark revision",
+};
 const graphRows = [
-  { graph: "│ @  ", revision: source, mutable: true },
+  { graph: "│ @  ", revision: source, bookmarks, mutable: true },
+  {
+    graph: "│ ○  ",
+    revision: labeledRevision,
+    bookmarks: ["topic@origin"],
+    mutable: true,
+  },
+  {
+    graph: "│ ○  ",
+    revision: noBookmarkRevision,
+    bookmarks: [],
+    mutable: true,
+    isEmpty: true,
+  },
   ...["│ ├─╮", "│ │ │", "│ │ │", "├─╯ │", "│   │", "│   ~", "│", "~"].map(
     (graph) => ({ graph }),
   ),
@@ -111,15 +142,10 @@ try {
   ).toHaveCount(0);
   await expect(page.getByLabel("Current change ID")).toHaveText("abcdefgh");
   await expect(page.locator(".log-change strong")).toHaveCount(0);
-  await expect(page.locator(".log-change")).toHaveCSS(
-    "text-decoration-line",
-    "none",
-  );
-  await page.locator(".log-change").hover();
-  await expect(page.locator(".log-change")).toHaveCSS(
-    "text-decoration-line",
-    "none",
-  );
+  const firstLogChange = page.locator(".log-change").first();
+  await expect(firstLogChange).toHaveCSS("text-decoration-line", "none");
+  await firstLogChange.hover();
+  await expect(firstLogChange).toHaveCSS("text-decoration-line", "none");
   await expect(page.getByLabel("Revision author")).toHaveCount(0);
   await expect(page.locator(".topbar")).not.toContainText(source.author);
   const heading = page.getByLabel("Reviewed revision");
@@ -133,12 +159,37 @@ try {
   const commitBox = await heading.getByLabel("Current commit ID").boundingBox();
   assert(descriptionBox && commitBox);
   assert(commitBox.x - (descriptionBox.x + descriptionBox.width) <= 15);
-  await expect(page.locator(".log-row.is-current")).toBeVisible();
-  await assertConnectedGraph();
-  await expect(page.locator(".log-row.is-current")).toHaveCSS(
-    "box-shadow",
-    "none",
+  const currentRow = page.locator(".log-row.is-current");
+  const currentBookmarks = currentRow.locator(".log-bookmarks");
+  const labeledRow = page.locator(".log-row").nth(1);
+  const labeledBookmarks = labeledRow.locator(".log-bookmarks");
+  const noBookmarkRow = page.locator(".log-row").nth(2);
+  await expect(currentRow).toBeVisible();
+  await expect(page.locator(".log-bookmarks")).toHaveCount(2);
+  await expect(currentRow.locator(".log-change")).toHaveText("abcdefgh");
+  await expect(currentRow.locator(".log-change .log-bookmarks")).toHaveCount(0);
+  await expect(currentBookmarks).toHaveText(bookmarks.join(" "));
+  await expect(labeledBookmarks).toHaveText("topic@origin");
+  await expect(page.locator(".log-bookmarks script")).toHaveCount(0);
+  assert.equal(
+    await currentRow.textContent(),
+    `│ @  abcdefgh ${bookmarks.join(" ")} | ${source.description}`,
+    "multiple bookmark labels render literally before the description",
   );
+  assert.equal(
+    await labeledRow.textContent(),
+    "│ ○  ponmlkji topic@origin | Labeled revision",
+  );
+  await expect(noBookmarkRow.locator(".log-bookmarks")).toHaveCount(0);
+  assert.equal(
+    await noBookmarkRow.textContent(),
+    "│ ○  zyxwvuts (empty) No bookmark revision",
+    "rows without bookmarks keep their original spacing and have no separator",
+  );
+  await expect(currentBookmarks).toHaveCSS("color", "rgb(255, 255, 255)");
+  await expect(labeledBookmarks).toHaveCSS("color", "rgb(247, 120, 186)");
+  await assertConnectedGraph();
+  await expect(currentRow).toHaveCSS("box-shadow", "none");
   const settings = page.getByRole("button", { name: "settings", exact: true });
   const dialog = page.getByRole("dialog", { name: "Settings" });
   const picker = page.getByLabel("Color scheme");
@@ -208,14 +259,10 @@ try {
     "background-color",
     "rgb(255, 255, 255)",
   );
-  await expect(page.locator(".log-row.is-current")).toHaveCSS(
-    "color",
-    "rgb(255, 255, 255)",
-  );
-  await expect(page.locator(".log-row.is-current")).toHaveCSS(
-    "background-color",
-    "rgb(7, 87, 154)",
-  );
+  await expect(currentRow).toHaveCSS("color", "rgb(255, 255, 255)");
+  await expect(currentRow).toHaveCSS("background-color", "rgb(7, 87, 154)");
+  await expect(currentBookmarks).toHaveCSS("color", "rgb(255, 255, 255)");
+  await expect(labeledBookmarks).toHaveCSS("color", "rgb(163, 21, 91)");
   await page.reload();
   await expect(files).toHaveAttribute("aria-valuenow", "340");
   await expect(log).toHaveAttribute("aria-valuenow", "400");
@@ -235,9 +282,23 @@ try {
     "background-color",
     "rgb(34, 39, 46)",
   );
-  for (const [scheme, background, mode] of [
-    ["solarized-dark", "rgb(0, 43, 54)", "dark"],
-    ["solarized-light", "rgb(253, 246, 227)", "light"],
+  await expect(currentBookmarks).toHaveCSS("color", "rgb(255, 255, 255)");
+  await expect(labeledBookmarks).toHaveCSS("color", "rgb(240, 166, 202)");
+  for (const [scheme, background, mode, bookmark, current] of [
+    [
+      "solarized-dark",
+      "rgb(0, 43, 54)",
+      "dark",
+      "rgb(232, 117, 178)",
+      "rgb(253, 246, 227)",
+    ],
+    [
+      "solarized-light",
+      "rgb(253, 246, 227)",
+      "light",
+      "rgb(163, 21, 91)",
+      "rgb(253, 246, 227)",
+    ],
   ] as const) {
     await page.getByLabel("Color scheme").selectOption(scheme);
     await expect(page.locator("html")).toHaveCSS(
@@ -252,6 +313,8 @@ try {
       "background-color",
       background,
     );
+    await expect(currentBookmarks).toHaveCSS("color", current);
+    await expect(labeledBookmarks).toHaveCSS("color", bookmark);
   }
   await page.getByRole("button", { name: "Close settings" }).click();
   await page.screenshot({ path: "/tmp/jj-stamp-preferences-desktop.png" });

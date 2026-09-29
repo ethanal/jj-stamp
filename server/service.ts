@@ -19,6 +19,8 @@ import {
   ProcessOutputLimitError,
 } from "./process.ts";
 import {
+  graphBookmarksTemplate,
+  parseGraphRevisionRecord,
   parseRevisionRecord,
   revisionFieldsTemplate,
   revisionTemplate,
@@ -42,6 +44,8 @@ export interface LogRow {
   mutable?: boolean;
   isWorkingCopy?: boolean;
   isEmpty?: boolean;
+  /** Formatted bookmark labels, excluding *-git-worktree helper bookmarks. */
+  bookmarks?: string[];
 }
 export interface RevisionSelection {
   version: string;
@@ -762,7 +766,9 @@ export class ReviewService {
         revisionFieldsTemplate +
         ' ++ "\\t" ++ json(self.contained_in("mutable()"))' +
         ' ++ "\\t" ++ json(current_working_copy)' +
-        ' ++ "\\t" ++ json(empty) ++ "\\n"';
+        ' ++ "\\t" ++ json(empty) ++ "\\t" ++ ' +
+        graphBookmarksTemplate +
+        ' ++ "\\n"';
       const rendered = (
         await this.jjRunner(this.root, [
           "log",
@@ -781,10 +787,8 @@ export class ReviewService {
       const rows = lines.map((line): LogRow => {
         const index = line.indexOf(marker);
         if (index === -1) return { graph: line };
-        const { revision, flags } = parseRevisionRecord(
+        const { revision, flags, bookmarks } = parseGraphRevisionRecord(
           line.slice(index + marker.length),
-          3,
-          "Unrecognized revision in jj graph.",
         );
         const [mutable, isWorkingCopy, isEmpty] = flags;
         return {
@@ -793,6 +797,7 @@ export class ReviewService {
           mutable,
           isWorkingCopy,
           isEmpty,
+          bookmarks,
         };
       });
       await this.validateViews(views, operation.id, viewOptions);
