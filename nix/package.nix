@@ -32,7 +32,7 @@ buildNpmPackage {
       ])
       && lib.cleanSourceFilter path type;
   };
-  npmDepsHash = "sha256-fxPeVhCjL7xF+2xeWe8BEmqzu2dVvtpZxnnMlpcJYDg=";
+  npmDepsHash = "sha256-tX5gViiUX58PmtQQv0V4JhvNraWc3/5ZJtcFuWSLRAE=";
 
   nativeBuildInputs = [ makeWrapper ];
   env.PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD = "1";

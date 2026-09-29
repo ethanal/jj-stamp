@@ -1,5 +1,13 @@
+@font-face {
+  font-family: "Source Code Pro";
+  src: url("./fonts/SourceCodePro.ttf") format("truetype");
+  font-style: normal;
+  font-weight: 200 900;
+  font-display: swap;
+}
+
 :root {
-  font-family: "IBM Plex Mono", monospace;
+  font-family: "Source Code Pro", monospace;
   font-size: 12px;
   font-synthesis: none;
   color-scheme: dark;
@@ -32,10 +40,10 @@
   --diff-selection-number-fg: #b7defb;
   --diff-separator-bg: #20262e;
   --diff-separator-fg: #a2adba;
-  --diffs-font-family: "IBM Plex Mono", monospace;
+  --diffs-font-family: "Source Code Pro", monospace;
   --diffs-font-size: 12px;
   --diffs-line-height: 19px;
-  --diffs-header-font-family: "IBM Plex Mono", monospace;
+  --diffs-header-font-family: "Source Code Pro", monospace;
   --diffs-gap-block: 0px;
   --diffs-bg-selection-override: var(--diff-selection-bg);
   --diffs-bg-selection-number-override: var(--diff-selection-bg);
@@ -344,7 +352,7 @@ kbd {
   min-width: 0;
 }
 .file-tree {
-  --trees-font-family-override: "IBM Plex Mono", monospace;
+  --trees-font-family-override: "Source Code Pro", monospace;
   --trees-font-size-override: 11px;
   --trees-bg-override: var(--panel);
   --trees-fg-override: var(--fg);
@@ -638,12 +646,10 @@ kbd {
   overflow: auto;
   margin: 0;
   padding: 14px 12px 14px 20px;
-  /* Keep jj's terminal grid intact: our Plex subsets omit box-drawing glyphs,
-     so mixing their spaces with fallback connectors shifts columns. Extra leading
-     also opens gaps between the vertical strokes on consecutive rows. */
-  font-family: monospace;
+  /* The bundled font includes box-drawing glyphs, keeping spaces and strokes
+     on the same grid. Avoid extra leading so vertical connectors meet. */
   line-height: normal;
-  font-size: 11px;
+  font-size: 12px;
   white-space: pre;
   tab-size: 2;
   scrollbar-color: var(--scrollbar) var(--panel);
@@ -890,9 +896,6 @@ kbd {
   .shortcuts {
     margin-left: 0;
     gap: 17px;
-  }
-  .jj-log {
-    font-size: 10px;
   }
 }
 

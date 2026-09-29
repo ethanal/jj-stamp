@@ -51,12 +51,20 @@ const fixture = await createBrowserFixture({
 const { page, url, errors, browser } = fixture;
 async function assertConnectedGraph() {
   await expect(page.locator(".log-row")).toHaveCount(graphRows.length);
+  await expect(page.locator(".jj-log")).toHaveCSS("font-size", "12px");
+  await expect(page.locator(".jj-log")).toHaveCSS(
+    "font-family",
+    '"Source Code Pro", monospace',
+  );
   const metrics = await page.locator(".jj-log").evaluate(async (graph) => {
     await document.fonts.ready;
     const context = document.createElement("canvas").getContext("2d")!;
     context.font = getComputedStyle(graph).font;
     const stroke = context.measureText("│");
     return {
+      fontLoaded: [...document.fonts].some(
+        (font) => font.family === "Source Code Pro" && font.status === "loaded",
+      ),
       strokeHeight:
         stroke.actualBoundingBoxAscent + stroke.actualBoundingBoxDescent,
       widths: [..." │─╭╯@◆○×~"].map((char) => context.measureText(char).width),
@@ -66,6 +74,11 @@ async function assertConnectedGraph() {
       }),
     };
   });
+  assert.equal(
+    metrics.fontLoaded,
+    true,
+    "the bundled Source Code Pro font loads",
+  );
   for (const width of metrics.widths)
     assert.ok(
       Math.abs(width - metrics.widths[0]) < 0.01,
@@ -86,6 +99,10 @@ async function assertConnectedGraph() {
 }
 try {
   await page.goto(url);
+  await expect(page.locator("html")).toHaveCSS(
+    "font-family",
+    '"Source Code Pro", monospace',
+  );
   await expect(page).toHaveTitle(
     `${source.description} (abcdefgh /home/reviewer/full/path/example)`,
   );

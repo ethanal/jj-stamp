@@ -5,6 +5,8 @@
 
 A local, keyboard-first review UI for Jujutsu. Run **`jj-stamp`** in a jj workspace, then click a **change ID in the `jj log` graph** to choose what to review. Select changed lines and squash them into that change's **single mutable immediate parent**—not necessarily `@ → @-`.
 
+Source Code Pro from Google Fonts is bundled locally for the UI, code, and file tree; the jj log uses 12px text, including on narrow screens. The full font keeps graph connectors aligned without runtime font downloads. Its license is included in `public/fonts/source-code-pro/OFL.txt`.
+
 Pierre Diffs renders the code; Pierre Trees renders the file sidebar. This experimental branch uses a native TypeScript diff editor: selected file contents are constructed directly, and `jj squash --tool jj-stamp` performs the history rewrite. No hunk tool or patch-application executable is used.
 
 ## Install with Nix
