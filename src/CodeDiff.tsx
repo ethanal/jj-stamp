@@ -108,6 +108,10 @@ function displayedScope(
 }
 
 const separatorCSS = `
+/* Inherit the viewport split without recreating the renderer or its context. */
+[data-diff-type="split"][data-overflow="scroll"]:not([data-dehydrated]) {
+  grid-template-columns: minmax(0, var(--split-diff-left, 50%)) minmax(0, 1fr);
+}
 [data-code] { padding-top: 0; padding-bottom: 0; }
 [data-line], [data-column-number] { cursor: default; touch-action: none; }
 [data-line] { user-select: text; -webkit-user-select: text; }

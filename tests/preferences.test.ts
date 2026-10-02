@@ -4,6 +4,8 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import {
   clampSidebarWidth,
+  clampSplitRatio,
+  parseSplitRatio,
   colorSchemes,
   parseFileView,
   parseColorScheme,
@@ -187,4 +189,14 @@ test("settings uses a labeled, initially closed native dialog and a named close 
   assert.match(html, /<h2[^>]*>Settings<\/h2>/);
   assert.match(html, /aria-label="Close settings"/);
   assert.match(html, /<span>Color scheme<\/span>/);
+});
+
+test("split diff proportions default to equal widths and keep both sides usable", () => {
+  for (const value of [null, "", " ", "invalid", "Infinity"])
+    assert.equal(parseSplitRatio(value), 50);
+  assert.equal(parseSplitRatio("65"), 65);
+  assert.equal(parseSplitRatio("0"), 20);
+  assert.equal(parseSplitRatio("100"), 80);
+  assert.equal(clampSplitRatio(62.7), 63);
+  assert.equal(clampSplitRatio(NaN), 50);
 });

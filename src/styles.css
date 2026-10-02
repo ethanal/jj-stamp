@@ -550,6 +550,49 @@ kbd {
   font-size: 10px;
   cursor: pointer;
 }
+.split-diff-layout {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+}
+.split-diff-resize {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 9px;
+  transform: translateX(-50%);
+  z-index: 6;
+  cursor: col-resize;
+  touch-action: none;
+  user-select: none;
+  outline: none;
+}
+.split-diff-resize::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 4px;
+  width: 1px;
+  background: var(--border);
+}
+.split-diff-resize:hover::after,
+.split-diff-resize:focus-visible::after,
+.split-diff-layout.is-resizing > .split-diff-resize::after {
+  left: 3px;
+  width: 3px;
+  background: var(--accent);
+}
+.split-diff-layout.is-resizing {
+  cursor: col-resize;
+  user-select: none;
+}
+.split-diff-resize[aria-disabled="true"] {
+  pointer-events: none;
+}
 .viewer-scroll {
   overflow: auto;
   flex: 1;

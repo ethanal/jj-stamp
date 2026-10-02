@@ -3,6 +3,7 @@ import "../src/styles.css";
 import { createRoot } from "react-dom/client";
 import type { SelectedLineRange } from "@pierre/diffs";
 import { CodeDiff } from "../src/CodeDiff";
+import { SplitDiffLayout } from "../src/SplitDiffLayout";
 import { type ColorScheme } from "../src/preferences";
 import type { DiffFile, Selections } from "../src/types";
 
@@ -118,42 +119,43 @@ function Fixture() {
       <output id="dragging">{String(dragging)}</output>
       <output id="error">{error}</output>
       <output id="file-loads">{fileLoads}</output>
-      <div
-        className="viewer-scroll"
-        style={{ height: 420, overflow: "auto", marginTop: 20 }}
-      >
-        <CodeDiff
-          file={makeFile(squashed)}
-          version={String(epoch)}
-          contentIdentity={`fixture:${squashed ? "b" : "a"}`}
-          style={style}
-          colorScheme={theme}
-          selections={selections}
-          range={range}
-          disabled={false}
-          contextDisabled={false}
-          onSelection={(next, selections) => {
-            setRange(next);
-            setSelections(selections);
-          }}
-          onDragging={setDragging}
-          onError={setError}
-          loadFile={async () => {
-            setFileLoads((count) => count + 1);
-            return {
-              oldFile: {
-                name: path,
-                contents:
-                  base
-                    .map((text, i) =>
-                      squashed && i === 89 ? changed[i] : text,
-                    )
-                    .join("\n") + "\n",
-              },
-              newFile: { name: path, contents: changed.join("\n") + "\n" },
-            };
-          }}
-        />
+      <div style={{ height: 420, display: "flex", marginTop: 20 }}>
+        <SplitDiffLayout active={style === "split"} disabled={dragging}>
+          <div className="viewer-scroll">
+            <CodeDiff
+              file={makeFile(squashed)}
+              version={String(epoch)}
+              contentIdentity={`fixture:${squashed ? "b" : "a"}`}
+              style={style}
+              colorScheme={theme}
+              selections={selections}
+              range={range}
+              disabled={false}
+              contextDisabled={false}
+              onSelection={(next, selections) => {
+                setRange(next);
+                setSelections(selections);
+              }}
+              onDragging={setDragging}
+              onError={setError}
+              loadFile={async () => {
+                setFileLoads((count) => count + 1);
+                return {
+                  oldFile: {
+                    name: path,
+                    contents:
+                      base
+                        .map((text, i) =>
+                          squashed && i === 89 ? changed[i] : text,
+                        )
+                        .join("\n") + "\n",
+                  },
+                  newFile: { name: path, contents: changed.join("\n") + "\n" },
+                };
+              }}
+            />
+          </div>
+        </SplitDiffLayout>
       </div>
     </>
   );

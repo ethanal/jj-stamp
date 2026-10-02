@@ -6,6 +6,7 @@ import { CodeDiff } from "./CodeDiff";
 import { DiffRuntime, DiffViewport } from "./DiffRuntime";
 import { ChangeId } from "./ReviewToolbar";
 import { SidebarResize } from "./SidebarResize";
+import { SplitDiffLayout } from "./SplitDiffLayout";
 import { SquashFileButton } from "./SquashFileButton";
 import type { ColorScheme, FileView } from "./preferences";
 import type {
@@ -389,79 +390,92 @@ export function ReviewViewer({
         onRefresh={onRefresh}
         onDismiss={onDismissError}
       />
-      <DiffViewport className="viewer-scroll" ref={scrollRef}>
-        <DiffRuntime colorScheme={colorScheme}>
-          {!state ? (
-            <div className="empty">
-              {busy
-                ? "Opening repository…"
-                : "Unable to open repository. Press r to retry."}
-            </div>
-          ) : !file ? (
-            <div className="empty">
-              {pending ? "All changes queued." : "No changes in this revision."}
-              {state.canUndo && !pending && (
-                <button onClick={onUndo} disabled={working}>
-                  undo <kbd>u</kbd>
-                </button>
-              )}
-            </div>
-          ) : (
-            (fileView === "all" ? state.files : [file]).map((entry) => (
-              <section
-                key={`${source?.changeId}:${entry.path}`}
-                className={`file-diff-section ${fileView === "all" ? "all-files-section" : ""}`}
-                aria-label={`Diff for ${entry.path}`}
-                data-file-path={entry.path}
-                ref={(element) => {
-                  if (element) fileSections.current.set(entry.path, element);
-                  else fileSections.current.delete(entry.path);
-                }}
-              >
-                {fileView === "all" && (
-                  <div className="file-diff-heading">
-                    <h2>{entry.path}</h2>
-                    <LineCounts
-                      additions={entry.additions}
-                      deletions={entry.deletions}
-                    />
-                    <SquashFileButton
+      <SplitDiffLayout
+        active={
+          style === "split" &&
+          !!file &&
+          (fileView === "all"
+            ? state?.files.some((entry) => !entry.unsupported) === true
+            : !file.unsupported)
+        }
+        disabled={dragging}
+      >
+        <DiffViewport className="viewer-scroll" ref={scrollRef}>
+          <DiffRuntime colorScheme={colorScheme}>
+            {!state ? (
+              <div className="empty">
+                {busy
+                  ? "Opening repository…"
+                  : "Unable to open repository. Press r to retry."}
+              </div>
+            ) : !file ? (
+              <div className="empty">
+                {pending
+                  ? "All changes queued."
+                  : "No changes in this revision."}
+                {state.canUndo && !pending && (
+                  <button onClick={onUndo} disabled={working}>
+                    undo <kbd>u</kbd>
+                  </button>
+                )}
+              </div>
+            ) : (
+              (fileView === "all" ? state.files : [file]).map((entry) => (
+                <section
+                  key={`${source?.changeId}:${entry.path}`}
+                  className={`file-diff-section ${fileView === "all" ? "all-files-section" : ""}`}
+                  aria-label={`Diff for ${entry.path}`}
+                  data-file-path={entry.path}
+                  ref={(element) => {
+                    if (element) fileSections.current.set(entry.path, element);
+                    else fileSections.current.delete(entry.path);
+                  }}
+                >
+                  {fileView === "all" && (
+                    <div className="file-diff-heading">
+                      <h2>{entry.path}</h2>
+                      <LineCounts
+                        additions={entry.additions}
+                        deletions={entry.deletions}
+                      />
+                      <SquashFileButton
+                        file={entry}
+                        disabled={squashDisabled}
+                        unavailable={state.squashUnavailable}
+                        onSquash={onSquashFile}
+                      />
+                    </div>
+                  )}
+                  {entry.unsupported ? (
+                    <div className="unsupported">
+                      <p>{entry.unsupported}</p>
+                      <pre>{entry.patch}</pre>
+                    </div>
+                  ) : (
+                    <CodeDiff
                       file={entry}
-                      disabled={squashDisabled}
-                      unavailable={state.squashUnavailable}
-                      onSquash={onSquashFile}
+                      version={renderVersion}
+                      contentIdentity={contentIdentity}
+                      style={style}
+                      colorScheme={colorScheme}
+                      selections={entry.path === file.path ? selections : {}}
+                      range={entry.path === file.path ? range : null}
+                      disabled={working || halted}
+                      contextDisabled={pending > 0 || recovering}
+                      onSelection={(next, selected) =>
+                        onSelection(entry.path, next, selected)
+                      }
+                      onDragging={onDragging}
+                      onError={onError}
+                      loadFile={loadFile}
                     />
-                  </div>
-                )}
-                {entry.unsupported ? (
-                  <div className="unsupported">
-                    <p>{entry.unsupported}</p>
-                    <pre>{entry.patch}</pre>
-                  </div>
-                ) : (
-                  <CodeDiff
-                    file={entry}
-                    version={renderVersion}
-                    contentIdentity={contentIdentity}
-                    style={style}
-                    colorScheme={colorScheme}
-                    selections={entry.path === file.path ? selections : {}}
-                    range={entry.path === file.path ? range : null}
-                    disabled={working || halted}
-                    contextDisabled={pending > 0 || recovering}
-                    onSelection={(next, selected) =>
-                      onSelection(entry.path, next, selected)
-                    }
-                    onDragging={onDragging}
-                    onError={onError}
-                    loadFile={loadFile}
-                  />
-                )}
-              </section>
-            ))
-          )}
-        </DiffRuntime>
-      </DiffViewport>
+                  )}
+                </section>
+              ))
+            )}
+          </DiffRuntime>
+        </DiffViewport>
+      </SplitDiffLayout>
     </main>
   );
 }

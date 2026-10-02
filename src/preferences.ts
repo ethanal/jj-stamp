@@ -105,3 +105,15 @@ export function useAppearancePreferences() {
     setLogWidth,
   };
 }
+
+export function clampSplitRatio(value: number): number {
+  return Number.isFinite(value)
+    ? Math.round(Math.min(80, Math.max(20, value)))
+    : 50;
+}
+export function parseSplitRatio(value: string | null): number {
+  return value?.trim() ? clampSplitRatio(Number(value)) : 50;
+}
+export function useSplitDiffPreference() {
+  return usePreference("split-diff-ratio", parseSplitRatio);
+}

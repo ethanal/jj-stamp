@@ -196,6 +196,28 @@ try {
   );
 
   const viewport = page.locator(".viewer-scroll");
+  // The same split applies to virtualized files as they enter the viewport.
+  await page.getByRole("button", { name: "Split", exact: true }).click();
+  const divider = page.getByRole("separator", { name: "Resize split diff" });
+  await divider.press("Shift+ArrowRight");
+  for (const path of [firstPath, secondPath]) {
+    await treeRow(path).click();
+    const left = section(path).locator("[data-code][data-deletions]");
+    const right = section(path).locator("[data-code][data-additions]");
+    await expect(left).toBeVisible();
+    await expect
+      .poll(async () => {
+        const a = await left.boundingBox();
+        const b = await right.boundingBox();
+        assert(a && b);
+        return Math.round((a.width / (a.width + b.width)) * 100);
+      })
+      .toBe(60);
+  }
+  await treeRow(unsupportedPath).click();
+  await expect(divider).toBeVisible();
+  await page.getByRole("button", { name: "Stacked", exact: true }).click();
+  await expect(divider).toHaveCount(0);
   await treeRow(secondPath).click();
   await expect(treeRow(secondPath)).toHaveAttribute("aria-selected", "true");
   await expect(page.locator(".file-diff-section")).toHaveCount(3);
