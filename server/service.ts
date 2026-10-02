@@ -87,7 +87,7 @@ export interface State {
 type RevisionView = Pick<
   State,
   "source" | "targets" | "parent" | "squashUnavailable"
->;
+> & { isWorkingCopy: boolean };
 interface UnavailableView {
   unavailable: {
     changeId: string;
@@ -97,6 +97,7 @@ interface UnavailableView {
 }
 type ReviewView = RevisionView | UnavailableView;
 interface ViewSelection {
+  workingCopy?: boolean;
   allowUnavailable?: boolean;
   changeId?: string;
   requireAvailable?: boolean;
@@ -228,6 +229,9 @@ export class ReviewService {
   private readonly repoPath: string;
   private readonly requestedRevision: string;
   private sourceChangeId?: string;
+  // Remember the last validated source view, not a later graph-only read that
+  // may already show the old @ missing. Failed reads must retain this intent.
+  private sourceWasWorkingCopy = false;
   private initialization?: Promise<void>;
   private readonly editorRunner: typeof run;
   private readonly toolRunner: typeof run;
@@ -309,8 +313,9 @@ export class ReviewService {
       );
     const source = requested[0];
     // Visibility and divergence were checked in the same jj query that resolved
-    // the initial expression. Subsequent reads follow only this change identity
-    // and revalidate it live; never re-evaluate a moving @ or bookmark.
+    // the initial expression. Subsequent reads follow this change identity and
+    // revalidate it live; only getState's missing-working-copy fallback can
+    // replace it automatically. Never re-evaluate the initial expression.
     this.sourceChangeId = source.changeId;
     this.activePath = root;
   }
@@ -507,9 +512,11 @@ export class ReviewService {
     snapshot = true,
   }: ViewOptions = {}): Promise<ReviewView[]> {
     const revsets = selections.map((selection) => {
-      const source = selection.changeId
-        ? this.changeRevset(selection.changeId)
-        : this.sourceRevset;
+      const source = selection.workingCopy
+        ? "@"
+        : selection.changeId
+          ? this.changeRevset(selection.changeId)
+          : this.sourceRevset;
       return [source, `mutable() & ::${source} ~ ${source}`, `${source}-`];
     });
     const metadataRevset = revsets
@@ -530,6 +537,7 @@ export class ReviewService {
         "-T",
         revisionFieldsTemplate +
           revsets.flat().map(contained).join("") +
+          contained("@") +
           // Every output row is already in metadataRevset. Intersect before
           // membership testing so an empty/sparse conflicts() does not walk
           // all visible history. Preserve configured conflicts() aliases.
@@ -543,7 +551,7 @@ export class ReviewService {
       .map((line) =>
         parseRevisionRecord(
           line,
-          selections.length * 3 + 2,
+          selections.length * 3 + 3,
           "Unrecognized revision metadata.",
         ),
       );
@@ -553,6 +561,7 @@ export class ReviewService {
         source: flags[index * 3],
         target: flags[index * 3 + 1],
         parent: flags[index * 3 + 2],
+        isWorkingCopy: flags[flags.length - 3],
         conflict: flags[flags.length - 2],
         mutable: flags[flags.length - 1],
       }));
@@ -615,6 +624,9 @@ export class ReviewService {
               : undefined;
       return {
         source,
+        isWorkingCopy: metadata.some(
+          (entry) => entry.source && entry.isWorkingCopy,
+        ),
         targets,
         parent,
         ...(squashUnavailable ? { squashUnavailable } : {}),
@@ -630,9 +642,10 @@ export class ReviewService {
     files: ReviewFile[],
   ): State {
     const version = this.version(view, operation);
+    const { isWorkingCopy: _, ...publicView } = view;
     return {
       repo: { name: path.basename(this.root), path: this.root },
-      ...view,
+      ...publicView,
       files,
       version,
       operation,
@@ -678,6 +691,7 @@ export class ReviewService {
   private async readState(snapshot = true): Promise<State> {
     const { state, views } = await this.captureState(snapshot);
     await this.validateViews(views, state.operation, { snapshot });
+    this.sourceWasWorkingCopy = this.requireView(views[0]).isWorkingCopy;
     return state;
   }
   /** Wait for all accepted requests before a graceful service shutdown. */
@@ -685,7 +699,43 @@ export class ReviewService {
     await Promise.all([this.queue, this.displayReads.drain()]);
   }
   getState(): Promise<State> {
-    return this.serial("state", () => this.readState());
+    return this.serial("state", async () => {
+      try {
+        return await this.readState();
+      } catch (error) {
+        if (
+          !(error instanceof ApiError) ||
+          error.code !== "SOURCE_UNAVAILABLE" ||
+          error.details?.sourceStatus !== "missing" ||
+          !this.sourceWasWorkingCopy ||
+          this.history.pending
+        )
+          throw error;
+        // Only a refresh may follow a vanished working copy. Mutation/file
+        // reads stay pinned and fail rather than acting on a replacement.
+        const selections = [
+          { allowUnavailable: true },
+          { workingCopy: true, requireAvailable: true },
+        ];
+        const views = await this.readViews({ selections });
+        if (
+          !("unavailable" in views[0]) ||
+          views[0].unavailable.reason !== "missing"
+        )
+          stale();
+        const operation = await this.operation();
+        const candidate = this.requireView(views[1]);
+        const files = await this.files(candidate.source.commitId);
+        // Re-resolve @ as well as the missing source before publishing: a
+        // concurrent workspace move must not install an out-of-date candidate.
+        await this.validateViews(views, operation.id, { selections });
+        const state = this.state(candidate, operation.id, files);
+        this.sourceChangeId = state.source.changeId;
+        this.sourceWasWorkingCopy = candidate.isWorkingCopy;
+        this.plans.clear();
+        return state;
+      }
+    });
   }
   selectRevision(input: RevisionSelection): Promise<{ state: State }> {
     return this.serial("revision", async () => {
@@ -722,6 +772,7 @@ export class ReviewService {
       await this.validateViews(views, operation.id, { selections });
       const state = this.state(candidate, operation.id, files);
       this.sourceChangeId = state.source.changeId;
+      this.sourceWasWorkingCopy = candidate.isWorkingCopy;
       this.plans.clear();
       // Keep the process-local history guard. canUndo is only true when its exact
       // attributed operation AND selected-source state version still match.
@@ -736,7 +787,7 @@ export class ReviewService {
       await this.init(false);
       // The graph remains a read-only recovery path when the pinned source is
       // absent, divergent or conflicted. Its version still identifies that old
-      // source and its live availability; selection never silently follows @.
+      // source and its live availability; graph reads never follow @.
       const viewOptions: ViewOptions = {
         snapshot: false,
         selections: [{ allowUnavailable: true }],

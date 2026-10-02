@@ -143,10 +143,11 @@ test("non-@ ancestor is resolved once and follows its change through full squash
   ]);
 });
 
-test("default @ is a one-time choice, not a moving source", async () => {
+test("default @ stays pinned while its selected source still exists", async () => {
   const options = await fixture();
   const service = new ReviewService({ repoPath: options.repoPath });
   const initial = await service.getState();
+  assert.equal("isWorkingCopy" in initial, false);
   await jj(options.repoPath, ["new", "-m", "Unrelated workspace"]);
   const moved = await service.getState();
   // A new change can lengthen jj's distinguishing prefix without changing
@@ -256,7 +257,7 @@ test("empty, absent, invalid, option-like and multi-revision expressions are rej
   assert.equal(after, before);
 });
 
-test("external abandonment refuses cached source, pending preview and hidden initial commit instead of falling back to @", async () => {
+test("external abandonment refuses a non-working-copy source, pending preview and hidden initial commit", async () => {
   const options = await fixture();
   const service = new ReviewService({ repoPath: options.repoPath });
   const initial = await service.getState();
@@ -266,6 +267,11 @@ test("external abandonment refuses cached source, pending preview and hidden ini
     selections: selections(initial),
   });
   await jj(options.repoPath, ["new", "-m", "Surviving workspace"]);
+  assert.equal(
+    (await service.getState()).source.changeId,
+    initial.source.changeId,
+    "a validated read after moving @ records the pinned source as non-working-copy",
+  );
   await jj(options.repoPath, ["abandon", initial.source.commitId]);
   await rejectsCode(service.getState(), "SOURCE_UNAVAILABLE");
   await rejectsCode(service.squash(preview.token), "SOURCE_UNAVAILABLE");
@@ -938,7 +944,7 @@ test("state and graph batch revision author and jj's distinguishing change prefi
   );
 });
 
-test("leaving an empty working copy can abandon the pinned source while the new @ is healthy; graph permits only explicit recovery", async () => {
+test("leaving an empty working copy auto-follows the healthy @ while the graph remains read-only", async () => {
   const options = await fixture();
   const healthyId = await revisionId(options.repoPath, "@");
   await jj(options.repoPath, ["new"]);
@@ -955,18 +961,6 @@ test("leaving an empty working copy can abandon the pinned source while the new 
     "",
     "jj automatically abandoned the empty undescribed working copy",
   );
-  await assert.rejects(service.getState(), (error: unknown) => {
-    assert.ok(error instanceof ApiError);
-    assert.equal(error.code, "SOURCE_UNAVAILABLE");
-    assert.ok(error.message.includes(initial.source.changeId));
-    assert.match(error.message, /no visible revision/);
-    assert.doesNotMatch(error.message, /divergent/);
-    assert.deepEqual(error.details, {
-      sourceChangeId: initial.source.changeId,
-      sourceStatus: "missing",
-    });
-    return true;
-  });
   const graph = await service.getLog({ includeOutput: false });
   assert.notEqual(graph.version, initial.version);
   assert.ok(
@@ -974,28 +968,71 @@ test("leaving an empty working copy can abandon the pinned source while the new 
       (row) => row.isWorkingCopy && row.revision?.changeId === healthyId,
     ),
   );
-  await rejectsCode(service.getState(), "SOURCE_UNAVAILABLE");
+  const followed = await service.getState();
+  assert.equal(followed.source.changeId, healthyId);
+  assert.equal(followed.canUndo, false);
+  assert.equal("isWorkingCopy" in followed, false);
+  assert.notEqual(
+    followed.version,
+    graph.version,
+    "the graph version still described the missing pinned source",
+  );
   await rejectsCode(
-    service.selectRevision({ version: initial.version, changeId: healthyId }),
+    service.selectRevision({ version: graph.version, changeId: healthyId }),
     "STALE_STATE",
   );
-  await rejectsCode(
-    service.selectRevision({
-      version: graph.version,
-      changeId: initial.source.changeId,
-    }),
-    "INVALID_REVISION",
-  );
-  await rejectsCode(service.getState(), "SOURCE_UNAVAILABLE");
+  assert.deepEqual(await service.getState(), followed);
+});
+
+test("an explicitly selected @ auto-follows repeated disappearances, but mutation reads never switch or replay previews", async () => {
+  const options = await fixture();
+  const workingCopy = await revisionId(options.repoPath, "@");
+  const service = new ReviewService({
+    repoPath: options.repoPath,
+    revision: "@-",
+  });
+  const ancestor = await service.getState();
+  assert.notEqual(ancestor.source.changeId, workingCopy);
   const selected = (
     await service.selectRevision({
-      version: graph.version,
-      changeId: healthyId,
+      version: ancestor.version,
+      changeId: workingCopy,
     })
   ).state;
-  assert.equal(selected.source.changeId, healthyId);
-  assert.equal(selected.canUndo, false);
-  assert.deepEqual(await service.getState(), selected);
+  assert.equal(selected.source.changeId, workingCopy);
+  const mutationPreview = await service.preview({
+    version: selected.version,
+    target: selected.parent!.changeId,
+    selections: selections(selected),
+  });
+  const invalidatedPreview = await service.preview({
+    version: selected.version,
+    target: selected.parent!.changeId,
+    selections: selections(selected),
+  });
+
+  await jj(options.repoPath, ["abandon", "@"]);
+  const firstReplacement = await revisionId(options.repoPath, "@");
+  assert.notEqual(firstReplacement, workingCopy);
+  await rejectsCode(
+    service.squash(mutationPreview.token),
+    "SOURCE_UNAVAILABLE",
+  );
+  await rejectsCode(service.squash(mutationPreview.token), "STALE_PREVIEW");
+
+  const followed = await service.getState();
+  assert.equal(followed.source.changeId, firstReplacement);
+  assert.deepEqual(followed.files, []);
+  await rejectsCode(service.squash(invalidatedPreview.token), "STALE_PREVIEW");
+  await rejectsCode(service.squash(invalidatedPreview.token), "STALE_PREVIEW");
+  assert.equal((await service.getState()).operation, followed.operation);
+
+  await jj(options.repoPath, ["abandon", "@"]);
+  const secondReplacement = await revisionId(options.repoPath, "@");
+  assert.notEqual(secondReplacement, firstReplacement);
+  const followedAgain = await service.getState();
+  assert.equal(followedAgain.source.changeId, secondReplacement);
+  assert.deepEqual(followedAgain.files, []);
 });
 
 test("divergent source diagnostics distinguish multiple revisions and the graph enables explicit recovery without resolving divergence", async () => {
@@ -1065,6 +1102,91 @@ test("divergent source diagnostics distinguish multiple revisions and the graph 
   );
 });
 
+test("automatic working-copy recovery revalidates config-only candidate eligibility before publishing", async () => {
+  const options = await fixture();
+  let candidate = "";
+  let armed = false;
+  let injected = false;
+  const service = new ReviewService({
+    repoPath: options.repoPath,
+    jjRunner: async (cwd, args) => {
+      const result = await jj(cwd, args);
+      if (armed && !injected && args[0] === "diff") {
+        injected = true;
+        await jj(cwd, [
+          "config",
+          "set",
+          "--repo",
+          'revset-aliases."conflicts()"',
+          `change_id("${candidate}")`,
+        ]);
+      }
+      return result;
+    },
+  });
+  const initial = await service.getState();
+  await jj(options.repoPath, ["abandon", "@"]);
+  candidate = await revisionId(options.repoPath, "@");
+  assert.notEqual(candidate, initial.source.changeId);
+  const operation = (
+    await jj(options.repoPath, [
+      "op",
+      "log",
+      "--ignore-working-copy",
+      "--no-graph",
+      "--limit",
+      "1",
+      "-T",
+      "self.id()",
+    ])
+  ).stdout.trim();
+  armed = true;
+  await rejectsCode(service.getState(), "STALE_STATE");
+  assert.equal(injected, true);
+
+  const followed = await service.getState();
+  assert.equal(followed.source.changeId, candidate);
+  assert.equal(
+    followed.operation,
+    operation,
+    "configuration did not move history",
+  );
+  assert.equal(followed.parent, null);
+  assert.deepEqual(followed.targets, []);
+  assert.match(followed.squashUnavailable!, /conflicts/);
+});
+
+test("automatic recovery rejects a concurrent @ move without losing follow intent", async () => {
+  const options = await fixture();
+  const replacement = await revisionId(options.repoPath, "@");
+  await jj(options.repoPath, ["new"]);
+  let moveDuringRead = false;
+  const service = new ReviewService({
+    repoPath: options.repoPath,
+    jjRunner: async (cwd, args) => {
+      const result = await jj(cwd, args);
+      if (moveDuringRead && args[0] === "diff") {
+        moveDuringRead = false;
+        await jj(cwd, ["new", "-m", "Newer working copy"]);
+      }
+      return result;
+    },
+  });
+  const initial = await service.getState();
+  await jj(options.repoPath, ["edit", replacement]);
+  moveDuringRead = true;
+  await rejectsCode(service.getState(), "STALE_STATE");
+  assert.equal(moveDuringRead, false);
+  const newest = await revisionId(options.repoPath, "@");
+  assert.notEqual(newest, replacement);
+  assert.notEqual(newest, initial.source.changeId);
+  assert.equal(
+    (await service.getState()).source.changeId,
+    newest,
+    "a failed recovery must not publish the now non-@ candidate or forget follow intent",
+  );
+});
+
 test("graph access with an unavailable source does not bypass in-process pending recovery", async () => {
   const options = await fixture();
   const service = postWriteFailureService(options.repoPath);
@@ -1115,7 +1237,7 @@ test("graph access with an unavailable source does not bypass in-process pending
   ]);
 });
 
-test("unavailable-source recovery revalidates history before publishing a candidate", async () => {
+test("manual non-@ unavailable-source recovery revalidates history before publishing a candidate", async () => {
   const options = await fixture();
   let changeDuringSelection = false;
   const service = new ReviewService({
@@ -1130,6 +1252,12 @@ test("unavailable-source recovery revalidates history before publishing a candid
     },
   });
   const initial = await service.getState();
+  await jj(options.repoPath, ["new", "-m", "Replacement workspace"]);
+  assert.equal(
+    (await service.getState()).source.changeId,
+    initial.source.changeId,
+    "validate that the soon-missing source is no longer @",
+  );
   await jj(options.repoPath, ["abandon", initial.source.changeId]);
   const graph = await service.getLog({ includeOutput: false });
   changeDuringSelection = true;
@@ -1210,7 +1338,7 @@ test("clean source above resolved ancestor conflicts stays writable; conflicted 
   assert.deepEqual(result.state.files, []);
 });
 
-test("unavailable-source graph respects the filter even when the working copy is outside mine()", async () => {
+test("a filtered graph stays read-only while getState can auto-follow a missing @ outside mine()", async () => {
   const options = await fixture();
   const healthy = await revisionId(options.repoPath, "@");
   await jj(options.repoPath, ["new"]);
@@ -1232,14 +1360,8 @@ test("unavailable-source graph respects the filter even when the working copy is
       (row) => row.revision?.changeId === initial.source.changeId,
     ),
   );
-  await rejectsCode(service.getState(), "SOURCE_UNAVAILABLE");
-  assert.equal(
-    (
-      await service.selectRevision({
-        version: graph.version,
-        changeId: healthy,
-      })
-    ).state.source.changeId,
-    healthy,
-  );
+  const followed = await service.getState();
+  assert.equal(followed.source.changeId, healthy);
+  assert.notEqual(followed.version, graph.version);
+  assert.deepEqual(await service.getState(), followed);
 });

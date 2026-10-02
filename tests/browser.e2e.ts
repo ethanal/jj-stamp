@@ -1274,8 +1274,8 @@ try {
   console.log(
     "✓ Two-parent change hides idle squash actions, shows the exact keyboard error, dismisses quietly, and switches back cleanly",
   );
-  // A healthy new @ does not resurrect an empty review that jj auto-abandoned.
-  // Cold-page recovery must work without any successful /state response.
+  // When a source last selected as @ is auto-abandoned, the same service follows
+  // the replacement working copy on its next state read, including cold reloads.
   await jj(repoPath, ["new", "-m", "Healthy replacement change"]);
   const replacement = (
     await jj(repoPath, ["log", "--no-graph", "-r", "@", "-T", "change_id"])
@@ -1291,25 +1291,75 @@ try {
     "(empty) Healthy replacement change",
   );
   await jj(repoPath, ["edit", replacement]);
+  const reloadState = page.waitForResponse((response) =>
+    response.url().endsWith("/api/state"),
+  );
   await page.reload();
-  await expect(page.getByRole("alert")).toContainText(
-    pinnedEmpty.source.changeId,
-  );
-  await expect(page.getByRole("alert")).toContainText("SOURCE_UNAVAILABLE");
-  await expect(reviewChange(replacement)).toBeEnabled();
-  const recoverySelection = page.waitForResponse((response) =>
-    response.url().endsWith("/api/revision"),
-  );
-  await reviewChange(replacement).click();
-  const recovered = await recoverySelection;
-  assert.equal(recovered.status(), 200, await recovered.text());
+  const reloaded = await reloadState;
+  assert.equal(reloaded.status(), 200, await reloaded.text());
+  assert.equal((await reloaded.json()).source.changeId, replacement);
   await expect(page.getByLabel("Current change ID")).toHaveAttribute(
     "title",
     replacement,
   );
   await expect(page.getByRole("alert")).toHaveCount(0);
+
+  // Explicitly selecting the graph's current @ also makes a later missing-source
+  // focus refresh follow the new @ without requiring the graph to be open.
+  await jj(repoPath, ["new"]);
+  const selectedWorkingCopy = (
+    await jj(repoPath, ["log", "--no-graph", "-r", "@", "-T", "change_id"])
+  ).stdout.trim();
+  const stillPinned = await refreshState();
+  assert.equal(stillPinned.source.changeId, replacement);
+  await expect(reviewChange(selectedWorkingCopy)).toBeEnabled();
+  const workingCopySelection = page.waitForResponse((response) =>
+    response.url().endsWith("/api/revision"),
+  );
+  await reviewChange(selectedWorkingCopy).click();
+  const selectedWorkingCopyResponse = await workingCopySelection;
+  assert.equal(
+    selectedWorkingCopyResponse.status(),
+    200,
+    await selectedWorkingCopyResponse.text(),
+  );
+  assert.equal(
+    (await selectedWorkingCopyResponse.json()).state.source.changeId,
+    selectedWorkingCopy,
+  );
+  await expect(page.getByLabel("Current change ID")).toHaveAttribute(
+    "title",
+    selectedWorkingCopy,
+  );
+  await expect(reviewChange(selectedWorkingCopy)).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  );
+  await expect(page.getByRole("button", { name: "refresh r" })).toBeEnabled();
+  await page.getByRole("button", { name: "Collapse log sidebar" }).click();
+  await expect(page.getByLabel("jj log output")).toBeHidden();
+  await jj(repoPath, ["edit", replacement]);
+  const focusState = page.waitForResponse((response) =>
+    response.url().endsWith("/api/state"),
+  );
+  await page.evaluate(() => {
+    window.dispatchEvent(new Event("focus"));
+    document.dispatchEvent(new Event("visibilitychange"));
+  });
+  const focused = await focusState;
+  assert.equal(focused.status(), 200, await focused.text());
+  assert.equal((await focused.json()).source.changeId, replacement);
+  await expect(page.getByLabel("Current change ID")).toHaveAttribute(
+    "title",
+    replacement,
+  );
+  await expect(page.getByLabel("jj log output")).toBeHidden();
+  await expect(
+    page.getByRole("button", { name: "Expand log sidebar" }),
+  ).toBeVisible();
+  await expect(page.getByRole("alert")).toHaveCount(0);
   console.log(
-    "✓ Missing pinned source identifies its full ID and permits explicit graph recovery without a loaded diff",
+    "✓ Missing @ follows the replacement on reload and collapsed-graph focus refresh, including after explicit graph selection",
   );
   await page.waitForLoadState("networkidle");
   assert(mutations.every((endpoint) => endpoint === "/api/squash-lines"));
