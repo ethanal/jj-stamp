@@ -27,6 +27,70 @@ async function checkRatio(ratio: number) {
   const box = await divider.boundingBox();
   assert(box && Math.abs(box.x + box.width / 2 - columns.seam) < 2);
 }
+/** Rows, rather than sticky hunk headings, must define horizontal overflow. */
+async function checkHorizontalGeometry(label: string) {
+  const columns = await page.locator("diffs-container").evaluate((host) => {
+    return [
+      ...host.shadowRoot!.querySelectorAll<HTMLElement>("[data-code]"),
+    ].map((code) => {
+      code.scrollLeft = 0;
+      const box = code.getBoundingClientRect();
+      const content = code.querySelector<HTMLElement>("[data-content]")!;
+      const contentBox = content.getBoundingClientRect();
+      const border = parseFloat(getComputedStyle(code).borderRightWidth);
+      const contentEnd = contentBox.right - box.left - code.clientLeft;
+      const headingsFit = [
+        ...code.querySelectorAll<HTMLElement>(
+          "[data-gutter] [data-separator-wrapper]",
+        ),
+      ].every(
+        (heading) =>
+          Math.abs(heading.getBoundingClientRect().width - code.clientWidth) <=
+          1,
+      );
+      const expectedScrollWidth = Math.max(
+        code.clientWidth,
+        Math.round(contentEnd),
+      );
+      code.scrollLeft = 100000;
+      const line = code.querySelector<HTMLElement>(
+        '[data-line-type^="change-"][data-line]',
+      )!;
+      const endGap = box.right - border - line.getBoundingClientRect().right;
+      const result = {
+        side: code.hasAttribute("data-deletions") ? "left" : "right",
+        headingsFit,
+        expectedScrollWidth,
+        scrollWidth: code.scrollWidth,
+        clientWidth: code.clientWidth,
+        scrollLeft: code.scrollLeft,
+        endGap,
+      };
+      code.scrollLeft = 0;
+      return result;
+    });
+  });
+  for (const column of columns) {
+    assert(
+      column.headingsFit,
+      `${label} ${column.side}: hunk headings must fit the pane`,
+    );
+    assert(
+      Math.abs(column.scrollWidth - column.expectedScrollWidth) <= 1,
+      `${label} ${column.side}: phantom overflow ${JSON.stringify(column)}`,
+    );
+    assert(
+      Math.abs(column.endGap) <= 1,
+      `${label} ${column.side}: changed background stops before pane edge ${JSON.stringify(column)}`,
+    );
+    if (column.expectedScrollWidth === column.clientWidth)
+      assert.equal(
+        column.scrollLeft,
+        0,
+        `${label} ${column.side}: fitting content must not scroll`,
+      );
+  }
+}
 try {
   await page.goto(url);
   await expect(page.locator('[data-line="10"]').last()).toBeVisible();
@@ -88,9 +152,50 @@ try {
   });
   await divider.press("Home");
   await checkRatio(20);
+  // Sweep both viewport and split widths (including fractional CSS pixels).
+  // Wide panes contain every line; narrow panes also exercise genuine overflow.
+  for (const width of [850, 1200, 2400, 2401]) {
+    await page.setViewportSize({ width, height: 700 });
+    await divider.press("Home");
+    for (let ratio = 20; ratio <= 80; ratio += 2) {
+      if (ratio !== 20) await divider.press("ArrowRight");
+      await checkRatio(ratio);
+      await checkHorizontalGeometry(`${width}px/${ratio}%`);
+    }
+  }
+  // Real long-line overflow still responds to a horizontal wheel gesture.
+  await page.setViewportSize({ width: 850, height: 700 });
+  await divider.press("Home");
+  await page.locator(".viewer-scroll").evaluate((el) => {
+    el.scrollTop = 0;
+  });
+  const leftCode = page.locator("[data-code][data-deletions]");
+  const leftLine = page.locator('[data-deletions] [data-line="10"]');
+  await leftLine.hover({ position: { x: 60, y: 8 } });
+  await page.mouse.wheel(200, 0);
+  await expect
+    .poll(() => leftCode.evaluate((el) => el.scrollLeft))
+    .toBeGreaterThan(0);
+  await checkHorizontalGeometry("after horizontal wheel");
+  // Growing a scrolled pane back to fit its content clamps the old offset.
+  await leftCode.evaluate((el) => {
+    el.scrollLeft = 150;
+  });
+  await expect
+    .poll(() => leftCode.evaluate((el) => el.scrollLeft))
+    .toBeGreaterThan(0);
+  await page.setViewportSize({ width: 2400, height: 700 });
+  await expect.poll(() => leftCode.evaluate((el) => el.scrollLeft)).toBe(0);
+  await checkHorizontalGeometry("after widening");
+  // The same 100cqi hunk headings are used by stacked diffs.
+  await page.getByText("Layout", { exact: true }).click();
+  for (const width of [850, 1200, 2401]) {
+    await page.setViewportSize({ width, height: 700 });
+    await checkHorizontalGeometry(`${width}px stacked`);
+  }
   assert.deepEqual(errors, []);
   console.log(
-    "Split diff: dragging, geometry, selection, keyboard, reset, persistence, scrolling and cancellation passed.",
+    "Split diff: dragging, width-sweep backgrounds/overflow, selection, keyboard, reset, persistence, scrolling and cancellation passed.",
   );
 } finally {
   await fixture.close();

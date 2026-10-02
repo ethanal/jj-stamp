@@ -114,6 +114,14 @@ const separatorCSS = `
   grid-template-columns: minmax(0, var(--split-diff-left, 50%)) minmax(0, 1fr);
 }
 [data-code] { padding-top: 0; padding-bottom: 0; }
+/* Hunk headings use 100cqi: size them to their own pane, not the viewport.
+   A stable vertical scrollbar gutter otherwise leaves an unpainted strip at
+   the pane's right edge even though only horizontal scrolling is enabled. */
+[data-overflow="scroll"] [data-code] {
+  container-type: inline-size;
+  scrollbar-gutter: auto;
+  overflow-x: auto;
+}
 [data-line], [data-column-number] { cursor: default; touch-action: none; }
 [data-line] { user-select: text; -webkit-user-select: text; }
 [data-column-number] { user-select: none; }
