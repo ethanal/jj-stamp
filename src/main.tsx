@@ -110,6 +110,10 @@ function App() {
   ]);
   const [activePath, setActivePath] = useState("");
   const [range, setRange] = useState<SelectedLineRange | null>(null);
+  // Refresh stays stable (it also drives initial loading), but must inspect the
+  // latest selection when its response arrives, including sidebar navigation.
+  const rangeRef = useRef(range);
+  rangeRef.current = range;
   const [picked, setPicked] = useState<RowRef[]>([]);
   const [dragging, setDragging] = useState(false);
   const [busy, setBusy] = useState("");
@@ -266,8 +270,12 @@ function App() {
         const next = await api<RepoState>("state");
         // A focus check must not reset the view/selection or dismiss diagnostics
         // when nothing changed. Halted queues require explicit user recovery.
-        if (!automatic || next.version !== current.confirmed?.version)
+        if (!automatic || next.version !== current.confirmed?.version) {
+          const clearedSelection = automatic && rangeRef.current !== null;
           replace(next);
+          if (clearedSelection)
+            setNotice("Repository changed; selection cleared.");
+        }
       } catch (error) {
         setError(error);
         setGraphRefresh((value) => value + 1);
@@ -302,12 +310,11 @@ function App() {
       setFocusRefreshPending(false);
       return;
     }
-    // Coalesce focus/visibility events and wait for the user's selection and
-    // optimistic work to finish. Never replace a diff underneath a drag.
+    // Coalesce focus/visibility events and wait for optimistic work to finish.
+    // A completed selection is safe to check; never refresh underneath a drag.
     if (
       busy ||
       dragging ||
-      range ||
       queued.pending ||
       queued.recovering ||
       document.visibilityState !== "visible"
@@ -322,7 +329,6 @@ function App() {
     focusRefreshPending,
     busy,
     dragging,
-    range,
     queued.pending,
     queued.recovering,
     queued.halted,

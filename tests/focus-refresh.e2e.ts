@@ -73,9 +73,17 @@ assert.equal((await visible).status(), 200);
 await settled();
 await noReadSince(before + 1);
 
-// Unchanged focus checks coalesce and do not replace the diff DOM or scroll.
+// Completed selections do not trigger reads themselves or block focus checks.
+// Unchanged checks coalesce and preserve the selection, diff DOM, and scroll.
 await page.locator('.file-tree [data-item-path="src/preferences.ts"]').click();
 await expect(page.locator(".file-bar")).toContainText("src/preferences.ts");
+before = reads;
+await added().click();
+await expect(selected().first()).toBeVisible();
+await noReadSince(before);
+const selection = await selected().evaluateAll((lines) =>
+  lines.map((line) => line.outerHTML),
+);
 const surface = await page.locator(".code-surface").elementHandle();
 assert(surface);
 const scrollTop = await page.locator(".viewer-scroll").evaluate((element) => {
@@ -94,8 +102,14 @@ assert.equal(
   scrollTop,
 );
 await expect(page.locator(".file-bar")).toContainText("src/preferences.ts");
+assert.deepEqual(
+  await selected().evaluateAll((lines) => lines.map((line) => line.outerHTML)),
+  selection,
+);
+await expect(page.locator(".statusbar")).not.toContainText("selection cleared");
 
 // Editor saves are snapshotted by the focus read, without an external jj command.
+// Changed state clears the stale selection and explains why, without Escape.
 const preferencePath = path.join(repoPath, "src/preferences.ts");
 await writeFile(
   preferencePath,
@@ -112,8 +126,12 @@ assert.equal(changedState.source.changeId, initial.source.changeId);
 await expect(page.locator(".code-surface")).toContainText("// focus refresh");
 await expect(page.locator(".file-bar")).toContainText("src/preferences.ts");
 await settled();
+await expect(selected()).toHaveCount(0);
+await expect(page.locator(".statusbar")).toContainText(
+  "Repository changed; selection cleared.",
+);
 
-// A focus during a drag/selection waits until the range is explicitly cleared.
+// Focus during a drag waits for mouseup, not for the completed range to clear.
 await added().scrollIntoViewIfNeeded();
 const box = await added().boundingBox();
 assert(box);
@@ -123,14 +141,13 @@ await expect(selected().first()).toBeVisible();
 before = reads;
 await focus();
 await noReadSince(before);
-await page.mouse.up();
-await noReadSince(before);
-await expect(selected().first()).toBeVisible();
 const deferred = page.waitForResponse("**/api/state");
-await page.keyboard.press("Escape");
+await page.mouse.up();
 assert.equal((await deferred).status(), 200);
 await settled();
 await noReadSince(before + 1);
+await expect(selected().first()).toBeVisible();
+await expect(page.locator(".statusbar")).not.toContainText("selection cleared");
 
 // Focus during an in-flight read coalesces into one follow-up, so edits made
 // after the first snapshot aren't lost. Mutations cannot overlap the read.
@@ -234,6 +251,8 @@ await expect(page.locator(".code-surface")).toContainText("// second focus");
 await settled();
 await noReadSince(before + 2);
 await expectCenteredHint();
+// Sidebar navigation already cleared the selection during the first read.
+await expect(page.locator(".statusbar")).not.toContainText("selection cleared");
 
 // A recorded workspace move does not switch away from the selected change.
 await jj(repoPath, ["new", "-m", "Another working copy"]);
@@ -321,6 +340,8 @@ const failRead = (route: Route) =>
     }),
   });
 await page.route("**/api/state", failRead);
+await added().click();
+await expect(selected().first()).toBeVisible();
 before = reads;
 const failureGraph = page.waitForResponse("**/api/graph");
 await focus();
@@ -329,6 +350,7 @@ await expect(page.getByRole("alert")).toContainText(
 );
 assert.equal((await failureGraph).status(), 200);
 await expect(page.locator(".code-surface")).toBeVisible();
+await expect(selected().first()).toBeVisible();
 await noReadSince(before + 1);
 await page.unroute("**/api/state", failRead);
 const recovered = page.waitForResponse("**/api/state");
@@ -338,5 +360,5 @@ await expect(page.getByRole("alert")).toHaveCount(0);
 
 assert.deepEqual(errors, []);
 console.log(
-  "Focus refresh: coalescing, external edits, pinned identity, interaction/queue deferral and halted recovery passed.",
+  "Focus refresh: selection preservation/invalidation, coalescing, external edits, pinned identity, drag/queue deferral and halted recovery passed.",
 );
