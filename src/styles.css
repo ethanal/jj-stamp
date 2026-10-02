@@ -288,6 +288,8 @@ kbd {
   min-height: 0;
   grid-template-columns: var(--files-width) minmax(0, 1fr) var(--log-width);
   grid-template-rows: minmax(0, 1fr);
+  /* Contain sliding previews and their shadows above the status bar. */
+  overflow: clip;
 }
 .workspace.files-collapsed {
   --files-width: 30px;
@@ -319,14 +321,32 @@ kbd {
 .log-panel.is-peeking {
   z-index: 10;
   box-shadow: 0 4px 16px #0006;
+  animation: sidebar-peek 180ms ease-out;
 }
+/* Preview widths are independent of the saved, resizable pinned widths. */
 .sidebar.is-peeking {
-  width: min(var(--files-preferred-width, 245px), 36vw);
+  --peek-offset-x: calc(-100% + 30px);
+  width: min(245px, 36vw);
   justify-self: start;
 }
 .log-panel.is-peeking {
-  width: min(var(--log-preferred-width, 350px), 36vw);
+  --peek-offset-x: calc(100% - 30px);
+  width: min(350px, 36vw);
   justify-self: end;
+}
+@keyframes sidebar-peek {
+  from {
+    transform: translate(var(--peek-offset-x, 0px), var(--peek-offset-y, 0px));
+  }
+  to {
+    transform: translate(0, 0);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .sidebar.is-peeking,
+  .log-panel.is-peeking {
+    animation: none;
+  }
 }
 /* Keep the pin control at the same position as the collapsed rail toggle. */
 .sidebar.is-peeking .sidebar-heading {
@@ -881,9 +901,11 @@ kbd {
     border-top: 1px solid var(--border);
   }
   .sidebar.is-peeking {
-    width: min(var(--files-preferred-width, 245px), 35vw);
+    width: min(245px, 35vw);
   }
   .log-panel.is-peeking {
+    --peek-offset-x: 0px;
+    --peek-offset-y: calc(100% - 36px);
     width: 100%;
     height: 175px;
     max-height: calc(100dvh - 150px);

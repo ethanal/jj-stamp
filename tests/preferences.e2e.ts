@@ -2,7 +2,7 @@
 import assert from "node:assert/strict";
 import express from "express";
 import { createBrowserFixture } from "./browser-fixture.ts";
-import { expect } from "@playwright/test";
+import { expect, type Locator } from "@playwright/test";
 
 const source = {
   changeId: "abcdefghijklmno",
@@ -80,6 +80,36 @@ const fixture = await createBrowserFixture({
   app,
 });
 const { page, url, errors, browser } = fixture;
+async function assertPeekAnimation(
+  panel: Locator,
+  direction: "left" | "right" | "bottom",
+) {
+  const positions = await panel.evaluate((element) => {
+    const animation = element.getAnimations()[0];
+    if (!animation) throw new Error("Expected a slide-in animation");
+    animation.pause();
+    const duration = Number(animation.effect!.getTiming().duration);
+    const [start, middle, end] = [0, duration / 2, duration].map((time) => {
+      animation.currentTime = time;
+      const rect = element.getBoundingClientRect();
+      return { x: rect.x, y: rect.y, width: rect.width, height: rect.height };
+    });
+    animation.finish();
+    return { start, middle, end };
+  });
+  const { start, middle, end } = positions;
+  const axis = direction === "bottom" ? "y" : "x";
+  const sign = direction === "left" ? -1 : 1;
+  assert((start[axis] - middle[axis]) * sign > 0);
+  assert((middle[axis] - end[axis]) * sign > 0);
+  assert.equal(start.width, end.width, "slide without squeezing contents");
+  assert.equal(start.height, end.height);
+  assert.equal(
+    Math.abs(start[axis] - end[axis]),
+    direction === "bottom" ? end.height - 36 : end.width - 30,
+    "slide from the collapsed rail",
+  );
+}
 async function assertConnectedGraph() {
   await expect(page.locator(".log-row")).toHaveCount(graphRows.length);
   await expect(page.locator(".jj-log")).toHaveCSS("font-size", "12px");
@@ -298,9 +328,12 @@ try {
   await page.keyboard.press("Escape");
   await page.locator(".viewer").hover();
   const viewerBox = await page.locator(".viewer").boundingBox();
+  await expect(page.locator(".workspace")).toHaveCSS("overflow", "clip");
+  const statusbar = page.locator(".statusbar");
+  const statusBeforePeek = await statusbar.screenshot();
   for (const [side, panel, body, width] of [
-    ["files", filesPanel, filesBody, "340px"],
-    ["log", logPanel, logBody, "400px"],
+    ["files", filesPanel, filesBody, "245px"],
+    ["log", logPanel, logBody, "350px"],
   ] as const) {
     // Touch contact and dragging across a rail must not trigger a peek.
     await panel.dispatchEvent("pointerover", {
@@ -318,6 +351,12 @@ try {
     await panel.hover();
     await expect(body).toBeVisible();
     await expect(panel).toHaveCSS("width", width);
+    await assertPeekAnimation(panel, side === "files" ? "left" : "right");
+    assert.deepEqual(
+      await statusbar.screenshot(),
+      statusBeforePeek,
+      "preview shadows must not change the bottom bar",
+    );
     await expect(
       page.getByRole("button", { name: `Pin ${side} sidebar` }),
     ).toHaveAttribute("aria-expanded", "true");
@@ -337,6 +376,37 @@ try {
     await page.locator(".viewer").hover();
     await expect(body).toBeHidden();
   }
+  // Shrinking a pinned sidebar must not shrink its next hover preview.
+  for (const [side, panel, body, resize, minimum, previewWidth] of [
+    ["files", filesPanel, filesBody, files, "120", "245px"],
+    ["log", logPanel, logBody, log, "160", "350px"],
+  ] as const) {
+    await panel.hover();
+    await page.getByRole("button", { name: `Pin ${side} sidebar` }).click();
+    await resize.focus();
+    await page.keyboard.press("Home");
+    await expect(panel).toHaveCSS("width", `${minimum}px`);
+    await page
+      .getByRole("button", { name: `Collapse ${side} sidebar` })
+      .click();
+    await page.locator(".viewer").hover();
+    await panel.hover();
+    await expect(body).toBeVisible();
+    await expect(panel).toHaveCSS("width", previewWidth);
+    await page.getByRole("button", { name: `Pin ${side} sidebar` }).click();
+    await expect(panel).toHaveCSS("width", `${minimum}px`);
+    await expect(resize).toHaveAttribute("aria-valuenow", minimum);
+    await page
+      .getByRole("button", { name: `Collapse ${side} sidebar` })
+      .click();
+    await page.locator(".viewer").hover();
+  }
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await filesPanel.hover();
+  await expect(filesBody).toBeVisible();
+  await expect(filesPanel).toHaveCSS("animation-name", "none");
+  await page.locator(".viewer").hover();
+  await page.emulateMedia({ reducedMotion: "no-preference" });
   await filesPanel.hover();
   await page.getByRole("button", { name: "Pin files sidebar" }).focus();
   await page.keyboard.press("Escape");
@@ -349,7 +419,7 @@ try {
   await page.getByRole("button", { name: "Pin files sidebar" }).click();
   await page.locator(".viewer").hover();
   await expect(filesBody).toBeVisible();
-  await expect(files).toHaveAttribute("aria-valuenow", "340");
+  await expect(files).toHaveAttribute("aria-valuenow", "120");
   await page.getByRole("button", { name: "Collapse files sidebar" }).click();
   await expect(filesBody).toBeHidden();
   await page.locator(".viewer").hover();
@@ -435,12 +505,13 @@ try {
   await page.getByRole("button", { name: "Collapse log sidebar" }).click();
   await page.locator(".viewer").hover();
   const mobileViewer = await page.locator(".viewer").boundingBox();
-  for (const [panel, body] of [
-    [filesPanel, filesBody],
-    [logPanel, logBody],
-  ]) {
+  for (const [panel, body, direction] of [
+    [filesPanel, filesBody, "left"],
+    [logPanel, logBody, "bottom"],
+  ] as const) {
     await panel.hover();
     await expect(body).toBeVisible();
+    await assertPeekAnimation(panel, direction);
     assert.deepEqual(await page.locator(".viewer").boundingBox(), mobileViewer);
     const box = await panel.boundingBox();
     assert(
