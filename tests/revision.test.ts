@@ -257,7 +257,7 @@ test("empty, absent, invalid, option-like and multi-revision expressions are rej
   assert.equal(after, before);
 });
 
-test("external abandonment refuses a non-working-copy source, pending preview and hidden initial commit", async () => {
+test("external abandonment of a non-working-copy source follows @ without replaying a pending preview", async () => {
   const options = await fixture();
   const service = new ReviewService({ repoPath: options.repoPath });
   const initial = await service.getState();
@@ -270,12 +270,18 @@ test("external abandonment refuses a non-working-copy source, pending preview an
   assert.equal(
     (await service.getState()).source.changeId,
     initial.source.changeId,
-    "a validated read after moving @ records the pinned source as non-working-copy",
+    "the existing selected change remains pinned after moving @",
   );
   await jj(options.repoPath, ["abandon", initial.source.commitId]);
-  await rejectsCode(service.getState(), "SOURCE_UNAVAILABLE");
   await rejectsCode(service.squash(preview.token), "SOURCE_UNAVAILABLE");
   await rejectsCode(service.squash(preview.token), "STALE_PREVIEW");
+  const followed = await service.getState();
+  assert.equal(
+    followed.source.changeId,
+    await revisionId(options.repoPath, "@"),
+  );
+  assert.notEqual(followed.source.changeId, initial.source.changeId);
+  assert.equal(followed.canUndo, false);
   await rejectsCode(
     new ReviewService({
       repoPath: options.repoPath,
@@ -288,6 +294,22 @@ test("external abandonment refuses a non-working-copy source, pending preview an
       .changeId,
     initial.source.changeId,
   );
+});
+
+test("a selected ancestor that was never @ in the session falls back to @ when abandoned", async () => {
+  const options = await fixture();
+  const service = new ReviewService({
+    repoPath: options.repoPath,
+    revision: "@-",
+  });
+  const initial = await service.getState();
+  const workingCopy = await revisionId(options.repoPath, "@");
+  assert.notEqual(initial.source.changeId, workingCopy);
+  await jj(options.repoPath, ["abandon", initial.source.changeId]);
+  const followed = await service.getState();
+  assert.equal(followed.source.changeId, workingCopy);
+  assert.equal(followed.canUndo, false);
+  assert.deepEqual(await service.getState(), followed);
 });
 
 test("external divergence rejects cached source and even an explicitly selected divergent commit", async () => {
@@ -425,7 +447,7 @@ test("initial conflicts remain pinned and readable; legacy pending journals have
   assert.equal(pinned.parent, null);
   assert.deepEqual(pinned.targets, []);
   await jj(options.repoPath, ["abandon", conflictId]);
-  await rejectsCode(service.getState(), "SOURCE_UNAVAILABLE");
+  assert.equal((await service.getState()).source.changeId, original);
   assert.deepEqual(
     JSON.parse(await readFile(legacyJournalPath(options), "utf8")),
     pending,
@@ -1269,7 +1291,6 @@ test("manual non-@ unavailable-source recovery revalidates history before publis
     "STALE_STATE",
   );
   assert.equal(changeDuringSelection, false);
-  await rejectsCode(service.getState(), "SOURCE_UNAVAILABLE");
   const refreshed = await service.getLog({ includeOutput: false });
   assert.notEqual(refreshed.version, graph.version);
   assert.equal(

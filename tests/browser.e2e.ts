@@ -1361,6 +1361,71 @@ try {
   console.log(
     "✓ Missing @ follows the replacement on reload and collapsed-graph focus refresh, including after explicit graph selection",
   );
+
+  // Any explicitly selected change that disappears follows the current @ on a
+  // focus refresh, even when the selected change was not @ and the graph is
+  // collapsed.
+  await jj(repoPath, ["new", "-m", "Explicit non-working-copy selection"]);
+  const selectedNonWorkingCopy = (
+    await jj(repoPath, ["log", "--no-graph", "-r", "@", "-T", "change_id"])
+  ).stdout.trim();
+  await jj(repoPath, ["new", "-m", "Current fallback change"]);
+  const currentFallback = (
+    await jj(repoPath, ["log", "--no-graph", "-r", "@", "-T", "change_id"])
+  ).stdout.trim();
+  await refreshState();
+  await page.getByRole("button", { name: "Expand log sidebar" }).click();
+  await expect(reviewChange(selectedNonWorkingCopy)).toBeEnabled();
+  const nonWorkingCopySelection = page.waitForResponse((response) =>
+    response.url().endsWith("/api/revision"),
+  );
+  await reviewChange(selectedNonWorkingCopy).click();
+  const selectedNonWorkingCopyResponse = await nonWorkingCopySelection;
+  assert.equal(
+    selectedNonWorkingCopyResponse.status(),
+    200,
+    await selectedNonWorkingCopyResponse.text(),
+  );
+  assert.equal(
+    (await selectedNonWorkingCopyResponse.json()).state.source.changeId,
+    selectedNonWorkingCopy,
+  );
+  await expect(page.getByLabel("Current change ID")).toHaveAttribute(
+    "title",
+    selectedNonWorkingCopy,
+  );
+  await page.getByRole("button", { name: "Collapse log sidebar" }).click();
+  await expect(page.getByLabel("jj log output")).toBeHidden();
+  await jj(repoPath, ["abandon", selectedNonWorkingCopy]);
+  const missingSelectionFocusState = page.waitForResponse((response) =>
+    response.url().endsWith("/api/state"),
+  );
+  await page.evaluate(() => {
+    window.dispatchEvent(new Event("focus"));
+    document.dispatchEvent(new Event("visibilitychange"));
+  });
+  const missingSelectionFocused = await missingSelectionFocusState;
+  assert.equal(
+    missingSelectionFocused.status(),
+    200,
+    await missingSelectionFocused.text(),
+  );
+  assert.equal(
+    (await missingSelectionFocused.json()).source.changeId,
+    currentFallback,
+  );
+  await expect(page.getByLabel("Current change ID")).toHaveAttribute(
+    "title",
+    currentFallback,
+  );
+  await expect(page.getByLabel("jj log output")).toBeHidden();
+  await expect(
+    page.getByRole("button", { name: "Expand log sidebar" }),
+  ).toBeVisible();
+  await expect(page.getByRole("alert")).toHaveCount(0);
+  console.log(
+    "✓ Missing explicitly selected non-@ change follows current @ on collapsed-graph focus refresh",
+  );
   await page.waitForLoadState("networkidle");
   assert(mutations.every((endpoint) => endpoint === "/api/squash-lines"));
   // Fixture edits intentionally race graph/state reads. Optional immutable
