@@ -192,6 +192,14 @@ function App() {
   });
   const lock = useRef(false);
   const [focusRefreshPending, setFocusRefreshPending] = useState(false);
+  const refreshGeneration = useRef(0);
+  const pollContext = useRef({ dragging, focusRefreshPending });
+  pollContext.current = { dragging, focusRefreshPending };
+  const onDragging = useCallback((value: boolean) => {
+    if (value) refreshGeneration.current++;
+    pollContext.current.dragging = value;
+    setDragging(value);
+  }, []);
   const scroll = useRef<HTMLDivElement>(null);
   const fileSections = useRef(new Map<string, HTMLElement>());
   const scrollToFile = useCallback((path: string) => {
@@ -250,6 +258,15 @@ function App() {
     },
     [queue, clear],
   );
+  const replaceAutomatically = useCallback(
+    (next: RepoState) => {
+      if (next.version === queue.getSnapshot().confirmed?.version) return;
+      const clearedSelection = rangeRef.current !== null;
+      replace(next);
+      if (clearedSelection) setNotice("Repository changed; selection cleared.");
+    },
+    [queue, replace],
+  );
   const refresh = useCallback(
     async (automatic = false) => {
       const current = queue.getSnapshot();
@@ -260,6 +277,7 @@ function App() {
         (automatic && current.halted)
       )
         return;
+      refreshGeneration.current++;
       lock.current = true;
       setBusy("refreshing");
       if (!automatic) {
@@ -270,12 +288,8 @@ function App() {
         const next = await api<RepoState>("state");
         // A focus check must not reset the view/selection or dismiss diagnostics
         // when nothing changed. Halted queues require explicit user recovery.
-        if (!automatic || next.version !== current.confirmed?.version) {
-          const clearedSelection = automatic && rangeRef.current !== null;
-          replace(next);
-          if (clearedSelection)
-            setNotice("Repository changed; selection cleared.");
-        }
+        if (automatic) replaceAutomatically(next);
+        else replace(next);
       } catch (error) {
         setError(error);
         setGraphRefresh((value) => value + 1);
@@ -284,13 +298,19 @@ function App() {
         setBusy("");
       }
     },
-    [queue, replace],
+    [queue, replace, replaceAutomatically],
   );
   useEffect(() => {
     void refresh();
   }, [refresh]);
   useEffect(() => {
+    const onBlur = () => {
+      // A poll started before leaving must not publish after returning, even if
+      // the tab stayed visible and the response outlived the whole round trip.
+      refreshGeneration.current++;
+    };
     const onFocus = () => {
+      refreshGeneration.current++;
       if (document.visibilityState !== "visible") {
         setFocusRefreshPending(false);
       } else {
@@ -298,9 +318,11 @@ function App() {
       }
     };
     window.addEventListener("focus", onFocus);
+    window.addEventListener("blur", onBlur);
     document.addEventListener("visibilitychange", onFocus);
     return () => {
       window.removeEventListener("focus", onFocus);
+      window.removeEventListener("blur", onBlur);
       document.removeEventListener("visibilitychange", onFocus);
     };
   }, []);
@@ -334,6 +356,64 @@ function App() {
     queued.halted,
     refresh,
   ]);
+  useEffect(() => {
+    let disposed = false;
+    let delay = 2_000;
+    let timer: ReturnType<typeof setTimeout>;
+    const eligible = () => {
+      const current = queue.getSnapshot();
+      const context = pollContext.current;
+      return (
+        !disposed &&
+        document.visibilityState === "visible" &&
+        document.hasFocus() &&
+        !lock.current &&
+        !busyRef.current &&
+        !context.dragging &&
+        !context.focusRefreshPending &&
+        !!current.confirmed &&
+        !current.pending &&
+        !current.recovering &&
+        !current.halted
+      );
+    };
+    const poll = async () => {
+      const before = queue.getSnapshot();
+      const generation = refreshGeneration.current;
+      const selection = rangeRef.current;
+      const isCurrent = () => {
+        const current = queue.getSnapshot();
+        return (
+          eligible() &&
+          generation === refreshGeneration.current &&
+          before.epoch === current.epoch &&
+          before.confirmed === current.confirmed &&
+          selection === rangeRef.current
+        );
+      };
+      try {
+        if (!eligible()) return;
+        const next = await api<RepoState>("state");
+        // Never lock or dim the UI for a poll. Foreground work may overtake it;
+        // discard stale results rather than replacing a newer review/projection.
+        if (!isCurrent()) return;
+        delay = 2_000;
+        replaceAutomatically(next);
+      } catch {
+        // Foreground refresh still reports errors. Background failures neither
+        // spam diagnostics nor retry mutations, and back off to spare the server.
+        if (isCurrent()) delay = Math.min(delay * 2, 30_000);
+      } finally {
+        // Schedule after completion: even a slow server gets at most one poll.
+        if (!disposed) timer = setTimeout(() => void poll(), delay);
+      }
+    };
+    timer = setTimeout(() => void poll(), delay);
+    return () => {
+      disposed = true;
+      clearTimeout(timer);
+    };
+  }, [queue, replaceAutomatically]);
   useEffect(() => {
     try {
       localStorage.setItem("jj-stamp.diff-style", style);
@@ -493,6 +573,7 @@ function App() {
       !current.confirmed?.canUndo
     )
       return;
+    refreshGeneration.current++;
     lock.current = true;
     setBusy("undoing");
     setError("");
@@ -527,6 +608,7 @@ function App() {
       scroll.current?.scrollTo(0, 0);
     },
     onIntent: (changeId) => {
+      refreshGeneration.current++;
       // Invalidate outstanding graph responses synchronously, before React's
       // effect cleanup. Neither stale rows/tokens nor late failures may win over
       // a click, even when several stateful selections are coalesced.
@@ -770,7 +852,7 @@ function App() {
           onFileViewChange={setFileView}
           onStyleChange={setStyle}
           onSelection={select}
-          onDragging={setDragging}
+          onDragging={onDragging}
           onError={setError}
           onRefresh={() => void refresh()}
           onDismissError={() => {

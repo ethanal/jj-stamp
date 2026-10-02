@@ -22,6 +22,11 @@ app.use("/api", createApi(service));
 const fixture = await createBrowserFixture({ app });
 resources.defer(() => fixture.close());
 const { page, url, errors } = fixture;
+// This suite dispatches synthetic focus events independently of OS focus. Keep
+// quiet polling out of its exact read budgets; poll-refresh covers real polling.
+await page.addInitScript(() => {
+  document.hasFocus = () => false;
+});
 let reads = 0;
 let squashes = 0;
 page.on("request", (request) => {

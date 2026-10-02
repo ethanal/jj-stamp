@@ -37,6 +37,12 @@ const fixture = await createBrowserFixture({
   captureConsoleErrors: true,
 });
 const { page, url, errors } = fixture;
+// Fixture scenarios deliberately build transient jj histories before explicit
+// refreshes. Keep those response boundaries deterministic; poll-refresh tests
+// foreground polling and its races independently.
+await page.addInitScript(() => {
+  document.hasFocus = () => false;
+});
 // Reproduce the reported client-side /api/log filter. The UI must fetch its
 // revision graph without requesting the logging-shaped compatibility URL.
 let blockedLogRequests = 0;
