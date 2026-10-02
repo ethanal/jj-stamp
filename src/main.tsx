@@ -35,6 +35,7 @@ import {
   RevisionHeading,
   revisionPageTitle,
 } from "./ReviewToolbar";
+import { useSidebarReveal } from "./useSidebarReveal";
 import "./styles.css";
 
 function readExpanded(side: "files" | "log"): boolean {
@@ -46,6 +47,8 @@ function readExpanded(side: "files" | "log"): boolean {
 }
 function App() {
   const {
+    hoverSidebars,
+    setHoverSidebars,
     fileView,
     setFileView,
     colorScheme,
@@ -171,6 +174,8 @@ function App() {
   const [graphRefresh, setGraphRefresh] = useState(0);
   const [showFiles, setShowFiles] = useState(() => readExpanded("files"));
   const [showLog, setShowLog] = useState(() => readExpanded("log"));
+  const filesReveal = useSidebarReveal(showFiles, hoverSidebars && !dragging);
+  const logReveal = useSidebarReveal(showLog, hoverSidebars && !dragging);
   const [style, setStyle] = useState<DiffStyle>(() => {
     try {
       return (localStorage.getItem("jj-stamp.diff-style") ??
@@ -340,7 +345,7 @@ function App() {
   }, [showFiles, showLog]);
   useEffect(() => {
     if (
-      !showLog ||
+      !logReveal.visible ||
       queued.pending ||
       queued.recovering ||
       busy === "switching change" ||
@@ -387,7 +392,7 @@ function App() {
     queued.confirmed?.version,
     queued.pending,
     queued.recovering,
-    showLog,
+    logReveal.visible,
     graphRefresh,
     busy === "switching change",
   ]);
@@ -693,6 +698,8 @@ function App() {
         <SettingsDialog
           colorScheme={colorScheme}
           onColorSchemeChange={setColorScheme}
+          hoverSidebars={hoverSidebars}
+          onHoverSidebarsChange={setHoverSidebars}
           disabled={dragging}
         />
       </header>
@@ -711,6 +718,8 @@ function App() {
           source={source}
           parent={state?.parent}
           expanded={showFiles}
+          peeking={filesReveal.peeking}
+          hoverHandlers={filesReveal.handlers}
           width={filesWidth}
           resizeDisabled={dragging}
           navigationDisabled={
@@ -719,7 +728,10 @@ function App() {
             (!!busy && busy !== "refreshing" && busy !== "switching change")
           }
           onResize={setFilesWidth}
-          onToggle={() => setShowFiles((value) => !value)}
+          onToggle={() => {
+            filesReveal.dismiss();
+            setShowFiles((value) => !value);
+          }}
           onSelect={selectFile}
         />
         <ReviewViewer
@@ -766,6 +778,8 @@ function App() {
           rows={log}
           source={source}
           expanded={showLog}
+          peeking={logReveal.peeking}
+          hoverHandlers={logReveal.handlers}
           width={logWidth}
           pending={queued.pending}
           loading={busy === "switching change" ? false : logLoading}
@@ -775,7 +789,10 @@ function App() {
           }
           hasVersion={!!logVersion.current}
           onResize={setLogWidth}
-          onToggle={() => setShowLog((value) => !value)}
+          onToggle={() => {
+            logReveal.dismiss();
+            setShowLog((value) => !value);
+          }}
           onSelectRevision={(changeId) => void selectRevision(changeId)}
         />
       </div>

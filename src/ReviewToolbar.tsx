@@ -86,10 +86,14 @@ export function ColorSchemePicker({
 export function SettingsDialog({
   colorScheme,
   onColorSchemeChange,
+  hoverSidebars,
+  onHoverSidebarsChange,
   disabled,
 }: {
   colorScheme: ColorScheme;
   onColorSchemeChange: (scheme: ColorScheme) => void;
+  hoverSidebars: boolean;
+  onHoverSidebarsChange: (enabled: boolean) => void;
   disabled: boolean;
 }) {
   const dialog = useRef<HTMLDialogElement>(null);
@@ -113,7 +117,7 @@ export function SettingsDialog({
           event.stopPropagation();
           if (event.key !== "Tab") return;
           const controls = event.currentTarget.querySelectorAll<HTMLElement>(
-            "button:not(:disabled), select:not(:disabled)",
+            "button:not(:disabled), select:not(:disabled), input:not(:disabled)",
           );
           const first = controls[0];
           const last = controls[controls.length - 1];
@@ -141,6 +145,15 @@ export function SettingsDialog({
           onChange={onColorSchemeChange}
           disabled={disabled}
         />
+        <label className="settings-checkbox">
+          <input
+            type="checkbox"
+            checked={hoverSidebars}
+            disabled={disabled}
+            onChange={(event) => onHoverSidebarsChange(event.target.checked)}
+          />
+          <span>Show collapsed sidebars on hover</span>
+        </label>
       </dialog>
     </>
   );

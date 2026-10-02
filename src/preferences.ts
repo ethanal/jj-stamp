@@ -20,6 +20,9 @@ export type FileView = "single" | "all";
 export function parseFileView(value: string | null): FileView {
   return value === "all" ? "all" : "single";
 }
+export function parseHoverSidebars(value: string | null): boolean {
+  return value === "true";
+}
 export type SidebarSide = "files" | "log";
 export const sidebarLimits = {
   files: { min: 120, max: 520, initial: 245 },
@@ -65,7 +68,7 @@ function readPreference(key: string): string | null {
     return null;
   }
 }
-function usePreference<T extends string | number>(
+function usePreference<T extends string | number | boolean>(
   key: string,
   parse: (value: string | null) => T,
 ) {
@@ -80,6 +83,10 @@ function usePreference<T extends string | number>(
   return [value, setValue] as const;
 }
 export function useAppearancePreferences() {
+  const [hoverSidebars, setHoverSidebars] = usePreference(
+    "hover-sidebars",
+    parseHoverSidebars,
+  );
   const [fileView, setFileView] = usePreference("file-view", parseFileView);
   const [colorScheme, setColorScheme] = usePreference(
     "color-scheme",
@@ -95,6 +102,8 @@ export function useAppearancePreferences() {
     document.documentElement.dataset.colorScheme = colorScheme;
   }, [colorScheme]);
   return {
+    hoverSidebars,
+    setHoverSidebars,
     fileView,
     setFileView,
     colorScheme,

@@ -314,6 +314,31 @@ kbd {
   grid-row: 1;
   border-left: 1px solid var(--border);
 }
+/* Peeks overflow their collapsed grid track without moving the diff. */
+.sidebar.is-peeking,
+.log-panel.is-peeking {
+  z-index: 10;
+  box-shadow: 0 4px 16px #0006;
+}
+.sidebar.is-peeking {
+  width: min(var(--files-preferred-width, 245px), 36vw);
+  justify-self: start;
+}
+.log-panel.is-peeking {
+  width: min(var(--log-preferred-width, 350px), 36vw);
+  justify-self: end;
+}
+/* Keep the pin control at the same position as the collapsed rail toggle. */
+.sidebar.is-peeking .sidebar-heading {
+  padding-left: 0;
+}
+.sidebar.is-peeking .sidebar-toggle {
+  order: -1;
+  margin-left: 0;
+}
+.log-panel.is-peeking .log-header {
+  padding-right: 0;
+}
 .sidebar-heading,
 .log-header {
   height: 36px;
@@ -535,6 +560,17 @@ kbd {
   width: 28px;
   height: 28px;
   font-size: 20px;
+}
+.settings-checkbox {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 20px;
+  cursor: pointer;
+}
+.settings-checkbox input {
+  flex-shrink: 0;
+  accent-color: var(--focus);
 }
 .color-scheme-picker {
   display: flex;
@@ -844,6 +880,15 @@ kbd {
     border-left: 0;
     border-top: 1px solid var(--border);
   }
+  .sidebar.is-peeking {
+    width: min(var(--files-preferred-width, 245px), 35vw);
+  }
+  .log-panel.is-peeking {
+    width: 100%;
+    height: 175px;
+    max-height: calc(100dvh - 150px);
+    align-self: end;
+  }
   /* On narrow screens the graph moves below the diff, so it has no width edge. */
   .log-resize {
     display: none;
@@ -886,6 +931,9 @@ kbd {
   }
   .workspace {
     --log-height: 150px;
+  }
+  .log-panel.is-peeking {
+    height: 150px;
   }
   .workspace.log-collapsed {
     --log-height: 36px;

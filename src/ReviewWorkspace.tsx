@@ -1,4 +1,4 @@
-import type { RefObject } from "react";
+import type { HTMLAttributes, RefObject } from "react";
 import type { FileDiffLoadedFiles, SelectedLineRange } from "@pierre/diffs";
 import type { ErrorDetail } from "./api";
 import { ChangedFilesTree } from "./ChangedFilesTree";
@@ -39,15 +39,17 @@ export function LineCounts({
 function SidebarToggle({
   side,
   expanded,
+  peeking = false,
   onToggle,
   disabled,
 }: {
   side: "files" | "log";
   expanded: boolean;
+  peeking?: boolean;
   onToggle: () => void;
   disabled: boolean;
 }) {
-  const label = `${expanded ? "Collapse" : "Expand"} ${side} sidebar`;
+  const label = `${expanded ? "Collapse" : peeking ? "Pin" : "Expand"} ${side} sidebar`;
   const pointsLeft = side === "files" ? expanded : !expanded;
   return (
     <button
@@ -56,7 +58,7 @@ function SidebarToggle({
       disabled={disabled}
       aria-label={label}
       title={label}
-      aria-expanded={expanded}
+      aria-expanded={expanded || peeking}
       aria-controls={`${side}-sidebar-content`}
     >
       <svg
@@ -80,6 +82,8 @@ export function FilesSidebar({
   source,
   parent,
   expanded,
+  peeking = false,
+  hoverHandlers,
   width,
   resizeDisabled,
   navigationDisabled,
@@ -92,6 +96,8 @@ export function FilesSidebar({
   source?: Revision;
   parent?: Revision | null;
   expanded: boolean;
+  peeking?: boolean;
+  hoverHandlers?: HTMLAttributes<HTMLElement>;
   width: number;
   resizeDisabled: boolean;
   navigationDisabled: boolean;
@@ -99,9 +105,11 @@ export function FilesSidebar({
   onToggle: () => void;
   onSelect: (path: string) => void;
 }) {
+  const visible = expanded || peeking;
   return (
     <aside
-      className={`sidebar ${expanded ? "" : "is-collapsed"}`}
+      {...hoverHandlers}
+      className={`sidebar ${visible ? "" : "is-collapsed"} ${peeking ? "is-peeking" : ""}`}
       aria-label="Files sidebar"
     >
       {expanded && (
@@ -113,7 +121,7 @@ export function FilesSidebar({
         />
       )}
       <div className="sidebar-heading">
-        {expanded && (
+        {visible && (
           <>
             Files <span>{files?.length ?? 0}</span>
           </>
@@ -121,11 +129,12 @@ export function FilesSidebar({
         <SidebarToggle
           side="files"
           expanded={expanded}
+          peeking={peeking}
           onToggle={onToggle}
           disabled={resizeDisabled}
         />
       </div>
-      {!expanded && (
+      {!visible && (
         <span className="rail-label" aria-hidden="true">
           Files
         </span>
@@ -133,7 +142,7 @@ export function FilesSidebar({
       <div
         className="sidebar-body"
         id="files-sidebar-content"
-        hidden={!expanded}
+        hidden={!visible}
       >
         <div className="sidebar-content">
           {files && (
@@ -475,6 +484,8 @@ export function RevisionGraph({
   rows,
   source,
   expanded,
+  peeking = false,
+  hoverHandlers,
   width,
   pending,
   loading,
@@ -488,6 +499,8 @@ export function RevisionGraph({
   rows: LogRow[];
   source?: Revision;
   expanded: boolean;
+  peeking?: boolean;
+  hoverHandlers?: HTMLAttributes<HTMLElement>;
   width: number;
   pending: number;
   loading: boolean;
@@ -498,9 +511,11 @@ export function RevisionGraph({
   onToggle: () => void;
   onSelectRevision: (changeId: string) => void;
 }) {
+  const visible = expanded || peeking;
   return (
     <aside
-      className={`log-panel ${expanded ? "" : "is-collapsed"}`}
+      {...hoverHandlers}
+      className={`log-panel ${visible ? "" : "is-collapsed"} ${peeking ? "is-peeking" : ""}`}
       aria-label="Revision graph"
     >
       {expanded && (
@@ -512,7 +527,7 @@ export function RevisionGraph({
         />
       )}
       <div className="log-header">
-        {expanded && (
+        {visible && (
           <>
             <span>jj log</span>
             <span className="log-status">
@@ -523,11 +538,12 @@ export function RevisionGraph({
         <SidebarToggle
           side="log"
           expanded={expanded}
+          peeking={peeking}
           onToggle={onToggle}
           disabled={dragging}
         />
       </div>
-      {!expanded && (
+      {!visible && (
         <span className="rail-label" aria-hidden="true">
           Log
         </span>
@@ -535,7 +551,7 @@ export function RevisionGraph({
       <pre
         className="jj-log"
         id="log-sidebar-content"
-        hidden={!expanded}
+        hidden={!visible}
         aria-label="jj log output"
       >
         {rows.length

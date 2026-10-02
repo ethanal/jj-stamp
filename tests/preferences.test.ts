@@ -8,6 +8,7 @@ import {
   parseSplitRatio,
   colorSchemes,
   parseFileView,
+  parseHoverSidebars,
   parseColorScheme,
   parseSidebarWidth,
   resizeFromKey,
@@ -53,6 +54,12 @@ test("file view defaults to one file and validates its stored preference", () =>
   assert.equal(parseFileView("unknown"), "single");
   assert.equal(parseFileView("single"), "single");
   assert.equal(parseFileView("all"), "all");
+});
+
+test("hover reveal is opt-in and validates its stored preference", () => {
+  for (const value of [null, "", "false", "unknown", "1"])
+    assert.equal(parseHoverSidebars(value), false);
+  assert.equal(parseHoverSidebars("true"), true);
 });
 
 test("sidebar keyboard resizing follows the physical edge in either sidebar", () => {
@@ -181,6 +188,8 @@ test("settings uses a labeled, initially closed native dialog and a named close 
       colorScheme: "dark",
       disabled: false,
       onColorSchemeChange() {},
+      hoverSidebars: false,
+      onHoverSidebarsChange() {},
     }),
   );
   assert.match(html, /aria-haspopup="dialog"/);
@@ -189,6 +198,9 @@ test("settings uses a labeled, initially closed native dialog and a named close 
   assert.match(html, /<h2[^>]*>Settings<\/h2>/);
   assert.match(html, /aria-label="Close settings"/);
   assert.match(html, /<span>Color scheme<\/span>/);
+  assert.match(html, /type="checkbox"/);
+  assert.match(html, /Show collapsed sidebars on hover/);
+  assert.doesNotMatch(html, /checked=""/);
 });
 
 test("split diff proportions default to equal widths and keep both sides usable", () => {

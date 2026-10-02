@@ -193,6 +193,9 @@ try {
   const settings = page.getByRole("button", { name: "settings", exact: true });
   const dialog = page.getByRole("dialog", { name: "Settings" });
   const picker = page.getByLabel("Color scheme");
+  const hoverSetting = page.getByRole("checkbox", {
+    name: "Show collapsed sidebars on hover",
+  });
   await expect(dialog).not.toBeVisible();
   await expect(picker).not.toBeVisible();
   await settings.click();
@@ -203,11 +206,14 @@ try {
   await page.keyboard.press("Tab");
   await expect(picker).toBeFocused();
   await page.keyboard.press("Tab");
+  await expect(hoverSetting).toBeFocused();
+  await expect(hoverSetting).not.toBeChecked();
+  await page.keyboard.press("Tab");
   await expect(
     page.getByRole("button", { name: "Close settings" }),
   ).toBeFocused();
   await page.keyboard.press("Shift+Tab");
-  await expect(picker).toBeFocused();
+  await expect(hoverSetting).toBeFocused();
   await page.getByRole("button", { name: "Close settings" }).focus();
   // App shortcuts must not operate on the inert background while settings is open.
   await page.keyboard.press("l");
@@ -276,6 +282,96 @@ try {
   await expect(files).toHaveCount(0);
   await page.getByRole("button", { name: "Expand files sidebar" }).click();
   await expect(files).toHaveAttribute("aria-valuenow", "340");
+  // Hover previews are opt-in overlays, not persisted expansions.
+  const filesPanel = page.getByLabel("Files sidebar", { exact: true });
+  const logPanel = page.getByLabel("Revision graph", { exact: true });
+  const filesBody = page.locator("#files-sidebar-content");
+  const logBody = page.locator("#log-sidebar-content");
+  await page.getByRole("button", { name: "Collapse files sidebar" }).click();
+  await page.getByRole("button", { name: "Collapse log sidebar" }).click();
+  await filesPanel.hover();
+  await expect(filesBody).toBeHidden();
+  await logPanel.hover();
+  await expect(logBody).toBeHidden();
+  await settings.click();
+  await hoverSetting.check();
+  await page.keyboard.press("Escape");
+  await page.locator(".viewer").hover();
+  const viewerBox = await page.locator(".viewer").boundingBox();
+  for (const [side, panel, body, width] of [
+    ["files", filesPanel, filesBody, "340px"],
+    ["log", logPanel, logBody, "400px"],
+  ] as const) {
+    // Touch contact and dragging across a rail must not trigger a peek.
+    await panel.dispatchEvent("pointerover", {
+      pointerType: "touch",
+      buttons: 0,
+    });
+    await expect(body).toBeHidden();
+    await panel.dispatchEvent("pointerout", { pointerType: "touch" });
+    await panel.dispatchEvent("pointerover", {
+      pointerType: "mouse",
+      buttons: 1,
+    });
+    await expect(body).toBeHidden();
+    await panel.dispatchEvent("pointerout", { pointerType: "mouse" });
+    await panel.hover();
+    await expect(body).toBeVisible();
+    await expect(panel).toHaveCSS("width", width);
+    await expect(
+      page.getByRole("button", { name: `Pin ${side} sidebar` }),
+    ).toHaveAttribute("aria-expanded", "true");
+    assert.deepEqual(await page.locator(".viewer").boundingBox(), viewerBox);
+    assert.equal(
+      await page.evaluate(
+        (side) => localStorage.getItem(`jj-stamp.${side}-expanded`),
+        side,
+      ),
+      "false",
+    );
+    // Stay open when moving from the rail into its interactive contents.
+    const box = await panel.boundingBox();
+    assert(box);
+    await page.mouse.move(box.x + box.width / 2, box.y + 80);
+    await expect(body).toBeVisible();
+    await page.locator(".viewer").hover();
+    await expect(body).toBeHidden();
+  }
+  await filesPanel.hover();
+  await page.getByRole("button", { name: "Pin files sidebar" }).focus();
+  await page.keyboard.press("Escape");
+  await expect(filesBody).toBeHidden();
+  await expect(
+    page.getByRole("button", { name: "Expand files sidebar" }),
+  ).toBeFocused();
+  await page.locator(".viewer").hover();
+  await filesPanel.hover();
+  await page.getByRole("button", { name: "Pin files sidebar" }).click();
+  await page.locator(".viewer").hover();
+  await expect(filesBody).toBeVisible();
+  await expect(files).toHaveAttribute("aria-valuenow", "340");
+  await page.getByRole("button", { name: "Collapse files sidebar" }).click();
+  await expect(filesBody).toBeHidden();
+  await page.locator(".viewer").hover();
+  await page.reload();
+  await expect(filesBody).toBeHidden();
+  await expect(logBody).toBeHidden();
+  // The graph must load on its first hover after a collapsed startup.
+  await logPanel.hover();
+  await expect(logBody).toBeVisible();
+  await expect(page.locator(".log-row")).toHaveCount(graphRows.length);
+  await page.locator(".viewer").hover();
+  await expect(logBody).toBeHidden();
+  await settings.click();
+  await expect(hoverSetting).toBeChecked();
+  await hoverSetting.uncheck();
+  await page.keyboard.press("Escape");
+  await filesPanel.hover();
+  await expect(filesBody).toBeHidden();
+  await logPanel.hover();
+  await expect(logBody).toBeHidden();
+  await page.getByRole("button", { name: "Expand files sidebar" }).click();
+  await page.getByRole("button", { name: "Expand log sidebar" }).click();
   await settings.click();
   await picker.selectOption("dim");
   await expect(page.locator("html")).toHaveCSS(
@@ -333,7 +429,30 @@ try {
   await expect(dialog).toBeVisible();
   const dialogBox = await dialog.boundingBox();
   assert(dialogBox && dialogBox.x >= 0 && dialogBox.x + dialogBox.width <= 600);
+  await hoverSetting.check();
   await page.keyboard.press("Escape");
+  await page.getByRole("button", { name: "Collapse files sidebar" }).click();
+  await page.getByRole("button", { name: "Collapse log sidebar" }).click();
+  await page.locator(".viewer").hover();
+  const mobileViewer = await page.locator(".viewer").boundingBox();
+  for (const [panel, body] of [
+    [filesPanel, filesBody],
+    [logPanel, logBody],
+  ]) {
+    await panel.hover();
+    await expect(body).toBeVisible();
+    assert.deepEqual(await page.locator(".viewer").boundingBox(), mobileViewer);
+    const box = await panel.boundingBox();
+    assert(
+      box &&
+        box.x >= 0 &&
+        box.x + box.width <= 600 &&
+        box.y >= 0 &&
+        box.y + box.height <= 800,
+    );
+    await page.locator(".viewer").hover();
+    await expect(body).toBeHidden();
+  }
   await page.screenshot({ path: "/tmp/jj-stamp-preferences-mobile.png" });
   const noStorage = await browser.newPage();
   await noStorage.addInitScript(() => {
@@ -348,6 +467,12 @@ try {
     .getByRole("button", { name: "settings", exact: true })
     .click();
   await expect(noStorage.getByLabel("Color scheme")).toHaveValue("dark");
+  const noStorageHover = noStorage.getByRole("checkbox", {
+    name: "Show collapsed sidebars on hover",
+  });
+  await expect(noStorageHover).not.toBeChecked();
+  await noStorageHover.check();
+  await expect(noStorageHover).toBeChecked();
   await noStorage.getByLabel("Color scheme").selectOption("light");
   await expect(noStorage.locator("html")).toHaveAttribute(
     "data-color-scheme",
