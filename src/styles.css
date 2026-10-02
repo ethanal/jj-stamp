@@ -321,7 +321,7 @@ kbd {
 .log-panel.is-peeking {
   z-index: 10;
   box-shadow: 0 4px 16px #0006;
-  animation: sidebar-peek 180ms ease-out;
+  animation: sidebar-peek 100ms ease-out;
 }
 /* Preview widths are independent of the saved, resizable pinned widths. */
 .sidebar.is-peeking {
