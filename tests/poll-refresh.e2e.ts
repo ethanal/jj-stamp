@@ -149,8 +149,8 @@ async function realRepositoryCoverage() {
 
   // Multiple unchanged polls are completely quiet: no busy flash, disabled
   // control, render replacement, selection loss, or scroll movement.
-  await advanceToRead(2_100);
-  await advanceToRead(2_000);
+  await advanceToRead(1_100);
+  await advanceToRead(1_000);
   assert(await surface.evaluate((element) => element.isConnected));
   assert.equal(
     await page
@@ -189,7 +189,7 @@ async function realRepositoryCoverage() {
       "push: false, // quiet poll",
     ),
   );
-  await advanceToRead(2_000);
+  await advanceToRead(1_000);
   await expect(page.locator(".code-surface")).toContainText("// quiet poll");
   await expect(selected).toHaveCount(0);
   await expect(page.locator(".statusbar")).toContainText(
@@ -226,7 +226,7 @@ async function realRepositoryCoverage() {
   await flushPage(page);
   assert.equal(reads, count, "an active range drag must suppress polling");
   await page.mouse.up();
-  await advanceToRead(2_000);
+  await advanceToRead(1_000);
   await expect(selected.first()).toBeVisible();
 
   assert.deepEqual(errors, []);
@@ -422,7 +422,7 @@ async function controlledServerCoverage() {
     });
     return { ready, release, done };
   }
-  async function advanceToHeld(held: HeldState, milliseconds = 2_000) {
+  async function advanceToHeld(held: HeldState, milliseconds = 1_000) {
     await page.clock.runFor(milliseconds);
     await held.ready;
   }
@@ -448,7 +448,7 @@ async function controlledServerCoverage() {
   // poll. A foreground refresh may overtake it, and its stale completion loses.
   let held = holdNextState(mockedState("stale-poll"));
   const slowBefore = reads;
-  await advanceToHeld(held, 2_100);
+  await advanceToHeld(held, 1_100);
   await expect(
     page.getByRole("button", { name: "refresh r", exact: true }),
   ).toBeEnabled();
@@ -548,12 +548,12 @@ async function controlledServerCoverage() {
   await expect(page.locator(".code-surface")).not.toContainText("squash-race");
   await expect(page.locator(".statusbar")).toContainText("1 line squashed.");
 
-  // Silent errors double the post-completion delay (2, 4, 8, 16, 30 seconds),
+  // Silent errors double the post-completion delay (1, 2, 4, 8, 16, 30 seconds),
   // cap at 30 seconds, retain the current view, and never publish an alert.
-  failureBudget = 5;
+  failureBudget = 6;
   const failureReads = reads;
   for (const [index, delay] of [
-    2_000, 4_000, 8_000, 16_000, 30_000,
+    1_000, 2_000, 4_000, 8_000, 16_000, 30_000,
   ].entries()) {
     if (delay > 1) {
       await page.clock.runFor(delay - 1);

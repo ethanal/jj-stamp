@@ -358,7 +358,7 @@ function App() {
   ]);
   useEffect(() => {
     let disposed = false;
-    let delay = 2_000;
+    let delay = 1_000;
     let timer: ReturnType<typeof setTimeout>;
     const eligible = () => {
       const current = queue.getSnapshot();
@@ -397,7 +397,7 @@ function App() {
         // Never lock or dim the UI for a poll. Foreground work may overtake it;
         // discard stale results rather than replacing a newer review/projection.
         if (!isCurrent()) return;
-        delay = 2_000;
+        delay = 1_000;
         replaceAutomatically(next);
       } catch {
         // Foreground refresh still reports errors. Background failures neither
