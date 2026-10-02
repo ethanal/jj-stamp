@@ -199,7 +199,7 @@ try {
   // The same split applies to virtualized files as they enter the viewport.
   await page.getByRole("button", { name: "Split", exact: true }).click();
   const divider = page.getByRole("separator", { name: "Resize split diff" });
-  await divider.press("Shift+ArrowRight");
+  await section(firstPath).getByRole("separator").press("Shift+ArrowRight");
   for (const path of [firstPath, secondPath]) {
     await treeRow(path).click();
     const left = section(path).locator("[data-code][data-deletions]");
@@ -215,7 +215,8 @@ try {
       .toBe(60);
   }
   await treeRow(unsupportedPath).click();
-  await expect(divider).toBeVisible();
+  await expect(divider).toHaveCount(2);
+  await expect(section(unsupportedPath).getByRole("separator")).toHaveCount(0);
   await page.getByRole("button", { name: "Stacked", exact: true }).click();
   await expect(divider).toHaveCount(0);
   await treeRow(secondPath).click();
@@ -519,6 +520,69 @@ try {
     }),
   ).toBeEnabled();
   await expect(page.getByRole("alert")).toHaveCount(0);
+
+  // Single-sided files use Pierre's full-width layout, even in a mixed list.
+  const singleSidedFiles = ["new", "deleted"].map((kind): DiffFile => {
+    const added = kind === "new";
+    const path = `${kind}.txt`;
+    const rows = Array.from({ length: 100 }, (_, i) => ({
+      index: i + 1,
+      raw: `${added ? "+" : "-"}single-sided line ${i + 1}`,
+      ...(added ? { newLine: i + 1 } : { oldLine: i + 1 }),
+    }));
+    const header = added ? "@@ -0,0 +1,100 @@" : "@@ -1,100 +0,0 @@";
+    return {
+      path,
+      additions: added ? 100 : 0,
+      deletions: added ? 0 : 100,
+      hunks: [{ id: path, header, rows }],
+      patch: `diff --git a/${path} b/${path}\n${added ? "new" : "deleted"} file mode 100644\n--- ${added ? "/dev/null" : `a/${path}`}\n+++ ${added ? `b/${path}` : "/dev/null"}\n${header}\n${rows.map((row) => row.raw).join("\n")}\n`,
+    };
+  });
+  serverState = {
+    ...serverState,
+    version: "mixed-split",
+    files: [firstFile, ...singleSidedFiles, secondFile],
+  };
+  await page.keyboard.press("r");
+  await expect(page.locator(".file-diff-section")).toHaveCount(4);
+  await page.getByRole("button", { name: "Split", exact: true }).click();
+  await expect(divider).toHaveCount(2);
+  for (const mode of [allFiles, oneFile]) {
+    await mode.click();
+    for (const file of singleSidedFiles) {
+      await treeRow(file.path).click();
+      await expect(section(file.path).getByRole("separator")).toHaveCount(0);
+      const code = section(file.path).locator("[data-code]");
+      await expect(code).toBeVisible();
+      await expect(code).toHaveCount(1);
+      const codeBox = await code.boundingBox();
+      const surfaceBox = await section(file.path)
+        .locator(".code-surface")
+        .boundingBox();
+      assert(
+        codeBox && surfaceBox && Math.abs(codeBox.width - surfaceBox.width) < 2,
+      );
+      const viewBox = await viewport.boundingBox();
+      assert(viewBox);
+      const seam = await page.evaluate(
+        ({ x, y }) =>
+          document.elementFromPoint(x, y)?.closest(".split-diff-resize") !==
+          null,
+        { x: surfaceBox.x + surfaceBox.width * 0.6, y: viewBox.y + 150 },
+      );
+      assert.equal(
+        seam,
+        false,
+        "No resize hit target over a single-sided file",
+      );
+    }
+    await treeRow(firstPath).click();
+    await expect(section(firstPath).getByRole("separator")).toHaveAttribute(
+      "aria-valuenow",
+      "60",
+    );
+  }
 
   assert.deepEqual(errors, []);
   console.log(

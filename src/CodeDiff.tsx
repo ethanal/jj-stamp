@@ -38,6 +38,7 @@ import {
   readRenderedRightHandLines,
 } from "./copy-selection";
 import { colorSchemes, type ColorScheme } from "./preferences";
+import { SplitDiffResize } from "./SplitDiffLayout";
 
 type Point = LinePoint;
 function pointFromElement(element: Element | null): Point | null {
@@ -883,6 +884,11 @@ export function CodeDiff({
         }
       }}
     >
+      {style === "split" &&
+        fileDiff &&
+        fileDiff.hunks.length > 0 &&
+        fileDiff.type !== "new" &&
+        fileDiff.type !== "deleted" && <SplitDiffResize />}
       {editorError && (
         <div role="alert" className="editor-error">
           {editorError}

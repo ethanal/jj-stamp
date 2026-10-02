@@ -390,16 +390,7 @@ export function ReviewViewer({
         onRefresh={onRefresh}
         onDismiss={onDismissError}
       />
-      <SplitDiffLayout
-        active={
-          style === "split" &&
-          !!file &&
-          (fileView === "all"
-            ? state?.files.some((entry) => !entry.unsupported) === true
-            : !file.unsupported)
-        }
-        disabled={dragging}
-      >
+      <SplitDiffLayout active={style === "split"} disabled={dragging}>
         <DiffViewport className="viewer-scroll" ref={scrollRef}>
           <DiffRuntime colorScheme={colorScheme}>
             {!state ? (

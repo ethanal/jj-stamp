@@ -80,9 +80,7 @@ try {
   await page.mouse.move(849, resized.y + 100);
   await checkRatio(80);
   await divider.dispatchEvent("pointercancel");
-  await expect(page.locator(".split-diff-layout")).not.toHaveClass(
-    /is-resizing/,
-  );
+  await expect(divider).not.toHaveClass(/is-resizing/);
   await page.mouse.up();
   // The divider remains usable after scrolling far down the diff.
   await page.locator(".viewer-scroll").evaluate((el) => {

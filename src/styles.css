@@ -564,7 +564,7 @@ kbd {
   bottom: 0;
   width: 9px;
   transform: translateX(-50%);
-  z-index: 6;
+  z-index: 4;
   cursor: col-resize;
   touch-action: none;
   user-select: none;
@@ -581,14 +581,10 @@ kbd {
 }
 .split-diff-resize:hover::after,
 .split-diff-resize:focus-visible::after,
-.split-diff-layout.is-resizing > .split-diff-resize::after {
+.split-diff-resize.is-resizing::after {
   left: 3px;
   width: 3px;
   background: var(--accent);
-}
-.split-diff-layout.is-resizing {
-  cursor: col-resize;
-  user-select: none;
 }
 .split-diff-resize[aria-disabled="true"] {
   pointer-events: none;
@@ -629,6 +625,7 @@ kbd {
   margin-left: auto;
 }
 .code-surface {
+  position: relative;
   min-height: 100%;
   outline: none;
 }
