@@ -68,7 +68,8 @@ export async function startLocalServer({
     }
     next();
   });
-  app.use("/api", createApi(service));
+  const api = createApi(service);
+  app.use("/api", api);
   app.use("/api", (_req, res) => {
     res.status(404).json({ error: "API route not found.", code: "NOT_FOUND" });
   });
@@ -130,6 +131,9 @@ export async function startLocalServer({
     close(): Promise<void> {
       if (!shutdown) {
         closing = true;
+        // End long-lived SSE responses before server.close(), otherwise they
+        // would keep graceful shutdown open indefinitely.
+        api.closeEvents();
         shutdown = new Promise<void>((resolve, reject) => {
           server.close((error) => (error ? reject(error) : resolve()));
           server.closeIdleConnections();

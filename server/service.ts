@@ -684,9 +684,19 @@ export class ReviewService {
     await this.validateViews(views, state.operation, { snapshot });
     return state;
   }
+  /** Resolve the canonical workspace root without snapshotting the working copy.
+   * A warm service performs no subprocesses; event watching remains filesystem-only. */
+  async getWatchRoot(): Promise<string> {
+    await this.init(false);
+    return this.root;
+  }
   /** Wait for all accepted requests before a graceful service shutdown. */
   async drain(): Promise<void> {
-    await Promise.all([this.queue, this.displayReads.drain()]);
+    await Promise.all([
+      this.queue,
+      this.displayReads.drain(),
+      this.initialization?.catch(() => undefined) ?? Promise.resolve(),
+    ]);
   }
   getState(): Promise<State> {
     return this.serial("state", async () => {

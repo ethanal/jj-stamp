@@ -38,8 +38,8 @@ const fixture = await createBrowserFixture({
 });
 const { page, url, errors } = fixture;
 // Fixture scenarios deliberately build transient jj histories before explicit
-// refreshes. Keep those response boundaries deterministic; poll-refresh tests
-// foreground polling and its races independently.
+// refreshes. Keep those response boundaries deterministic; filesystem-refresh tests
+// filesystem refresh and its races independently.
 await page.addInitScript(() => {
   document.hasFocus = () => false;
 });

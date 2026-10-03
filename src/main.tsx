@@ -19,6 +19,7 @@ import {
 } from "./optimistic";
 import { ContentStore } from "./content-store";
 import { RevisionNavigation } from "./revision-navigation";
+import { FilesystemRefresh, parseRepositoryChange } from "./filesystem-refresh";
 import { SquashQueue } from "./squash-queue";
 import { api, errorMessage, errorDetails, type ErrorDetail } from "./api";
 import { useAppearancePreferences } from "./preferences";
@@ -119,6 +120,7 @@ function App() {
   const [busy, setBusy] = useState("");
   const busyRef = useRef("");
   busyRef.current = busy;
+  const [focused, setFocused] = useState(() => document.hasFocus());
   const [visible, setVisible] = useState(
     document.visibilityState === "visible",
   );
@@ -193,11 +195,12 @@ function App() {
   const lock = useRef(false);
   const [focusRefreshPending, setFocusRefreshPending] = useState(false);
   const refreshGeneration = useRef(0);
-  const pollContext = useRef({ dragging, focusRefreshPending });
-  pollContext.current = { dragging, focusRefreshPending };
+  const autoRefreshContext = useRef({ dragging, focusRefreshPending });
+  autoRefreshContext.current = { dragging, focusRefreshPending };
+  const filesystemRefresh = useRef<FilesystemRefresh | null>(null);
   const onDragging = useCallback((value: boolean) => {
     if (value) refreshGeneration.current++;
-    pollContext.current.dragging = value;
+    autoRefreshContext.current.dragging = value;
     setDragging(value);
   }, []);
   const scroll = useRef<HTMLDivElement>(null);
@@ -305,12 +308,13 @@ function App() {
   }, [refresh]);
   useEffect(() => {
     const onBlur = () => {
-      // A poll started before leaving must not publish after returning, even if
-      // the tab stayed visible and the response outlived the whole round trip.
+      // A quiet read started before leaving must not publish after returning.
       refreshGeneration.current++;
+      setFocused(false);
     };
     const onFocus = () => {
       refreshGeneration.current++;
+      setFocused(document.hasFocus());
       if (document.visibilityState !== "visible") {
         setFocusRefreshPending(false);
       } else {
@@ -358,11 +362,9 @@ function App() {
   ]);
   useEffect(() => {
     let disposed = false;
-    let delay = 1_000;
-    let timer: ReturnType<typeof setTimeout>;
     const eligible = () => {
       const current = queue.getSnapshot();
-      const context = pollContext.current;
+      const context = autoRefreshContext.current;
       return (
         !disposed &&
         document.visibilityState === "visible" &&
@@ -377,43 +379,56 @@ function App() {
         !current.halted
       );
     };
-    const poll = async () => {
-      const before = queue.getSnapshot();
-      const generation = refreshGeneration.current;
-      const selection = rangeRef.current;
-      const isCurrent = () => {
-        const current = queue.getSnapshot();
-        return (
-          eligible() &&
-          generation === refreshGeneration.current &&
-          before.epoch === current.epoch &&
-          before.confirmed === current.confirmed &&
-          selection === rangeRef.current
-        );
-      };
-      try {
-        if (!eligible()) return;
+    const controller = new FilesystemRefresh({
+      eligible,
+      operation: () => queue.getSnapshot().confirmed?.operation,
+      refresh: async () => {
+        const before = queue.getSnapshot();
+        const generation = refreshGeneration.current;
+        const selection = rangeRef.current;
         const next = await api<RepoState>("state");
-        // Never lock or dim the UI for a poll. Foreground work may overtake it;
-        // discard stale results rather than replacing a newer review/projection.
-        if (!isCurrent()) return;
-        delay = 1_000;
+        // Never lock or dim the UI for a filesystem-triggered check. Foreground
+        // work may overtake it; retain the invalidation, not the stale response.
+        const current = queue.getSnapshot();
+        if (
+          !eligible() ||
+          generation !== refreshGeneration.current ||
+          before.epoch !== current.epoch ||
+          before.confirmed !== current.confirmed ||
+          selection !== rangeRef.current
+        )
+          return false;
         replaceAutomatically(next);
-      } catch {
-        // Foreground refresh still reports errors. Background failures neither
-        // spam diagnostics nor retry mutations, and back off to spare the server.
-        if (isCurrent()) delay = Math.min(delay * 2, 30_000);
-      } finally {
-        // Schedule after completion: even a slow server gets at most one poll.
-        if (!disposed) timer = setTimeout(() => void poll(), delay);
-      }
-    };
-    timer = setTimeout(() => void poll(), delay);
+        return true;
+      },
+    });
+    filesystemRefresh.current = controller;
     return () => {
       disposed = true;
-      clearTimeout(timer);
+      controller.dispose();
+      filesystemRefresh.current = null;
     };
   }, [queue, replaceAutomatically]);
+  useEffect(() => {
+    filesystemRefresh.current?.wake();
+  }, [focused, visible, busy, dragging, focusRefreshPending, queued]);
+  useEffect(() => {
+    if (!focused || !visible || !queued.confirmed) return;
+    const events = new EventSource("/api/events");
+    // Establishing/re-establishing observation needs one catch-up check: changes
+    // may have happened between the last state read and attaching the watcher.
+    events.addEventListener("ready", () => {
+      filesystemRefresh.current?.changed({ workspace: true, heads: null });
+    });
+    events.addEventListener("change", (event) => {
+      const change = parseRepositoryChange((event as MessageEvent).data);
+      if (change) filesystemRefresh.current?.changed(change);
+    });
+    // Watch limits/unsupported filesystems fall back to focus/manual refresh,
+    // not a reconnect or state-polling loop. Network disconnects reconnect via SSE.
+    events.addEventListener("unavailable", () => events.close());
+    return () => events.close();
+  }, [focused, visible, !!queued.confirmed]);
   useEffect(() => {
     try {
       localStorage.setItem("jj-stamp.diff-style", style);

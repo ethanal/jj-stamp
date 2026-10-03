@@ -44,3 +44,9 @@ export interface RepoState {
   canUndo: boolean;
 }
 export type Selections = Record<string, number[]>;
+
+/** Filesystem invalidation hints, never mutation authorization or file contents. */
+export interface RepositoryChange {
+  workspace: boolean;
+  heads: string[] | null;
+}
