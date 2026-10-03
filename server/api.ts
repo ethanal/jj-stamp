@@ -3,6 +3,7 @@ import type { Request, Response, Router } from "express";
 import { z } from "zod";
 import { ApiError, ReviewService } from "./service.ts";
 import { processFailureOutput, ProcessError } from "./process.ts";
+import { watchFailure, type WatchFailure } from "./watch-errors.ts";
 import {
   watchFilesystemEvents,
   type FilesystemChange,
@@ -76,7 +77,7 @@ class EventHub {
   private heartbeat?: NodeJS.Timeout;
   private generation = 0;
   private running = false;
-  private failed = false;
+  private failure?: WatchFailure;
   private closed = false;
   private pendingChange?: FilesystemChange;
 
@@ -115,8 +116,8 @@ class EventHub {
     const disconnected = () => this.remove(client);
     request.once("aborted", disconnected);
     response.once("close", disconnected);
-    if (this.failed) {
-      response.end(eventFrame("unavailable", {}));
+    if (this.failure) {
+      response.end(eventFrame("unavailable", this.failure));
       return;
     }
     this.clients.add(client);
@@ -125,7 +126,7 @@ class EventHub {
   }
 
   private start() {
-    if (this.starting || this.running || this.failed || this.closed) return;
+    if (this.starting || this.running || this.failure || this.closed) return;
     const controller = new AbortController();
     const generation = ++this.generation;
     this.starting = controller;
@@ -144,7 +145,7 @@ class EventHub {
           root,
           {
             change: (change) => this.changed(generation, change),
-            unavailable: () => this.unavailable(generation),
+            unavailable: (error) => this.unavailable(generation, error),
           },
           controller.signal,
         );
@@ -177,17 +178,17 @@ class EventHub {
       })
       .catch((error: unknown) => {
         if (
-          (error as Error).name === "AbortError" ||
+          (error instanceof Error && error.name === "AbortError") ||
           controller.signal.aborted ||
           generation !== this.generation
         )
           return;
-        this.unavailable(generation);
+        this.unavailable(generation, error);
       });
   }
 
   private changed(generation: number, rawChange: FilesystemChange) {
-    if (generation !== this.generation || this.closed || this.failed) return;
+    if (generation !== this.generation || this.closed || this.failure) return;
     const change = boundedChange(rawChange);
     if (!this.running) {
       this.pendingChange = this.pendingChange
@@ -201,17 +202,27 @@ class EventHub {
     this.broadcast(eventFrame("change", change));
   }
 
-  private unavailable(generation: number) {
-    if (generation !== this.generation || this.closed || this.failed) return;
-    this.failed = true;
+  private unavailable(generation: number, error?: unknown) {
+    if (generation !== this.generation || this.closed || this.failure) return;
+    this.failure = watchFailure(error);
     this.stopWatcher();
+    // Report once, including the original filesystem error in the owner's
+    // terminal. Reconnecting clients receive the same sanitized diagnosis.
+    try {
+      console.warn(
+        `[jj-stamp watch] ${this.failure.code}: ${this.failure.message}`,
+        error,
+      );
+    } catch {
+      /* Diagnostics must never prevent stream/watcher cleanup. */
+    }
     const clients = [...this.clients];
     this.clients.clear();
     for (const client of clients) {
       client.closed = true;
       if (client.blocked || client.pending.length > 0)
         client.response.destroy();
-      else client.response.end(eventFrame("unavailable", {}));
+      else client.response.end(eventFrame("unavailable", this.failure));
     }
   }
 
@@ -257,7 +268,7 @@ class EventHub {
     if (client.closed) return;
     client.closed = true;
     this.clients.delete(client);
-    if (this.clients.size === 0 && !this.failed) this.stopWatcher();
+    if (this.clients.size === 0 && !this.failure) this.stopWatcher();
   }
 
   private stopWatcher() {

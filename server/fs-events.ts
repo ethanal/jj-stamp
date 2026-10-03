@@ -2,12 +2,13 @@ import { constants, watch, type FSWatcher } from "node:fs";
 import { lstat, open, opendir, readdir, realpath } from "node:fs/promises";
 import path from "node:path";
 import type { RepositoryChange } from "../src/types.ts";
+import { WatchError } from "./watch-errors.ts";
 
 export type FilesystemChange = RepositoryChange;
 
 export interface FilesystemEventHandlers {
   change(change: FilesystemChange): void;
-  unavailable(): void;
+  unavailable(error?: unknown): void;
 }
 
 export interface FilesystemEventWatcher {
@@ -59,7 +60,11 @@ async function readBoundedRegularFile(file: string, maxBytes: number) {
   );
   try {
     const info = await handle.stat();
-    if (!info.isFile()) throw new Error("Expected a regular file.");
+    if (!info.isFile())
+      throw new WatchError(
+        "WATCH_UNSUPPORTED_METADATA",
+        "Repository metadata must be a regular file.",
+      );
     const buffer = Buffer.allocUnsafe(maxBytes + 1);
     let bytes = 0;
     while (bytes < buffer.byteLength) {
@@ -72,7 +77,11 @@ async function readBoundedRegularFile(file: string, maxBytes: number) {
       if (result.bytesRead === 0) break;
       bytes += result.bytesRead;
     }
-    if (bytes > maxBytes) throw new Error("File exceeds its read bound.");
+    if (bytes > maxBytes)
+      throw new WatchError(
+        "WATCH_METADATA_TOO_LARGE",
+        `Repository metadata exceeds its ${maxBytes}-byte read limit.`,
+      );
     return buffer.subarray(0, bytes);
   } finally {
     await handle.close();
@@ -87,11 +96,18 @@ async function requireDirectoryWithoutSymlinks(directory: string) {
     if (!component) continue;
     current = path.join(current, component);
     const info = await lstat(current);
-    if (info.isSymbolicLink()) throw new Error("Unsafe repository metadata.");
+    if (info.isSymbolicLink())
+      throw new WatchError(
+        "WATCH_UNSAFE_METADATA",
+        "Repository metadata contains a symbolic link or an unexpected file type.",
+      );
   }
   const final = await lstat(absolute);
   if (!final.isDirectory() || final.isSymbolicLink())
-    throw new Error("Unsupported repository metadata.");
+    throw new WatchError(
+      "WATCH_UNSUPPORTED_METADATA",
+      "The repository metadata layout is not supported by the filesystem watcher.",
+    );
   return absolute;
 }
 
@@ -99,17 +115,35 @@ async function resolveRepoDirectory(workspaceRoot: string): Promise<string> {
   const jjDirectory = path.join(workspaceRoot, ".jj");
   const jjEntry = await lstat(jjDirectory);
   if (!jjEntry.isDirectory() || jjEntry.isSymbolicLink())
-    throw new Error("Unsafe repository metadata.");
+    throw new WatchError(
+      "WATCH_UNSAFE_METADATA",
+      "Repository metadata contains a symbolic link or an unexpected file type.",
+    );
   const repoEntry = path.join(jjDirectory, "repo");
   const entry = await lstat(repoEntry);
-  if (entry.isSymbolicLink()) throw new Error("Unsafe repository metadata.");
+  if (entry.isSymbolicLink())
+    throw new WatchError(
+      "WATCH_UNSAFE_METADATA",
+      "Repository metadata contains a symbolic link or an unexpected file type.",
+    );
   if (entry.isDirectory()) return requireDirectoryWithoutSymlinks(repoEntry);
-  if (!entry.isFile()) throw new Error("Unsupported repository metadata.");
+  if (!entry.isFile())
+    throw new WatchError(
+      "WATCH_UNSUPPORTED_METADATA",
+      "The repository metadata layout is not supported by the filesystem watcher.",
+    );
   const contents = await readBoundedRegularFile(repoEntry, 4096);
-  if (contents.byteLength === 0) throw new Error("Invalid repository link.");
+  if (contents.byteLength === 0)
+    throw new WatchError(
+      "WATCH_INVALID_REPOSITORY_LINK",
+      "The linked workspace repository pointer is empty or invalid.",
+    );
   const relative = contents.toString("utf8").trim();
   if (!relative || relative.includes("\0"))
-    throw new Error("Invalid repository link.");
+    throw new WatchError(
+      "WATCH_INVALID_REPOSITORY_LINK",
+      "The linked workspace repository pointer is empty or invalid.",
+    );
   return requireDirectoryWithoutSymlinks(
     path.resolve(path.dirname(repoEntry), relative),
   );
@@ -227,7 +261,7 @@ class NativeFilesystemWatcher implements FilesystemEventWatcher {
     callback: (eventType: string, filename: string | null) => void,
   ): FSWatcher {
     const watcher = watch(directory, { encoding: "utf8" }, callback);
-    watcher.on("error", () => this.fail());
+    watcher.on("error", (error) => this.fail(error));
     return watcher;
   }
 
@@ -235,7 +269,10 @@ class NativeFilesystemWatcher implements FilesystemEventWatcher {
     const opHeads = await lstat(this.opHeadsPath);
     if (this.closed) throw abortError();
     if (!opHeads.isDirectory() || opHeads.isSymbolicLink())
-      throw new Error("Operation heads are unavailable.");
+      throw new WatchError(
+        "WATCH_HEADS_UNAVAILABLE",
+        "The jj operation-head storage is missing or is not a regular file/directory.",
+      );
     const watcher = this.watchDirectory(
       this.opHeadsPath,
       (_eventType, filename) => {
@@ -277,12 +314,23 @@ class NativeFilesystemWatcher implements FilesystemEventWatcher {
     if (info === null) {
       existing?.close();
       this.metadataWatchers.delete(this.headsPath);
-      if (required) throw new Error("Operation heads are unavailable.");
+      if (required)
+        throw new WatchError(
+          "WATCH_HEADS_UNAVAILABLE",
+          "The jj operation-head storage is missing or is not a regular file/directory.",
+        );
       return;
     }
-    if (info.isSymbolicLink()) throw new Error("Unsafe operation heads.");
+    if (info.isSymbolicLink())
+      throw new WatchError(
+        "WATCH_UNSAFE_METADATA",
+        "The jj operation-head storage is a symbolic link.",
+      );
     if (!info.isDirectory() && !info.isFile())
-      throw new Error("Unsupported operation heads.");
+      throw new WatchError(
+        "WATCH_UNSUPPORTED_METADATA",
+        "The jj operation-head storage is not a regular file or directory.",
+      );
     existing?.close();
     this.metadataWatchers.delete(this.headsPath);
     if (!info.isDirectory()) return;
@@ -327,7 +375,10 @@ class NativeFilesystemWatcher implements FilesystemEventWatcher {
       // different real path means a component became a symlink.
       if (resolvedBefore !== directory) continue;
       if (this.workspaceWatchers.size >= this.options.maxDirectories)
-        throw new Error("Workspace has too many directories to watch safely.");
+        throw new WatchError(
+          "WATCH_DIRECTORY_LIMIT",
+          `Workspace has too many directories to watch safely (limit ${this.options.maxDirectories}). Ignored/generated directories are included.`,
+        );
       const watcher = this.watchDirectory(directory, (eventType, filename) => {
         if (filename !== null && ignoredMetadata(filename)) return;
         this.queueChange(true, false);
@@ -454,7 +505,12 @@ class NativeFilesystemWatcher implements FilesystemEventWatcher {
       !this.pendingTopology.has(candidate) &&
       this.pendingTopology.size >= MAX_TOPOLOGY_CHANGES
     ) {
-      this.fail();
+      this.fail(
+        new WatchError(
+          "WATCH_EVENT_OVERFLOW",
+          `Too many filesystem directory changes are queued (limit ${MAX_TOPOLOGY_CHANGES}).`,
+        ),
+      );
       return;
     }
     this.pendingTopology.set(candidate, existing || rescan);
@@ -485,8 +541,8 @@ class NativeFilesystemWatcher implements FilesystemEventWatcher {
           if (rescan) await this.reconcileDirectory(candidate);
           else await this.reconcilePath(candidate, true);
         }
-      } catch {
-        if (!this.closed) this.fail();
+      } catch (error) {
+        if (!this.closed) this.fail(error);
       } finally {
         this.topologyRunning = false;
         if (
@@ -508,7 +564,7 @@ class NativeFilesystemWatcher implements FilesystemEventWatcher {
       if (this.closed) return;
       this.flushing = true;
       void this.flush()
-        .catch(() => this.fail())
+        .catch((error) => this.fail(error))
         .finally(() => {
           this.flushing = false;
           if (!this.closed && (this.pendingWorkspace || this.pendingHeads))
@@ -540,11 +596,11 @@ class NativeFilesystemWatcher implements FilesystemEventWatcher {
     }
   }
 
-  private fail() {
+  private fail(error: unknown) {
     if (this.closed || this.failed) return;
     this.failed = true;
     this.close();
-    this.handlers.unavailable();
+    this.handlers.unavailable(error);
   }
 
   close() {

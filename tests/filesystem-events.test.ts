@@ -364,7 +364,7 @@ test("symlinked repository metadata and linked targets fail closed", async (t) =
       { change() {}, unavailable() {} },
       new AbortController().signal,
     ),
-    /unsafe repository metadata/i,
+    { code: "WATCH_UNSAFE_METADATA" },
   );
 
   const linked = path.join(base, "linked-target");
@@ -377,7 +377,7 @@ test("symlinked repository metadata and linked targets fail closed", async (t) =
       { change() {}, unavailable() {} },
       new AbortController().signal,
     ),
-    /unsafe repository metadata/i,
+    { code: "WATCH_UNSAFE_METADATA" },
   );
 });
 
@@ -707,7 +707,10 @@ test("native first-initialization failures emit unavailable before ending", asyn
 
   const stream = await connectSse(local.url);
   await stream.ended;
-  assert.match(stream.text(), /event: unavailable\ndata: \{\}/);
+  assert.match(
+    stream.text(),
+    /event: unavailable\ndata: \{"code":"WATCH_HEADS_UNAVAILABLE","message":/,
+  );
 });
 
 test("watcher setup failures emit unavailable and end without restarting", async (t) => {
@@ -724,7 +727,10 @@ test("watcher setup failures emit unavailable and end without restarting", async
 
   const first = await connectSse(local.url);
   await first.ended;
-  assert.match(first.text(), /event: unavailable\ndata: \{\}/);
+  assert.match(
+    first.text(),
+    /event: unavailable\ndata: \{"code":"WATCH_UNAVAILABLE","message":/,
+  );
   assert.doesNotMatch(first.text(), /private|path/);
 
   const second = await connectSse(local.url);
@@ -757,4 +763,107 @@ test("disconnect cancels pending initialization before a backend is created", as
   resolveRoot("/unused");
   await quiet();
   assert.equal(starts, 0);
+});
+
+function failurePayload(stream: SseConnection) {
+  const data = /event: unavailable\ndata: ([^\n]+)/.exec(stream.text())?.[1];
+  assert(data, "expected an unavailable event with diagnostics");
+  return JSON.parse(data) as { code: string; message: string };
+}
+
+function captureWarnings(t: TestContext) {
+  const warnings: unknown[][] = [];
+  const original = console.warn;
+  console.warn = (...args: unknown[]) => {
+    warnings.push(args);
+  };
+  t.after(() => {
+    console.warn = original;
+  });
+  return warnings;
+}
+
+test("directory-limit failures report the actual limit and persist across reconnects", async (t) => {
+  const warnings = captureWarnings(t);
+  const root = await fakeWorkspace(t);
+  await mkdir(path.join(root, "src"));
+  const service = { getWatchRoot: async () => root } as ReviewService;
+  const local = await injectedServer(
+    service,
+    watchFilesystemEventsWithLimit(1),
+  );
+  t.after(() => local.close());
+  const first = await connectSse(local.url);
+  await first.ended;
+  const failure = failurePayload(first);
+  assert.equal(failure.code, "WATCH_DIRECTORY_LIMIT");
+  assert.match(failure.message, /limit 1/);
+  assert.match(failure.message, /Ignored\/generated/);
+  assert.doesNotMatch(first.text(), new RegExp(root));
+  assert.equal(warnings.length, 1);
+  const second = await connectSse(local.url);
+  await second.ended;
+  assert.deepEqual(failurePayload(second), failure);
+  assert.equal(warnings.length, 1, "reconnects must not spam the terminal");
+});
+
+test("runtime watcher failures preserve the OS error without exposing filenames in SSE", async (t) => {
+  const warnings = captureWarnings(t);
+  let handlers!: FilesystemEventHandlers;
+  let closes = 0;
+  const backend: FilesystemEventBackend = async (_root, next) => {
+    handlers = next;
+    return {
+      close: () => {
+        closes++;
+      },
+    };
+  };
+  const local = await injectedServer(
+    { getWatchRoot: async () => "/unused" } as ReviewService,
+    backend,
+  );
+  t.after(() => local.close());
+  const stream = await connectSse(local.url);
+  await eventually(
+    () => stream.text().includes("event: ready"),
+    "missing ready event",
+  );
+  const original = Object.assign(
+    new Error("ENOSPC: watch '/private/project/file'"),
+    { code: "ENOSPC" },
+  );
+  handlers.unavailable(original);
+  await stream.ended;
+  const failure = failurePayload(stream);
+  assert.equal(failure.code, "ENOSPC");
+  assert.match(failure.message, /watch\/resource limits/);
+  assert.doesNotMatch(stream.text(), /private|project/);
+  assert.equal(closes, 1);
+  assert.equal(warnings.length, 1);
+  assert.equal(
+    warnings[0][1],
+    original,
+    "terminal retains the original filesystem error",
+  );
+  handlers.unavailable(original);
+  assert.equal(warnings.length, 1);
+});
+
+test("native runtime traversal errors reach the stream with a useful failure code", async (t) => {
+  captureWarnings(t);
+  const root = await fakeWorkspace(t);
+  const local = await injectedServer(
+    { getWatchRoot: async () => root } as ReviewService,
+    watchFilesystemEventsWithLimit(1),
+  );
+  t.after(() => local.close());
+  const stream = await connectSse(local.url);
+  await eventually(
+    () => stream.text().includes("event: ready"),
+    "missing ready event",
+  );
+  await mkdir(path.join(root, "over-limit"));
+  await stream.ended;
+  assert.equal(failurePayload(stream).code, "WATCH_DIRECTORY_LIMIT");
 });
