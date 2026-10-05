@@ -62,65 +62,56 @@ async function fakeWorkspace(t: TestContext) {
   return root;
 }
 
-async function collectWatcher(root: string) {
+async function collectWatcher(root: string, paths: readonly string[]) {
   const changes: FilesystemChange[] = [];
-  let unavailable = 0;
+  const unavailableErrors: unknown[] = [];
   const controller = new AbortController();
   const watcher = await watchFilesystemEvents(
     root,
     {
       change: (change) => changes.push(change),
-      unavailable: () => unavailable++,
+      unavailable: (error) => unavailableErrors.push(error),
     },
     controller.signal,
+    paths,
   );
-  return { changes, watcher, unavailable: () => unavailable };
+  return {
+    changes,
+    watcher,
+    unavailable: () => unavailableErrors.length,
+    unavailableErrors,
+  };
 }
 
-test("native watcher reports workspace trees, atomic saves, deletes, and operation heads", async (t) => {
+test("scoped watcher reports leaf edits and atomic saves but ignores unrelated siblings", async (t) => {
   const root = await fakeWorkspace(t);
-  await mkdir(path.join(root, "src/nested"), { recursive: true });
-  await writeFile(path.join(root, "src/nested/file.ts"), "one");
-  const observed = await collectWatcher(root);
+  await mkdir(path.join(root, "src/a"), { recursive: true });
+  await mkdir(path.join(root, "src/b"), { recursive: true });
+  await writeFile(path.join(root, "src/a/file.ts"), "one");
+  const observed = await collectWatcher(root, ["src/a/file.ts"]);
   t.after(() => observed.watcher.close());
 
-  await writeFile(path.join(root, "src/nested/file.ts"), "two");
+  await writeFile(path.join(root, "cache.txt"), "ignored");
+  await writeFile(path.join(root, "src/b/other.ts"), "ignored");
+  await quiet(150);
+  assert.equal(observed.changes.length, 0);
+
+  await writeFile(path.join(root, "src/a/file.ts"), "two");
   await eventually(
     () => observed.changes.some((change) => change.workspace),
-    "ordinary file write was not reported",
+    "ordinary scoped file write was not reported",
   );
   assert.deepEqual(observed.changes.at(-1)?.heads, [HEAD_A]);
 
   observed.changes.length = 0;
-  await writeFile(path.join(root, "src/nested/.file.ts.tmp"), "three");
+  await writeFile(path.join(root, "src/a/.file.ts.tmp"), "three");
   await rename(
-    path.join(root, "src/nested/.file.ts.tmp"),
-    path.join(root, "src/nested/file.ts"),
+    path.join(root, "src/a/.file.ts.tmp"),
+    path.join(root, "src/a/file.ts"),
   );
   await eventually(
     () => observed.changes.some((change) => change.workspace),
-    "atomic save was not reported",
-  );
-
-  observed.changes.length = 0;
-  await mkdir(path.join(root, "created/deep"), { recursive: true });
-  await eventually(
-    () => observed.changes.some((change) => change.workspace),
-    "new directory was not reported",
-  );
-  await quiet();
-  observed.changes.length = 0;
-  await writeFile(path.join(root, "created/deep/new.ts"), "new");
-  await eventually(
-    () => observed.changes.some((change) => change.workspace),
-    "file in a newly watched nested directory was not reported",
-  );
-
-  observed.changes.length = 0;
-  await rm(path.join(root, "created"), { recursive: true });
-  await eventually(
-    () => observed.changes.some((change) => change.workspace),
-    "directory deletion was not reported",
+    "atomic save in the scoped directory was not reported",
   );
 
   observed.changes.length = 0;
@@ -139,55 +130,136 @@ test("native watcher reports workspace trees, atomic saves, deletes, and operati
   assert.equal(observed.unavailable(), 0);
 });
 
-test("metadata churn and symlink targets are ignored, unchanged heads are deduplicated, and close releases handlers", async (t) => {
+test("large unrelated trees are never traversed or counted", async (t) => {
+  const root = await fakeWorkspace(t);
+  await mkdir(path.join(root, "src/a"), { recursive: true });
+  await writeFile(path.join(root, "src/a/file.ts"), "one");
+  for (let index = 0; index < 20; index++)
+    await mkdir(path.join(root, `generated/${index}/deep/tree`), {
+      recursive: true,
+    });
+  const watched: string[] = [];
+  const watcher = await watchFilesystemEventsForTest({
+    maxDirectories: 3,
+    afterDirectoryWatch: async (directory) => {
+      watched.push(path.relative(root, directory) || ".");
+    },
+  })(root, { change() {}, unavailable() {} }, new AbortController().signal, [
+    "src/a/file.ts",
+  ]);
+  t.after(() => watcher.close());
+  assert.deepEqual(watched.sort(), [".", "src", "src/a"]);
+});
+
+test("a root changed file watches only the root nonrecursively", async (t) => {
+  const root = await fakeWorkspace(t);
+  await mkdir(path.join(root, "node_modules/pkg/deep"), { recursive: true });
+  await writeFile(path.join(root, "README.md"), "one");
+  const watched: string[] = [];
+  const changes: FilesystemChange[] = [];
+  const watcher = await watchFilesystemEventsForTest({
+    maxDirectories: 1,
+    afterDirectoryWatch: async (directory) => {
+      watched.push(path.relative(root, directory) || ".");
+    },
+  })(
+    root,
+    { change: (change) => changes.push(change), unavailable() {} },
+    new AbortController().signal,
+    ["README.md"],
+  );
+  t.after(() => watcher.close());
+  assert.deepEqual(watched, ["."]);
+
+  await writeFile(path.join(root, "node_modules/pkg/deep/file.js"), "ignored");
+  await quiet(150);
+  assert.equal(changes.length, 0);
+  await writeFile(path.join(root, "README.md"), "two");
+  await eventually(
+    () => changes.some((change) => change.workspace),
+    "root file edit was not reported",
+  );
+});
+
+test("deleted or initially missing scoped directories are guarded until recreated", async (t) => {
+  const root = await fakeWorkspace(t);
+  const observed = await collectWatcher(root, ["src/a/file.ts"]);
+  t.after(() => observed.watcher.close());
+
+  await writeFile(path.join(root, "unrelated"), "ignored");
+  await quiet(100);
+  assert.deepEqual(observed.changes, []);
+  await mkdir(path.join(root, "src"));
+  await eventually(
+    () => observed.changes.some((change) => change.workspace),
+    "creation of the first scoped directory was not reported",
+  );
+  await quiet(100);
+  observed.changes.length = 0;
+  await mkdir(path.join(root, "src/a"));
+  await eventually(
+    () => observed.changes.some((change) => change.workspace),
+    "creation of the leaf scoped directory was not reported",
+  );
+  await quiet(100);
+  observed.changes.length = 0;
+  await writeFile(path.join(root, "src/a/file.ts"), "created");
+  await eventually(
+    () => observed.changes.some((change) => change.workspace),
+    "file in a recreated scoped directory was not reported",
+  );
+
+  await quiet(100);
+  observed.changes.length = 0;
+  await rm(path.join(root, "src"), { recursive: true });
+  await eventually(
+    () => observed.changes.some((change) => change.workspace),
+    "scoped directory deletion was not reported",
+  );
+  await quiet(150);
+  observed.changes.length = 0;
+  await mkdir(path.join(root, "src/a"), { recursive: true });
+  await eventually(
+    () => observed.changes.some((change) => change.workspace),
+    "recreated scoped directory was not reported",
+  );
+  await quiet(150);
+  observed.changes.length = 0;
+  await writeFile(path.join(root, "src/a/later.ts"), "later");
+  await eventually(
+    () => observed.changes.some((change) => change.workspace),
+    "recreated scoped directory did not regain its watcher",
+  );
+});
+
+test("same-path replacement reattaches the scoped watcher without following symlinks", async (t) => {
   const root = await fakeWorkspace(t);
   const outside = await mkdtemp(path.join(os.tmpdir(), "jj-stamp-outside-"));
   t.after(() => rm(outside, { recursive: true, force: true }));
-  await mkdir(path.join(root, ".git"));
-  await mkdir(path.join(root, "replace-me"));
-  await symlink(outside, path.join(root, "linked"), "dir");
-  const observed = await collectWatcher(root);
-
-  await writeFile(path.join(root, ".git/index"), "git churn");
-  await writeFile(path.join(root, ".jj/repo/unrelated"), "jj churn");
-  await writeFile(path.join(outside, "escaped"), "outside");
-  await writeFile(path.join(root, ".jj/repo/op_heads/heads", "lock"), "lock");
-  await writeFile(path.join(root, ".jj/repo/op_heads/heads", HEAD_A), "same");
-  await quiet(200);
-  assert.deepEqual(observed.changes, []);
-
-  await rm(path.join(root, "replace-me"), { recursive: true });
-  await symlink(outside, path.join(root, "replace-me"), "dir");
-  await eventually(
-    () => observed.changes.some((change) => change.workspace),
-    "replacing a workspace directory was not reported",
-  );
-  await quiet();
-  observed.changes.length = 0;
-  await writeFile(path.join(outside, "after-replacement"), "outside again");
-  await quiet(150);
-  assert.deepEqual(observed.changes, []);
-
-  observed.watcher.close();
-  await writeFile(path.join(root, "after-close"), "closed");
-  await quiet(100);
-  assert.deepEqual(observed.changes, []);
-  assert.equal(observed.unavailable(), 0);
-});
-
-test("same-path directory replacement reattaches nested watchers", async (t) => {
-  const root = await fakeWorkspace(t);
   await mkdir(path.join(root, "swap/nested"), { recursive: true });
-  const observed = await collectWatcher(root);
+  const observed = await collectWatcher(root, ["swap/nested/file.ts"]);
   t.after(() => observed.watcher.close());
 
   await rm(path.join(root, "swap"), { recursive: true });
+  await symlink(outside, path.join(root, "swap"), "dir");
+  await eventually(
+    () => observed.changes.some((change) => change.workspace),
+    "symlink replacement was not reported",
+  );
+  await quiet(150);
+  observed.changes.length = 0;
+  await mkdir(path.join(outside, "nested"));
+  await writeFile(path.join(outside, "nested/escaped.ts"), "outside");
+  await quiet(150);
+  assert.deepEqual(observed.changes, []);
+
+  await rm(path.join(root, "swap"));
   await mkdir(path.join(root, "swap/nested"), { recursive: true });
   await eventually(
     () => observed.changes.some((change) => change.workspace),
-    "same-path directory replacement was not reported",
+    "same-path directory recreation was not reported",
   );
-  await quiet(200);
+  await quiet(150);
   observed.changes.length = 0;
   await writeFile(path.join(root, "swap/nested/later.txt"), "later");
   await eventually(
@@ -197,22 +269,47 @@ test("same-path directory replacement reattaches nested watchers", async (t) => 
   assert.equal(observed.unavailable(), 0);
 });
 
-test("watch directory count is bounded and setup failure does not leave a live watcher", async (t) => {
+test("delete and recreate of the same scoped directory forcefully reattaches its watcher", async (t) => {
   const root = await fakeWorkspace(t);
-  await mkdir(path.join(root, "one"));
+  await mkdir(path.join(root, "src/a"), { recursive: true });
+  await writeFile(path.join(root, "src/a/file.ts"), "before");
+  const observed = await collectWatcher(root, ["src/a/file.ts"]);
+  t.after(() => observed.watcher.close());
+
+  await rm(path.join(root, "src/a"), { recursive: true });
+  await mkdir(path.join(root, "src/a"));
+  await eventually(
+    () => observed.changes.some((change) => change.workspace),
+    "delete and recreation of the scoped directory was not reported",
+  );
+  await quiet(200);
+  observed.changes.length = 0;
+  await writeFile(path.join(root, "src/a/later.ts"), "later");
+  await eventually(
+    () => observed.changes.some((change) => change.workspace),
+    "recreated same-path directory retained a stale native watcher",
+  );
+  assert.equal(observed.unavailable(), 0);
+});
+
+test("watch directory count is bounded by explicit scopes and ancestors", async (t) => {
+  const root = await fakeWorkspace(t);
+  await mkdir(path.join(root, "one/two"), { recursive: true });
   const controller = new AbortController();
   await assert.rejects(
-    watchFilesystemEventsWithLimit(1)(
+    watchFilesystemEventsWithLimit(2)(
       root,
       { change() {}, unavailable() {} },
       controller.signal,
+      ["one/two/file.ts"],
     ),
-    /too many directories/i,
+    /selected workspace scopes and their ancestors.*limit 2/i,
   );
 });
 
-test("native setup cancellation closes a provisional directory watcher", async (t) => {
+test("native setup cancellation closes a provisional scoped watcher", async (t) => {
   const root = await fakeWorkspace(t);
+  await mkdir(path.join(root, "src"));
   let entered!: () => void;
   const watching = new Promise<void>((resolve) => (entered = resolve));
   let release!: () => void;
@@ -228,53 +325,159 @@ test("native setup cancellation closes a provisional directory watcher", async (
     root,
     { change: (change) => changes.push(change), unavailable() {} },
     controller.signal,
+    ["src/file.ts"],
   );
   await watching;
   controller.abort();
   release();
   await assert.rejects(pending, { name: "AbortError" });
-  await writeFile(path.join(root, "after-cancel"), "closed");
+  await writeFile(path.join(root, "src/after-cancel"), "closed");
   await quiet(100);
   assert.deepEqual(changes, []);
 });
 
-test("events during initial traversal cannot install duplicate directory watchers", async (t) => {
+test("dynamic scopes serialize, invalidate additions once, and remove old watches", async (t) => {
   const root = await fakeWorkspace(t);
+  await mkdir(path.join(root, "old"));
+  await mkdir(path.join(root, "next"));
+  const observed = await collectWatcher(root, ["old/file.ts"]);
+  t.after(() => observed.watcher.close());
+
+  observed.watcher.setPaths(["next/one.ts", "next/two.ts"]);
+  await eventually(
+    () => observed.changes.filter((change) => change.workspace).length === 1,
+    "adding a new directory scope did not emit one gap invalidation",
+  );
+  await quiet(100);
+  assert.equal(observed.changes.length, 1);
+
+  observed.changes.length = 0;
+  observed.watcher.setPaths(["next/renamed.ts"]);
+  await quiet(150);
+  assert.deepEqual(
+    observed.changes,
+    [],
+    "an identical containing-directory scope caused read feedback",
+  );
+  await writeFile(path.join(root, "old/ignored.ts"), "old");
+  await quiet(150);
+  assert.deepEqual(observed.changes, []);
+  await writeFile(path.join(root, "next/observed.ts"), "next");
+  await eventually(
+    () => observed.changes.some((change) => change.workspace),
+    "new scope was not active",
+  );
+
+  observed.changes.length = 0;
+  observed.watcher.setPaths([]);
+  await quiet(150);
+  assert.deepEqual(
+    observed.changes,
+    [],
+    "removal-only update emitted a change",
+  );
+  await writeFile(path.join(root, "next/after-remove.ts"), "ignored");
+  await quiet(150);
+  assert.deepEqual(observed.changes, []);
+});
+
+test("superseded scope work cannot resurrect stale watches or leak after close", async (t) => {
+  const root = await fakeWorkspace(t);
+  for (const directory of ["old", "stale", "latest", "closing"])
+    await mkdir(path.join(root, directory));
+  let blockedDirectory = "";
   let entered!: () => void;
-  const watchingRoot = new Promise<void>((resolve) => (entered = resolve));
+  let watching = new Promise<void>((resolve) => (entered = resolve));
   let release!: () => void;
-  const blocked = new Promise<void>((resolve) => (release = resolve));
-  let first = true;
+  let gate = new Promise<void>((resolve) => (release = resolve));
   const changes: FilesystemChange[] = [];
-  const pending = watchFilesystemEventsForTest({
-    afterDirectoryWatch: async () => {
-      if (!first) return;
-      first = false;
+  const unavailable: unknown[] = [];
+  const watcher = await watchFilesystemEventsForTest({
+    afterDirectoryWatch: async (directory) => {
+      if (path.basename(directory) !== blockedDirectory) return;
       entered();
-      await blocked;
+      await gate;
     },
   })(
     root,
-    { change: (change) => changes.push(change), unavailable() {} },
+    {
+      change: (change) => changes.push(change),
+      unavailable: (error) => unavailable.push(error),
+    },
     new AbortController().signal,
+    ["old/file.ts"],
   );
-  await watchingRoot;
-  await mkdir(path.join(root, "during-setup/nested"), { recursive: true });
+
+  blockedDirectory = "stale";
+  watcher.setPaths(["stale/file.ts"]);
+  await watching;
+  watcher.setPaths(["latest/file.ts"]);
   release();
-  const watcher = await pending;
-  t.after(() => watcher.close());
-  await quiet(150);
-  changes.length = 0;
-  await writeFile(path.join(root, "during-setup/nested/later.txt"), "later");
   await eventually(
     () => changes.some((change) => change.workspace),
-    "directory created during setup was not watched",
+    "latest scope reconciliation did not finish",
   );
-  watcher.close();
-  changes.length = 0;
-  await writeFile(path.join(root, "during-setup/nested/closed.txt"), "closed");
   await quiet(100);
-  assert.deepEqual(changes, []);
+  changes.length = 0;
+  await writeFile(path.join(root, "stale/ignored.ts"), "stale");
+  await quiet(150);
+  assert.equal(changes.length, 0);
+  await writeFile(path.join(root, "latest/observed.ts"), "latest");
+  await eventually(
+    () => changes.some((change) => change.workspace),
+    "superseding scope was not installed",
+  );
+
+  await quiet(100);
+  changes.length = 0;
+  blockedDirectory = "closing";
+  watching = new Promise<void>((resolve) => (entered = resolve));
+  gate = new Promise<void>((resolve) => (release = resolve));
+  watcher.setPaths(["closing/file.ts"]);
+  await watching;
+  watcher.close();
+  release();
+  await writeFile(path.join(root, "closing/after-close.ts"), "closed");
+  await quiet(150);
+  assert.equal(changes.length, 0);
+  assert.equal(unavailable.length, 0);
+});
+
+test("empty paths watch only operation heads", async (t) => {
+  const root = await fakeWorkspace(t);
+  await mkdir(path.join(root, "huge/deep/tree"), { recursive: true });
+  const observed = await collectWatcher(root, []);
+  t.after(() => observed.watcher.close());
+  await writeFile(path.join(root, "workspace.txt"), "ignored");
+  await writeFile(path.join(root, "huge/deep/tree/file.ts"), "ignored");
+  await quiet(150);
+  assert.deepEqual(observed.changes, []);
+  await writeFile(path.join(root, ".jj/repo/op_heads/heads", HEAD_B), "");
+  await eventually(
+    () => observed.changes.some((change) => change.heads?.includes(HEAD_B)),
+    "operation heads were not watched with an empty diff",
+  );
+});
+
+test("unsafe scope paths fail closed", async (t) => {
+  const root = await fakeWorkspace(t);
+  for (const selectedPath of [
+    "/absolute/file.ts",
+    "../escape.ts",
+    "src/../escape.ts",
+    ".jj/repo/file",
+    ".git/index",
+  ]) {
+    await assert.rejects(
+      watchFilesystemEvents(
+        root,
+        { change() {}, unavailable() {} },
+        new AbortController().signal,
+        [selectedPath],
+      ),
+      { code: "WATCH_UNSAFE_WORKSPACE" },
+    );
+  }
 });
 
 test("head reads are serialized and retain invalidations that arrive during a slow read", async (t) => {
@@ -310,6 +513,7 @@ test("head reads are serialized and retain invalidations that arrive during a sl
     root,
     { change: (change) => changes.push(change), unavailable() {} },
     new AbortController().signal,
+    [],
   );
   t.after(() => watcher.close());
 
@@ -338,7 +542,7 @@ test("more than 64 operation heads are represented as null", async (t) => {
       "",
     );
   }
-  const observed = await collectWatcher(root);
+  const observed = await collectWatcher(root, ["workspace.txt"]);
   t.after(() => observed.watcher.close());
   await writeFile(path.join(root, "workspace.txt"), "change");
   await eventually(
@@ -363,6 +567,7 @@ test("symlinked repository metadata and linked targets fail closed", async (t) =
       symlinkedJj,
       { change() {}, unavailable() {} },
       new AbortController().signal,
+      [],
     ),
     { code: "WATCH_UNSAFE_METADATA" },
   );
@@ -376,6 +581,7 @@ test("symlinked repository metadata and linked targets fail closed", async (t) =
       linked,
       { change() {}, unavailable() {} },
       new AbortController().signal,
+      [],
     ),
     { code: "WATCH_UNSAFE_METADATA" },
   );
@@ -466,7 +672,7 @@ test("real linked jj workspace resolves shared operation heads and keeps workspa
   const linked = path.join(base, "linked");
   await jj(base, ["git", "init", "--no-colocate", main]);
   await jj(main, ["workspace", "add", linked]);
-  const observed = await collectWatcher(linked);
+  const observed = await collectWatcher(linked, ["linked-file.txt"]);
   t.after(() => observed.watcher.close());
 
   await writeFile(path.join(linked, "linked-file.txt"), "workspace bytes");
@@ -529,6 +735,14 @@ async function injectedServer(
   backend: FilesystemEventBackend,
   maxEventClients = 32,
 ) {
+  if (!(service instanceof ReviewService)) {
+    const fake = service as ReviewService & {
+      getWatchPaths?: () => string[];
+      subscribeWatchPaths?: (listener: (paths: string[]) => void) => () => void;
+    };
+    fake.getWatchPaths ??= () => [];
+    fake.subscribeWatchPaths ??= () => () => {};
+  }
   const app = express();
   const api = createApi(service, { eventBackend: backend, maxEventClients });
   app.use("/api", api);
@@ -562,8 +776,10 @@ test("HTTP events are same-origin SSE and server shutdown closes the stream", as
   await writeFile(path.join(assetsDir, "index.html"), "ok");
   const service = {
     getWatchRoot: async () => root,
+    getWatchPaths: () => ["visible.txt"],
+    subscribeWatchPaths: () => () => {},
     drain: async () => {},
-  } as ReviewService;
+  } as unknown as ReviewService;
   const local = await startLocalServer({ service, assetsDir, port: 0 });
   t.after(() => local.close());
 
@@ -613,7 +829,7 @@ test("API shares one lazy watcher, bounds clients, emits path-free data, and cle
   const backend: FilesystemEventBackend = async (_root, next) => {
     starts++;
     handlers = next;
-    return { close: () => closes++ };
+    return { setPaths() {}, close: () => closes++ };
   };
   const service = {
     getWatchRoot: async () => "/unused",
@@ -745,7 +961,7 @@ test("disconnect cancels pending initialization before a backend is created", as
   let starts = 0;
   const backend: FilesystemEventBackend = async () => {
     starts++;
-    return { close() {} };
+    return { setPaths() {}, close() {} };
   };
   const service = {
     getWatchRoot: () => root,
@@ -787,7 +1003,11 @@ test("directory-limit failures report the actual limit and persist across reconn
   const warnings = captureWarnings(t);
   const root = await fakeWorkspace(t);
   await mkdir(path.join(root, "src"));
-  const service = { getWatchRoot: async () => root } as ReviewService;
+  const service = {
+    getWatchRoot: async () => root,
+    getWatchPaths: () => ["src/file.ts"],
+    subscribeWatchPaths: () => () => {},
+  } as unknown as ReviewService;
   const local = await injectedServer(
     service,
     watchFilesystemEventsWithLimit(1),
@@ -798,7 +1018,10 @@ test("directory-limit failures report the actual limit and persist across reconn
   const failure = failurePayload(first);
   assert.equal(failure.code, "WATCH_DIRECTORY_LIMIT");
   assert.match(failure.message, /limit 1/);
-  assert.match(failure.message, /Ignored\/generated/);
+  assert.match(
+    failure.message,
+    /selected workspace scopes and their ancestors/i,
+  );
   assert.doesNotMatch(first.text(), new RegExp(root));
   assert.equal(warnings.length, 1);
   const second = await connectSse(local.url);
@@ -814,6 +1037,7 @@ test("runtime watcher failures preserve the OS error without exposing filenames 
   const backend: FilesystemEventBackend = async (_root, next) => {
     handlers = next;
     return {
+      setPaths() {},
       close: () => {
         closes++;
       },
@@ -850,11 +1074,21 @@ test("runtime watcher failures preserve the OS error without exposing filenames 
   assert.equal(warnings.length, 1);
 });
 
-test("native runtime traversal errors reach the stream with a useful failure code", async (t) => {
+test("native runtime scope errors reach the stream with a useful failure code", async (t) => {
   captureWarnings(t);
   const root = await fakeWorkspace(t);
+  await mkdir(path.join(root, "over-limit"));
+  let update!: (paths: string[]) => void;
+  const service = {
+    getWatchRoot: async () => root,
+    getWatchPaths: () => [],
+    subscribeWatchPaths: (listener: (paths: string[]) => void) => {
+      update = listener;
+      return () => {};
+    },
+  } as unknown as ReviewService;
   const local = await injectedServer(
-    { getWatchRoot: async () => root } as ReviewService,
+    service,
     watchFilesystemEventsWithLimit(1),
   );
   t.after(() => local.close());
@@ -863,7 +1097,7 @@ test("native runtime traversal errors reach the stream with a useful failure cod
     () => stream.text().includes("event: ready"),
     "missing ready event",
   );
-  await mkdir(path.join(root, "over-limit"));
+  update(["over-limit/file.ts"]);
   await stream.ended;
   assert.equal(failurePayload(stream).code, "WATCH_DIRECTORY_LIMIT");
 });

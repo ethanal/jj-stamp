@@ -1,5 +1,5 @@
 import { constants, watch, type FSWatcher } from "node:fs";
-import { lstat, open, opendir, readdir, realpath } from "node:fs/promises";
+import { lstat, open, opendir, realpath } from "node:fs/promises";
 import path from "node:path";
 import type { RepositoryChange } from "../src/types.ts";
 import { WatchError } from "./watch-errors.ts";
@@ -12,6 +12,7 @@ export interface FilesystemEventHandlers {
 }
 
 export interface FilesystemEventWatcher {
+  setPaths(paths: readonly string[]): void;
   close(): void;
 }
 
@@ -19,10 +20,10 @@ export type FilesystemEventBackend = (
   workspaceRoot: string,
   handlers: FilesystemEventHandlers,
   signal: AbortSignal,
+  paths: readonly string[],
 ) => Promise<FilesystemEventWatcher>;
 
 const DEFAULT_MAX_DIRECTORIES = 4096;
-const MAX_TOPOLOGY_CHANGES = 4096;
 const MAX_HEADS = 64;
 const COALESCE_MS = 25;
 const HEAD_ID = /^[0-9a-f]{32,128}$/;
@@ -193,12 +194,68 @@ interface WatchedDirectory {
   ino: number;
 }
 
+interface DesiredDirectory {
+  primary: boolean;
+  guards: Set<string>;
+  dev: number;
+  ino: number;
+}
+
+function unsafeWorkspacePath() {
+  return new WatchError(
+    "WATCH_UNSAFE_WORKSPACE",
+    "A selected workspace path is absolute, traverses metadata, or is otherwise unsafe to watch.",
+  );
+}
+
+/** Convert selected file paths to their root-relative containing directories. */
+function directoryScopes(paths: readonly string[]) {
+  const scopes = new Set<string>();
+  for (const selectedPath of paths) {
+    if (
+      !selectedPath ||
+      selectedPath.includes("\0") ||
+      selectedPath.includes("\\") ||
+      path.posix.isAbsolute(selectedPath) ||
+      path.win32.isAbsolute(selectedPath) ||
+      path.posix.normalize(selectedPath) !== selectedPath
+    )
+      throw unsafeWorkspacePath();
+    const components = selectedPath.split("/");
+    if (
+      components.some(
+        (component) =>
+          !component ||
+          component === "." ||
+          component === ".." ||
+          ignoredMetadata(component),
+      )
+    )
+      throw unsafeWorkspacePath();
+    const directory = path.posix.dirname(selectedPath);
+    scopes.add(directory === "." ? "" : directory);
+  }
+  return scopes;
+}
+
+function sameSet(left: Set<string>, right: Set<string>) {
+  return (
+    left.size === right.size && [...left].every((value) => right.has(value))
+  );
+}
+
 class NativeFilesystemWatcher implements FilesystemEventWatcher {
   private readonly workspaceWatchers = new Map<string, WatchedDirectory>();
+  private workspaceSpecs = new Map<string, DesiredDirectory>();
   private readonly metadataWatchers = new Map<string, FSWatcher>();
   private readonly headsPath: string;
   private readonly opHeadsPath: string;
-  private readonly pendingTopology = new Map<string, boolean>();
+  private desiredScopes: Set<string>;
+  private appliedScopes = new Set<string>();
+  private readonly forcedRenewals = new Map<string, number>();
+  private forceGeneration = 0;
+  private scopeGeneration = 0;
+  private workspaceReconcilePending = false;
   private headsTopologyPending = false;
   private topologyRunning = false;
   private initialized = false;
@@ -212,18 +269,22 @@ class NativeFilesystemWatcher implements FilesystemEventWatcher {
   private notifiedUnreadableHeads = false;
 
   private constructor(
+    private readonly workspaceRoot: string,
     repoDirectory: string,
     private readonly handlers: FilesystemEventHandlers,
     private readonly options: FilesystemWatcherOptions,
+    paths: readonly string[],
   ) {
     this.opHeadsPath = path.join(repoDirectory, "op_heads");
     this.headsPath = path.join(this.opHeadsPath, "heads");
+    this.desiredScopes = directoryScopes(paths);
   }
 
   static async create(
     workspaceRoot: string,
     handlers: FilesystemEventHandlers,
     signal: AbortSignal,
+    paths: readonly string[],
     options: FilesystemWatcherOptions,
   ): Promise<NativeFilesystemWatcher> {
     if (signal.aborted) throw abortError();
@@ -232,9 +293,11 @@ class NativeFilesystemWatcher implements FilesystemEventWatcher {
     const repoDirectory = await resolveRepoDirectory(canonicalRoot);
     if (signal.aborted) throw abortError();
     const instance = new NativeFilesystemWatcher(
+      canonicalRoot,
       repoDirectory,
       handlers,
       options,
+      paths,
     );
     const aborted = () => instance.close();
     signal.addEventListener("abort", aborted, { once: true });
@@ -243,8 +306,16 @@ class NativeFilesystemWatcher implements FilesystemEventWatcher {
       if (signal.aborted || instance.closed) throw abortError();
       await instance.installMetadataWatchers();
       if (signal.aborted || instance.closed) throw abortError();
-      await instance.addWorkspaceTree(canonicalRoot);
+      while (true) {
+        instance.workspaceReconcilePending = false;
+        const applied = await instance.reconcileWorkspace(
+          instance.scopeGeneration,
+        );
+        if (signal.aborted || instance.closed) throw abortError();
+        if (applied && !instance.workspaceReconcilePending) break;
+      }
       if (signal.aborted || instance.closed) throw abortError();
+      instance.appliedScopes = new Set(instance.desiredScopes);
       instance.initialized = true;
       instance.runTopology();
       return instance;
@@ -254,6 +325,21 @@ class NativeFilesystemWatcher implements FilesystemEventWatcher {
     } finally {
       signal.removeEventListener("abort", aborted);
     }
+  }
+
+  setPaths(paths: readonly string[]) {
+    if (this.closed) return;
+    let scopes: Set<string>;
+    try {
+      scopes = directoryScopes(paths);
+    } catch (error) {
+      this.fail(error);
+      return;
+    }
+    if (sameSet(scopes, this.desiredScopes)) return;
+    this.desiredScopes = scopes;
+    this.scopeGeneration++;
+    this.requestWorkspaceReconcile();
   }
 
   private watchDirectory(
@@ -349,171 +435,203 @@ class NativeFilesystemWatcher implements FilesystemEventWatcher {
     this.metadataWatchers.set(this.headsPath, watcher);
   }
 
-  private async addWorkspaceTree(start: string) {
-    const pending = [start];
-    while (pending.length > 0) {
-      if (this.closed) throw abortError();
-      const directory = pending.shift()!;
-      if (this.workspaceWatchers.has(directory)) continue;
-      const before = await lstat(directory).catch(
-        (error: NodeJS.ErrnoException) => {
-          if (error.code === "ENOENT" || error.code === "ENOTDIR") return null;
-          throw error;
-        },
-      );
-      if (this.closed) throw abortError();
-      if (before === null || !before.isDirectory() || before.isSymbolicLink())
+  private async safeDirectory(directory: string) {
+    const info = await lstat(directory).catch(
+      (error: NodeJS.ErrnoException) => {
+        if (error.code === "ENOENT" || error.code === "ENOTDIR") return null;
+        throw error;
+      },
+    );
+    if (this.closed) throw abortError();
+    if (info === null || !info.isDirectory() || info.isSymbolicLink())
+      return null;
+    const resolved = await realpath(directory).catch(
+      (error: NodeJS.ErrnoException) => {
+        if (error.code === "ENOENT" || error.code === "ENOTDIR") return null;
+        throw error;
+      },
+    );
+    if (this.closed) throw abortError();
+    if (resolved !== directory) return null;
+    return info;
+  }
+
+  private async desiredDirectories(scopes: Set<string>) {
+    const desired = new Map<string, DesiredDirectory>();
+    const identities = new Map<
+      string,
+      Awaited<ReturnType<NativeFilesystemWatcher["safeDirectory"]>>
+    >();
+    const identity = async (directory: string) => {
+      if (identities.has(directory)) return identities.get(directory)!;
+      const info = await this.safeDirectory(directory);
+      identities.set(directory, info);
+      return info;
+    };
+    const add = async (directory: string) => {
+      let spec = desired.get(directory);
+      if (spec) return spec;
+      const info = await identity(directory);
+      if (info === null) return null;
+      spec = {
+        primary: false,
+        guards: new Set(),
+        dev: info.dev,
+        ino: info.ino,
+      };
+      desired.set(directory, spec);
+      return spec;
+    };
+
+    for (const scope of scopes) {
+      let current = this.workspaceRoot;
+      if (scope === "") {
+        const spec = await add(current);
+        if (spec) spec.primary = true;
         continue;
-      const resolvedBefore = await realpath(directory).catch(
-        (error: NodeJS.ErrnoException) => {
-          if (error.code === "ENOENT" || error.code === "ENOTDIR") return null;
-          throw error;
-        },
-      );
-      if (this.closed) throw abortError();
-      // Every queued path is rooted at the already-canonical workspace. A
-      // different real path means a component became a symlink.
-      if (resolvedBefore !== directory) continue;
-      if (this.workspaceWatchers.size >= this.options.maxDirectories)
-        throw new WatchError(
-          "WATCH_DIRECTORY_LIMIT",
-          `Workspace has too many directories to watch safely (limit ${this.options.maxDirectories}). Ignored/generated directories are included.`,
-        );
-      const watcher = this.watchDirectory(directory, (eventType, filename) => {
-        if (filename !== null && ignoredMetadata(filename)) return;
-        this.queueChange(true, false);
-        if (eventType === "rename") {
-          if (filename === null) this.requestTopology(directory, true);
-          else this.requestTopology(path.join(directory, filename), false);
+      }
+      let complete = true;
+      for (const component of scope.split("/")) {
+        const parent = await add(current);
+        if (parent === null) {
+          complete = false;
+          break;
         }
-      });
-      let registered = false;
-      try {
-        await this.options.afterDirectoryWatch?.(directory);
-        if (this.closed) throw abortError();
-        const after = await lstat(directory).catch(
-          (error: NodeJS.ErrnoException) => {
-            if (error.code === "ENOENT" || error.code === "ENOTDIR")
-              return null;
-            throw error;
-          },
-        );
-        if (this.closed) throw abortError();
-        const resolvedAfter = await realpath(directory).catch(
-          (error: NodeJS.ErrnoException) => {
-            if (error.code === "ENOENT" || error.code === "ENOTDIR")
-              return null;
-            throw error;
-          },
-        );
-        if (this.closed) throw abortError();
-        if (
-          after === null ||
-          !after.isDirectory() ||
-          after.isSymbolicLink() ||
-          resolvedAfter !== directory ||
-          before.dev !== after.dev ||
-          before.ino !== after.ino
-        )
-          continue;
-        this.workspaceWatchers.set(directory, {
-          watcher,
-          dev: after.dev,
-          ino: after.ino,
-        });
-        registered = true;
-        const entries = await readdir(directory, {
-          withFileTypes: true,
-        }).catch((error: NodeJS.ErrnoException) => {
-          if (error.code === "ENOENT" || error.code === "ENOTDIR") return null;
-          throw error;
-        });
-        if (this.closed) {
-          this.removeWorkspaceTree(directory);
-          throw abortError();
+        parent.guards.add(component);
+        const candidate = path.join(current, component);
+        if ((await identity(candidate)) === null) {
+          complete = false;
+          break;
         }
-        if (entries === null) {
-          this.removeWorkspaceTree(directory);
-          continue;
-        }
-        for (const entry of entries) {
-          if (ignoredMetadata(entry.name) || !entry.isDirectory()) continue;
-          pending.push(path.join(directory, entry.name));
-        }
-      } finally {
-        if (!registered) watcher.close();
+        current = candidate;
+      }
+      if (complete) {
+        const spec = await add(current);
+        if (spec) spec.primary = true;
       }
     }
+    return desired;
   }
 
-  private async reconcileDirectory(directory: string) {
-    // A missing filename means the platform cannot identify which child was
-    // renamed. Renew this subtree rather than retaining a watcher on a replaced
-    // inode or scanning it into an unbounded queue of child tasks.
-    await this.reconcilePath(directory, true);
-  }
-
-  private async reconcilePath(candidate: string, forceRenew: boolean) {
+  private workspaceEvent(
+    directory: string,
+    eventType: string,
+    filename: string | null,
+    installing?: DesiredDirectory,
+  ) {
     if (this.closed) return;
-    const info = await lstat(candidate).catch(
-      (error: NodeJS.ErrnoException) => {
-        if (error.code === "ENOENT" || error.code === "ENOTDIR") return null;
-        throw error;
-      },
-    );
-    if (this.closed) return;
-    if (info === null || !info.isDirectory() || info.isSymbolicLink()) {
-      this.removeWorkspaceTree(candidate);
-      return;
+    const spec = this.workspaceSpecs.get(directory) ?? installing;
+    if (!spec) return;
+    const primary =
+      spec.primary && (filename === null || !ignoredMetadata(filename));
+    const guarded = filename === null || spec.guards.has(filename);
+    if (!primary && !guarded) return;
+    this.queueChange(true, false);
+    if (eventType === "rename") {
+      if (filename === null) this.forceRenew(directory);
+      else if (spec.guards.has(filename))
+        this.forceRenew(path.join(directory, filename));
     }
-    const resolved = await realpath(candidate).catch(
-      (error: NodeJS.ErrnoException) => {
-        if (error.code === "ENOENT" || error.code === "ENOTDIR") return null;
-        throw error;
-      },
-    );
-    if (this.closed) return;
-    if (resolved !== candidate) {
-      this.removeWorkspaceTree(candidate);
-      return;
-    }
-    const existing = this.workspaceWatchers.get(candidate);
-    if (
-      existing &&
-      !forceRenew &&
-      existing.dev === info.dev &&
-      existing.ino === info.ino
-    )
-      return;
-    if (existing) this.removeWorkspaceTree(candidate);
-    await this.addWorkspaceTree(candidate);
+    if (eventType === "rename" || guarded) this.requestWorkspaceReconcile();
   }
 
-  private removeWorkspaceTree(root: string) {
-    const prefix = `${root}${path.sep}`;
+  private forceRenew(directory: string) {
+    this.forcedRenewals.set(directory, ++this.forceGeneration);
+  }
+
+  private async addWorkspaceWatcher(
+    directory: string,
+    expected: DesiredDirectory,
+    generation: number,
+  ) {
+    let watcher: FSWatcher;
+    try {
+      watcher = this.watchDirectory(directory, (eventType, filename) =>
+        this.workspaceEvent(directory, eventType, filename, expected),
+      );
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code === "ENOENT" || code === "ENOTDIR") {
+        this.requestWorkspaceReconcile();
+        return false;
+      }
+      throw error;
+    }
+    let registered = false;
+    try {
+      await this.options.afterDirectoryWatch?.(directory);
+      if (this.closed) throw abortError();
+      if (generation !== this.scopeGeneration) return false;
+      const after = await this.safeDirectory(directory);
+      if (
+        after === null ||
+        after.dev !== expected.dev ||
+        after.ino !== expected.ino
+      ) {
+        this.requestWorkspaceReconcile();
+        return false;
+      }
+      this.workspaceWatchers.set(directory, {
+        watcher,
+        dev: after.dev,
+        ino: after.ino,
+      });
+      registered = true;
+      return true;
+    } finally {
+      if (!registered) watcher.close();
+    }
+  }
+
+  private async reconcileWorkspace(generation: number) {
+    const scopes = new Set(this.desiredScopes);
+    const forcedRenewals = new Map(this.forcedRenewals);
+    const desired = await this.desiredDirectories(scopes);
+    if (this.closed) throw abortError();
+    if (generation !== this.scopeGeneration) return false;
+    if (desired.size > this.options.maxDirectories)
+      throw new WatchError(
+        "WATCH_DIRECTORY_LIMIT",
+        `Selected workspace scopes and their ancestors require too many directory watches (limit ${this.options.maxDirectories}).`,
+      );
+
     for (const [directory, watched] of this.workspaceWatchers) {
-      if (directory !== root && !directory.startsWith(prefix)) continue;
+      const expected = desired.get(directory);
+      const forced = [...forcedRenewals].some(
+        ([renew]) =>
+          directory === renew || directory.startsWith(`${renew}${path.sep}`),
+      );
+      if (
+        !forced &&
+        expected &&
+        expected.dev === watched.dev &&
+        expected.ino === watched.ino
+      )
+        continue;
       watched.watcher.close();
       this.workspaceWatchers.delete(directory);
     }
+    for (const [directory, expected] of desired) {
+      if (generation !== this.scopeGeneration || this.closed) return false;
+      if (this.workspaceWatchers.has(directory)) continue;
+      if (!(await this.addWorkspaceWatcher(directory, expected, generation)))
+        return false;
+    }
+    if (generation !== this.scopeGeneration || this.closed) return false;
+    this.workspaceSpecs = desired;
+    for (const [directory, force] of forcedRenewals) {
+      if (this.forcedRenewals.get(directory) === force)
+        this.forcedRenewals.delete(directory);
+    }
+    const added = [...scopes].some((scope) => !this.appliedScopes.has(scope));
+    this.appliedScopes = scopes;
+    if (this.initialized && added) this.queueChange(true, false);
+    return true;
   }
 
-  private requestTopology(candidate: string, rescan: boolean) {
+  private requestWorkspaceReconcile() {
     if (this.closed) return;
-    const existing = this.pendingTopology.get(candidate) ?? false;
-    if (
-      !this.pendingTopology.has(candidate) &&
-      this.pendingTopology.size >= MAX_TOPOLOGY_CHANGES
-    ) {
-      this.fail(
-        new WatchError(
-          "WATCH_EVENT_OVERFLOW",
-          `Too many filesystem directory changes are queued (limit ${MAX_TOPOLOGY_CHANGES}).`,
-        ),
-      );
-      return;
-    }
-    this.pendingTopology.set(candidate, existing || rescan);
+    this.workspaceReconcilePending = true;
     this.runTopology();
   }
 
@@ -522,7 +640,7 @@ class NativeFilesystemWatcher implements FilesystemEventWatcher {
       !this.initialized ||
       this.closed ||
       this.topologyRunning ||
-      (!this.headsTopologyPending && this.pendingTopology.size === 0)
+      (!this.headsTopologyPending && !this.workspaceReconcilePending)
     )
       return;
     this.topologyRunning = true;
@@ -534,12 +652,11 @@ class NativeFilesystemWatcher implements FilesystemEventWatcher {
             await this.replaceHeadsWatcher();
             continue;
           }
-          const next = this.pendingTopology.entries().next();
-          if (next.done) break;
-          const [candidate, rescan] = next.value;
-          this.pendingTopology.delete(candidate);
-          if (rescan) await this.reconcileDirectory(candidate);
-          else await this.reconcilePath(candidate, true);
+          if (!this.workspaceReconcilePending) break;
+          this.workspaceReconcilePending = false;
+          const generation = this.scopeGeneration;
+          const applied = await this.reconcileWorkspace(generation);
+          if (!applied && !this.closed) this.workspaceReconcilePending = true;
         }
       } catch (error) {
         if (!this.closed) this.fail(error);
@@ -547,7 +664,7 @@ class NativeFilesystemWatcher implements FilesystemEventWatcher {
         this.topologyRunning = false;
         if (
           !this.closed &&
-          (this.headsTopologyPending || this.pendingTopology.size > 0)
+          (this.headsTopologyPending || this.workspaceReconcilePending)
         )
           this.runTopology();
       }
@@ -607,12 +724,14 @@ class NativeFilesystemWatcher implements FilesystemEventWatcher {
     this.closed = true;
     if (this.timer) clearTimeout(this.timer);
     this.timer = undefined;
-    this.pendingTopology.clear();
+    this.workspaceReconcilePending = false;
     this.headsTopologyPending = false;
     for (const watched of this.workspaceWatchers.values())
       watched.watcher.close();
     for (const watcher of this.metadataWatchers.values()) watcher.close();
     this.workspaceWatchers.clear();
+    this.workspaceSpecs.clear();
+    this.forcedRenewals.clear();
     this.metadataWatchers.clear();
   }
 }
@@ -626,11 +745,13 @@ export const watchFilesystemEvents: FilesystemEventBackend = (
   workspaceRoot,
   handlers,
   signal,
+  paths,
 ) =>
   NativeFilesystemWatcher.create(
     workspaceRoot,
     handlers,
     signal,
+    paths,
     defaultOptions,
   );
 
@@ -644,8 +765,8 @@ export interface FilesystemEventTestOptions {
 export function watchFilesystemEventsForTest(
   options: FilesystemEventTestOptions,
 ): FilesystemEventBackend {
-  return (workspaceRoot, handlers, signal) =>
-    NativeFilesystemWatcher.create(workspaceRoot, handlers, signal, {
+  return (workspaceRoot, handlers, signal, paths) =>
+    NativeFilesystemWatcher.create(workspaceRoot, handlers, signal, paths, {
       maxDirectories: options.maxDirectories ?? DEFAULT_MAX_DIRECTORIES,
       readHeads: options.readHeads ?? readHeadsFile,
       afterDirectoryWatch: options.afterDirectoryWatch,

@@ -80,6 +80,7 @@ class EventHub {
   private failure?: WatchFailure;
   private closed = false;
   private pendingChange?: FilesystemChange;
+  private unsubscribePaths?: () => void;
 
   constructor(
     private readonly service: ReviewService,
@@ -130,6 +131,9 @@ class EventHub {
     const controller = new AbortController();
     const generation = ++this.generation;
     this.starting = controller;
+    this.unsubscribePaths = this.service.subscribeWatchPaths((paths) => {
+      this.updatePaths(generation, paths);
+    });
     void this.service
       .getWatchRoot()
       .then((root) => {
@@ -148,6 +152,7 @@ class EventHub {
             unavailable: (error) => this.unavailable(generation, error),
           },
           controller.signal,
+          this.service.getWatchPaths(),
         );
       })
       .then((watcher) => {
@@ -161,6 +166,11 @@ class EventHub {
           return;
         }
         this.watcher = watcher;
+        // A successful state read/selection may have changed scope while native
+        // setup was in flight. Install the latest paths before publishing ready.
+        this.updatePaths(generation, this.service.getWatchPaths());
+        if (generation !== this.generation || this.closed || this.failure)
+          return;
         this.running = true;
         this.starting = undefined;
         for (const client of this.clients)
@@ -185,6 +195,15 @@ class EventHub {
           return;
         this.unavailable(generation, error);
       });
+  }
+
+  private updatePaths(generation: number, paths: string[]) {
+    if (generation !== this.generation || this.closed || this.failure) return;
+    try {
+      this.watcher?.setPaths(paths);
+    } catch (error) {
+      this.unavailable(generation, error);
+    }
   }
 
   private changed(generation: number, rawChange: FilesystemChange) {
@@ -273,6 +292,8 @@ class EventHub {
 
   private stopWatcher() {
     this.generation++;
+    this.unsubscribePaths?.();
+    this.unsubscribePaths = undefined;
     this.starting?.abort();
     this.starting = undefined;
     this.watcher?.close();

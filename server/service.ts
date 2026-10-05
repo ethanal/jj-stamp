@@ -230,6 +230,8 @@ export class ReviewService {
   private readonly requestedRevision: string;
   private sourceChangeId?: string;
   private initialization?: Promise<void>;
+  private watchPaths: string[] = [];
+  private readonly watchPathListeners = new Set<(paths: string[]) => void>();
   private readonly editorRunner: typeof run;
   private readonly toolRunner: typeof run;
   private readonly timing?: ServiceTiming;
@@ -684,6 +686,30 @@ export class ReviewService {
     await this.validateViews(views, state.operation, { snapshot });
     return state;
   }
+  /** Watch only paths from the last successfully published live review state. */
+  getWatchPaths(): string[] {
+    return [...this.watchPaths];
+  }
+  subscribeWatchPaths(listener: (paths: string[]) => void): () => void {
+    this.watchPathListeners.add(listener);
+    return () => {
+      this.watchPathListeners.delete(listener);
+    };
+  }
+  private publishWatchState(state: State): State {
+    const paths = [...new Set(state.files.map((file) => file.path))].sort();
+    if (!same(paths, this.watchPaths)) {
+      this.watchPaths = paths;
+      for (const listener of [...this.watchPathListeners]) {
+        try {
+          void Promise.resolve(listener([...paths])).catch(() => {});
+        } catch {
+          // Filesystem observation is advisory, never part of mutation success.
+        }
+      }
+    }
+    return state;
+  }
   /** Resolve the canonical workspace root without snapshotting the working copy.
    * A warm service performs no subprocesses; event watching remains filesystem-only. */
   async getWatchRoot(): Promise<string> {
@@ -701,7 +727,7 @@ export class ReviewService {
   getState(): Promise<State> {
     return this.serial("state", async () => {
       try {
-        return await this.readState();
+        return this.publishWatchState(await this.readState());
       } catch (error) {
         if (
           !(error instanceof ApiError) ||
@@ -731,7 +757,7 @@ export class ReviewService {
         const state = this.state(candidate, operation.id, files);
         this.sourceChangeId = state.source.changeId;
         this.plans.clear();
-        return state;
+        return this.publishWatchState(state);
       }
     });
   }
@@ -773,7 +799,7 @@ export class ReviewService {
       this.plans.clear();
       // Keep the process-local history guard. canUndo is only true when its exact
       // attributed operation AND selected-source state version still match.
-      return { state };
+      return { state: this.publishWatchState(state) };
     });
   }
   getLog(
@@ -1647,7 +1673,7 @@ export class ReviewService {
     };
     after.canUndo = true;
     return {
-      state: after,
+      state: this.publishWatchState(after),
       output: processOutput(result).trim(),
       ...(warning ? { warning } : {}),
     };
@@ -1751,7 +1777,7 @@ export class ReviewService {
         );
       this.history = {};
       return {
-        state: await this.readState(),
+        state: this.publishWatchState(await this.readState()),
         output: processOutput(result).trim(),
       };
     });
