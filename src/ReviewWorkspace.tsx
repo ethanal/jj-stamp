@@ -1,9 +1,19 @@
-import type { HTMLAttributes, RefObject } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type HTMLAttributes,
+  type RefObject,
+} from "react";
 import type { FileDiffLoadedFiles, SelectedLineRange } from "@pierre/diffs";
 import type { ErrorDetail } from "./api";
 import { ChangedFilesTree } from "./ChangedFilesTree";
 import { CodeDiff } from "./CodeDiff";
 import { DiffRuntime, DiffViewport } from "./DiffRuntime";
+import { findDiffMatches } from "./diff-search";
 import { ChangeId } from "./ReviewToolbar";
 import { SidebarResize } from "./SidebarResize";
 import { SplitDiffLayout } from "./SplitDiffLayout";
@@ -266,6 +276,108 @@ function ErrorBanner({
   );
 }
 
+function DiffSearchControls({
+  open,
+  query,
+  current,
+  total,
+  inputRef,
+  triggerRef,
+  disabled,
+  onOpen,
+  onQuery,
+  onPrevious,
+  onNext,
+  onClose,
+}: {
+  open: boolean;
+  query: string;
+  current: number;
+  total: number;
+  inputRef: RefObject<HTMLInputElement | null>;
+  triggerRef: RefObject<HTMLButtonElement | null>;
+  disabled: boolean;
+  onOpen: () => void;
+  onQuery: (query: string) => void;
+  onPrevious: () => void;
+  onNext: () => void;
+  onClose: () => void;
+}) {
+  if (!open)
+    return (
+      <button
+        ref={triggerRef}
+        className="diff-search-open"
+        aria-label="Find in diff"
+        title="Find in diff (Ctrl/Cmd+F)"
+        disabled={disabled}
+        onClick={onOpen}
+      >
+        <svg
+          viewBox="0 0 16 16"
+          width="14"
+          height="14"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.4"
+          aria-hidden="true"
+        >
+          <circle cx="7" cy="7" r="4.25" />
+          <path d="m10.2 10.2 3.1 3.1" />
+        </svg>
+      </button>
+    );
+  return (
+    <div className="diff-search" role="search">
+      <input
+        ref={inputRef}
+        type="search"
+        aria-label="Search diff"
+        placeholder="Find in diff"
+        value={query}
+        onChange={(event) => onQuery(event.target.value)}
+        onKeyDown={(event) => {
+          if (event.key === "Enter" && !event.nativeEvent.isComposing) {
+            event.preventDefault();
+            if (event.shiftKey) onPrevious();
+            else onNext();
+          } else if (event.key === "Escape") {
+            event.preventDefault();
+            event.stopPropagation();
+            onClose();
+          }
+        }}
+      />
+      <output className="diff-search-count" aria-live="polite">
+        {query ? (total ? `${current + 1} / ${total}` : "No results") : ""}
+      </output>
+      <button
+        aria-label="Previous search result"
+        title="Previous result (Shift+Enter)"
+        disabled={!total}
+        onClick={onPrevious}
+      >
+        ↑
+      </button>
+      <button
+        aria-label="Next search result"
+        title="Next result (Enter)"
+        disabled={!total}
+        onClick={onNext}
+      >
+        ↓
+      </button>
+      <button
+        aria-label="Close search"
+        title="Close (Escape)"
+        onClick={onClose}
+      >
+        ×
+      </button>
+    </div>
+  );
+}
+
 export function ReviewViewer({
   state,
   source,
@@ -337,6 +449,124 @@ export function ReviewViewer({
   onUndo: () => void;
   loadFile: (path: string, version: string) => Promise<FileDiffLoadedFiles>;
 }) {
+  const searchScope = `${contentIdentity}\u0000${renderVersion}\u0000${fileView}\u0000${fileView === "single" ? (file?.path ?? "") : ""}`;
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchCursor, setSearchCursor] = useState({
+    scope: searchScope,
+    index: 0,
+  });
+  const [searchRequest, setSearchRequest] = useState(0);
+  const searchInput = useRef<HTMLInputElement>(null);
+  const searchTrigger = useRef<HTMLButtonElement>(null);
+  const searchReturnFocus = useRef<HTMLElement | null>(null);
+  const previousContentIdentity = useRef(contentIdentity);
+  const searchFiles = useMemo(
+    () => (fileView === "all" ? (state?.files ?? []) : file ? [file] : []),
+    [fileView, state?.files, file],
+  );
+  const searchMatches = useMemo(
+    () => findDiffMatches(searchFiles, searchQuery),
+    [searchFiles, searchQuery],
+  );
+  const searchIndex =
+    searchCursor.scope === searchScope ? searchCursor.index : 0;
+  const currentSearchIndex = searchMatches.length
+    ? Math.min(searchIndex, searchMatches.length - 1)
+    : 0;
+  const currentSearchMatch = searchMatches[currentSearchIndex] ?? null;
+  const openSearch = useCallback(() => {
+    if (!searchOpen && document.activeElement instanceof HTMLElement)
+      searchReturnFocus.current = document.activeElement;
+    setSearchOpen(true);
+    setSearchRequest((request) => request + 1);
+    requestAnimationFrame(() => {
+      searchInput.current?.focus();
+      searchInput.current?.select();
+    });
+  }, [searchOpen]);
+  const closeSearch = useCallback(() => {
+    const returnFocus = searchReturnFocus.current;
+    setSearchOpen(false);
+    requestAnimationFrame(() => {
+      if (returnFocus?.isConnected) returnFocus.focus();
+      else searchTrigger.current?.focus();
+    });
+  }, []);
+  const moveSearch = useCallback(
+    (direction: number) => {
+      if (!searchMatches.length) return;
+      setSearchCursor((cursor) => ({
+        scope: searchScope,
+        index:
+          (Math.min(
+            cursor.scope === searchScope ? cursor.index : 0,
+            searchMatches.length - 1,
+          ) +
+            direction +
+            searchMatches.length) %
+          searchMatches.length,
+      }));
+      setSearchRequest((request) => request + 1);
+    },
+    [searchMatches.length, searchScope],
+  );
+  useEffect(() => {
+    setSearchCursor({ scope: searchScope, index: 0 });
+    setSearchRequest((request) => request + 1);
+  }, [searchScope]);
+  useEffect(() => {
+    if (previousContentIdentity.current === contentIdentity) return;
+    previousContentIdentity.current = contentIdentity;
+    setSearchQuery("");
+    setSearchCursor({ scope: searchScope, index: 0 });
+    setSearchRequest((request) => request + 1);
+    if (searchOpen) closeSearch();
+    else setSearchOpen(false);
+  }, [closeSearch, contentIdentity, searchOpen, searchScope]);
+  useEffect(() => {
+    if (searchIndex >= searchMatches.length)
+      setSearchCursor({ scope: searchScope, index: 0 });
+  }, [searchIndex, searchMatches.length, searchScope]);
+  useLayoutEffect(() => {
+    if (!searchOpen || !currentSearchMatch) return;
+    const viewport = scrollRef.current;
+    const section = fileSections.current.get(currentSearchMatch.path);
+    if (!viewport || !section) return;
+    const viewportBox = viewport.getBoundingClientRect();
+    const sectionBox = section.getBoundingClientRect();
+    if (
+      sectionBox.bottom > viewportBox.top &&
+      sectionBox.top < viewportBox.bottom
+    )
+      return;
+    viewport.scrollTop += sectionBox.top - viewportBox.top;
+  }, [currentSearchMatch, fileSections, scrollRef, searchOpen, searchRequest]);
+  useEffect(() => {
+    const key = (event: KeyboardEvent) => {
+      if (
+        !event.defaultPrevented &&
+        !event.altKey &&
+        (event.ctrlKey || event.metaKey) &&
+        event.key.toLocaleLowerCase() === "f"
+      ) {
+        if (!file) return;
+        event.preventDefault();
+        openSearch();
+        return;
+      }
+      if (!searchOpen || event.defaultPrevented) return;
+      if (event.key === "Escape") {
+        event.preventDefault();
+        closeSearch();
+      } else if (event.key === "F3") {
+        event.preventDefault();
+        moveSearch(event.shiftKey ? -1 : 1);
+      }
+    };
+    document.addEventListener("keydown", key);
+    return () => document.removeEventListener("keydown", key);
+  }, [closeSearch, file, moveSearch, openSearch, searchOpen]);
   return (
     <main className="viewer">
       <div className="file-bar">
@@ -346,6 +576,24 @@ export function ReviewViewer({
             : (file?.path ?? "Reviewed change")}
         </span>
         <div className="file-bar-tools">
+          <DiffSearchControls
+            open={searchOpen}
+            query={searchQuery}
+            current={currentSearchIndex}
+            total={searchMatches.length}
+            inputRef={searchInput}
+            triggerRef={searchTrigger}
+            disabled={!file}
+            onOpen={openSearch}
+            onQuery={(query) => {
+              setSearchQuery(query);
+              setSearchCursor({ scope: searchScope, index: 0 });
+              setSearchRequest((request) => request + 1);
+            }}
+            onPrevious={() => moveSearch(-1)}
+            onNext={() => moveSearch(1)}
+            onClose={closeSearch}
+          />
           {file && fileView === "single" && (
             <>
               <LineCounts
@@ -460,6 +708,15 @@ export function ReviewViewer({
                       colorScheme={colorScheme}
                       selections={entry.path === file.path ? selections : {}}
                       range={entry.path === file.path ? range : null}
+                      search={
+                        searchOpen
+                          ? {
+                              matches: searchMatches,
+                              current: currentSearchMatch,
+                              request: searchRequest,
+                            }
+                          : undefined
+                      }
                       disabled={working || halted}
                       contextDisabled={pending > 0 || recovering}
                       onSelection={(next, selected) =>

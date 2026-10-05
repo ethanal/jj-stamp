@@ -196,6 +196,36 @@ try {
   );
 
   const viewport = page.locator(".viewer-scroll");
+  // App-level find searches patch data, so virtualized offscreen rows are
+  // reachable even though browser find cannot see their DOM yet.
+  const offscreenNeedle = `updated ${secondPath} line 110`;
+  await expect(addition(secondPath, 110)).toHaveCount(0);
+  await page.keyboard.press("Control+f");
+  const search = page.getByRole("searchbox", { name: "Search diff" });
+  await expect(search).toBeFocused();
+  await search.fill(offscreenNeedle);
+  await expect(page.locator(".diff-search-count")).toHaveText("1 / 1");
+  await expect(addition(secondPath, 110)).toHaveAttribute(
+    "data-fold-search-current",
+    "",
+  );
+  await expect(addition(secondPath, 110)).toBeInViewport();
+  await viewport.evaluate((element) => {
+    element.scrollTop = 0;
+  });
+  await search.press("Enter");
+  await expect(addition(secondPath, 110)).toBeInViewport();
+  await page.getByRole("button", { name: "Split", exact: true }).click();
+  await expect(addition(secondPath, 110)).toBeInViewport();
+  await page.getByRole("button", { name: "Stacked", exact: true }).click();
+  await expect(addition(secondPath, 110)).toBeInViewport();
+  await search.press("Escape");
+  await expect(search).toHaveCount(0);
+  await expect(allFiles).toBeFocused();
+  await viewport.evaluate((element) => {
+    element.scrollTop = 0;
+  });
+
   // The same split applies to virtualized files as they enter the viewport.
   await page.getByRole("button", { name: "Split", exact: true }).click();
   const divider = page.getByRole("separator", { name: "Resize split diff" });

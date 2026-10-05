@@ -171,6 +171,7 @@ body {
   margin: 0;
 }
 button,
+input,
 select {
   font: inherit;
   color: inherit;
@@ -526,6 +527,57 @@ kbd {
   align-items: center;
   gap: 14px;
   flex-shrink: 0;
+}
+.diff-search-open {
+  width: 24px;
+  height: 24px;
+  display: grid;
+  place-items: center;
+  color: var(--muted);
+}
+.diff-search {
+  height: 28px;
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  padding: 2px 4px 2px 7px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
+}
+.diff-search:focus-within {
+  border-color: var(--focus);
+}
+.diff-search input {
+  width: clamp(120px, 18vw, 240px);
+  min-width: 0;
+  padding: 2px 0;
+  border: 0;
+  outline: 0;
+  color: var(--fg);
+  background: transparent;
+  font-size: 11px;
+}
+.diff-search input::placeholder {
+  color: var(--muted);
+}
+.diff-search-count {
+  min-width: 50px;
+  color: var(--muted);
+  font-size: 10px;
+  text-align: right;
+  white-space: nowrap;
+}
+.diff-search button {
+  width: 22px;
+  height: 22px;
+  display: grid;
+  place-items: center;
+  border-radius: 3px;
+  color: var(--muted);
+}
+.diff-search button:hover:not(:disabled) {
+  background: var(--hover);
 }
 .line-counts {
   display: inline-flex;
