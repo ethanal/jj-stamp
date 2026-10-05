@@ -11,8 +11,9 @@ const revisions = Array.from({ length: 14 }, (_, index) => ({
   description: `Change ${index}`,
 }));
 const repo = { name: "prefetch", path: "/fixture/prefetch" };
+const sharedPath = "example.txt";
 const file = (index: number): DiffFile => ({
-  path: "example.txt",
+  path: sharedPath,
   additions: 1,
   deletions: 1,
   patch: `diff --git a/example.txt b/example.txt\n--- a/example.txt\n+++ b/example.txt\n@@ -1,3 +1,3 @@\n before\n-old ${index}\n+new ${index}\n after\n`,
@@ -29,6 +30,14 @@ const file = (index: number): DiffFile => ({
     },
   ],
 });
+const unsupported = (index: number): DiffFile => ({
+  path: `generated/change-${index}.bin`,
+  additions: 0,
+  deletions: 0,
+  patch: "Binary files differ\n",
+  hunks: [],
+  unsupported: "Binary file",
+});
 let selected = 5;
 let generation = 0;
 const state = (index = selected): RepoState => ({
@@ -37,7 +46,9 @@ const state = (index = selected): RepoState => ({
   source: revisions[index],
   parent: revisions[index + 1] ?? null,
   targets: [],
-  files: [file(index)],
+  // Put a revision-specific file first so navigation must deliberately retain
+  // the shared active path instead of merely falling back to index zero.
+  files: [unsupported(index), file(index)],
   operation: "same-recorded-operation",
   canUndo: false,
 });
@@ -74,7 +85,7 @@ app.post("/api/commit", (req, res) => {
     repo,
     commitId: revisions[index].commitId,
     baseCommitId: revisions[index + 1]?.commitId ?? null,
-    files: [file(index)],
+    files: [unsupported(index), file(index)],
   });
 });
 app.post("/api/commit-file", (req, res) => {
@@ -103,6 +114,10 @@ await using resources = new AsyncDisposableStack();
 const { page, url, errors, close } = await createBrowserFixture({ app });
 resources.defer(close);
 await page.goto(url);
+await page
+  .locator(`.file-tree [role="treeitem"][data-item-path="${sharedPath}"]`)
+  .click();
+await expect(page.locator(".file-bar")).toContainText(sharedPath);
 await expect(page.locator(".code-surface")).toContainText("new 5");
 await expect.poll(() => contents.length).toBe(11);
 assert.deepEqual(
@@ -147,6 +162,7 @@ const choose = (index: number) =>
 // selection must still refresh graph metadata; immutable content stays cached.
 hideLastRevision = true;
 await choose(4);
+await expect(page.locator(".file-bar")).toContainText(sharedPath);
 await expect(page.locator(".code-surface")).toContainText("new 4");
 await expect(page.locator(".squash-unavailable")).toHaveCount(0);
 await expect(page.getByRole("alert")).toHaveCount(0);
@@ -161,6 +177,7 @@ assert.equal(contents.length, 11, "cached previews do not refetch contents");
 release();
 await expect(page.locator(".statusbar")).not.toContainText("switching change");
 await expect(page.locator(".squash-unavailable")).toHaveCount(0);
+await expect(page.locator(".file-bar")).toContainText(sharedPath);
 await expect(page.locator(".code-surface")).toContainText("new 2");
 assert.deepEqual(selections, [
   { changeId: revisions[4].changeId, version: "version-5-1" },
@@ -196,6 +213,9 @@ await page.route("**/api/commit-file", async (route) => {
 });
 await page.reload();
 await backgroundCaptured;
+await page
+  .locator(`.file-tree [role="treeitem"][data-item-path="${sharedPath}"]`)
+  .click();
 await choose(1);
 await expect(
   page.getByRole("button", { name: "refresh r", exact: true }),

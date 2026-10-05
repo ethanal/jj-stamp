@@ -46,6 +46,13 @@ function readExpanded(side: "files" | "log"): boolean {
     return true;
   }
 }
+
+function retainActivePath(files: RepoState["files"], current: string): string {
+  return files.some((file) => file.path === current)
+    ? current
+    : (files[0]?.path ?? "");
+}
+
 function App() {
   const {
     hoverSidebars,
@@ -222,6 +229,12 @@ function App() {
     if (fileView === "all") scrollToFile(activePath);
     else scroll.current?.scrollTo(0, 0);
   }, [fileView, scrollToFile]);
+  const [revisionScrollRequest, setRevisionScrollRequest] = useState(0);
+  useLayoutEffect(() => {
+    if (!revisionScrollRequest) return;
+    if (fileView === "all") scrollToFile(activePath);
+    else scroll.current?.scrollTo(0, 0);
+  }, [revisionScrollRequest, fileView, scrollToFile]);
   const file =
     state?.files.find((file) => file.path === activePath) ?? state?.files[0];
   const selections = useMemo<Selections>(() => {
@@ -253,11 +266,7 @@ function App() {
       setRevisionPreview(null);
       queue.replace(next);
       clear();
-      setActivePath((current) =>
-        next.files.some((file) => file.path === current)
-          ? current
-          : (next.files[0]?.path ?? ""),
-      );
+      setActivePath((current) => retainActivePath(next.files, current));
     },
     [queue, clear],
   );
@@ -619,8 +628,7 @@ function App() {
       // Also restart an invalidated graph read when reselecting the same change
       // leaves the confirmed version unchanged.
       setGraphRefresh((value) => value + 1);
-      setActivePath(next.files[0]?.path ?? "");
-      scroll.current?.scrollTo(0, 0);
+      setRevisionScrollRequest((value) => value + 1);
     },
     onIntent: (changeId) => {
       refreshGeneration.current++;
@@ -662,8 +670,8 @@ function App() {
             // still prevent squashing; show eligibility notices only once known.
             squashUnavailable: undefined,
           });
-          setActivePath(cached.files[0]?.path ?? "");
-          scroll.current?.scrollTo(0, 0);
+          setActivePath((current) => retainActivePath(cached.files, current));
+          setRevisionScrollRequest((value) => value + 1);
         })
         .catch(() => {
           /* A cache miss cannot fail revision selection. */
