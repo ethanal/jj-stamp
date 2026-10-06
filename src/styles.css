@@ -756,8 +756,11 @@ kbd {
   outline: none;
 }
 .editor-error {
+  position: relative;
+  z-index: 5;
   padding: 8px 12px;
   color: #d85b62;
+  background: var(--bg);
 }
 .code-surface diffs-container {
   display: block;

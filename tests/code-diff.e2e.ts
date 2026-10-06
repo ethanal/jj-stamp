@@ -177,9 +177,27 @@ try {
     editorFailure = true;
     await line(10).hover();
     await page.keyboard.press("e");
-    await expect(page.getByRole("alert")).toContainText(
-      "Neovim server is unavailable",
-    );
+    const editorAlert = page.getByRole("alert");
+    await expect(editorAlert).toContainText("Neovim server is unavailable");
+    if (layout === "split") {
+      const alertBox = await editorAlert.boundingBox();
+      const dividerBox = await page
+        .getByRole("separator", { name: "Resize split diff" })
+        .boundingBox();
+      assert(alertBox && dividerBox);
+      assert.equal(
+        await page.evaluate(
+          ({ x, y }) =>
+            document.elementFromPoint(x, y)?.closest(".editor-error") !== null,
+          {
+            x: dividerBox.x + dividerBox.width / 2,
+            y: alertBox.y + alertBox.height / 2,
+          },
+        ),
+        true,
+        "editor errors must paint over the split divider",
+      );
+    }
     await page.keyboard.press("Escape");
     await expect(page.getByRole("alert")).toHaveCount(0);
     await page.unroute("**/api/editor");
