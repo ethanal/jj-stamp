@@ -48,11 +48,13 @@ const graphRows = [
     (graph) => ({ graph }),
   ),
 ];
+let generation = 1;
+let graphReads = 0;
 const app = express();
 app.get("/api/state", (_request, response) =>
   response.json({
     repo: { name: "example", path: "/home/reviewer/full/path/example" },
-    version: "fixture-v1",
+    version: `fixture-v${generation}`,
     source,
     parent: null,
     targets: [],
@@ -70,12 +72,13 @@ app.get("/api/state", (_request, response) =>
     canUndo: false,
   }),
 );
-app.get("/api/graph", (_request, response) =>
+app.get("/api/graph", (_request, response) => {
+  graphReads++;
   response.json({
-    version: "fixture-v1",
+    version: `fixture-v${generation}`,
     rows: graphRows,
-  }),
-);
+  });
+});
 const fixture = await createBrowserFixture({
   app,
 });
@@ -423,13 +426,50 @@ try {
   await page.getByRole("button", { name: "Collapse files sidebar" }).click();
   await expect(filesBody).toBeHidden();
   await page.locator(".viewer").hover();
+  const beforeReload = graphReads;
   await page.reload();
   await expect(filesBody).toBeHidden();
   await expect(logBody).toBeHidden();
-  // The graph must load on its first hover after a collapsed startup.
-  await logPanel.hover();
-  await expect(logBody).toBeVisible();
+  // A collapsed startup warms the graph before the first hover. Repeated
+  // reveals must reuse it rather than briefly showing "updating…" each time.
   await expect(page.locator(".log-row")).toHaveCount(graphRows.length);
+  await expect.poll(() => graphReads).toBe(beforeReload + 1);
+  for (let i = 0; i < 2; i++) {
+    await logPanel.hover();
+    await expect(logBody).toBeVisible();
+    await expect(page.locator(".log-status")).toHaveText("");
+    await page.locator(".viewer").hover();
+    await expect(logBody).toBeHidden();
+  }
+  assert.equal(graphReads, beforeReload + 1);
+
+  // Refresh while collapsed, then leave a hover preview during the read.
+  // Closing the preview must not discard the response or restart the request.
+  let releaseGraph!: () => void;
+  const graphGate = new Promise<void>((resolve) => {
+    releaseGraph = resolve;
+  });
+  await page.route("**/api/graph", async (route) => {
+    const response = await route.fetch();
+    await graphGate;
+    await route.fulfill({ response });
+  });
+  generation++;
+  await page.getByRole("button", { name: "refresh r", exact: true }).click();
+  await expect.poll(() => graphReads).toBe(beforeReload + 2);
+  await expect(logBody).toBeHidden();
+  await logPanel.hover();
+  await expect(page.locator(".log-status")).toHaveText("updating…");
+  await expect(page.locator(".log-row")).toHaveCount(graphRows.length);
+  await page.locator(".viewer").hover();
+  await expect(logBody).toBeHidden();
+  const graphResponse = page.waitForResponse("**/api/graph");
+  releaseGraph();
+  await graphResponse;
+  await logPanel.hover();
+  await expect(page.locator(".log-status")).toHaveText("");
+  assert.equal(graphReads, beforeReload + 2);
+  await page.unroute("**/api/graph");
   await page.locator(".viewer").hover();
   await expect(logBody).toBeHidden();
   await settings.click();

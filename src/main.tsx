@@ -455,13 +455,14 @@ function App() {
   }, [showFiles, showLog]);
   useEffect(() => {
     if (
-      !logReveal.visible ||
       queued.pending ||
       queued.recovering ||
       busy === "switching change" ||
       (!queued.confirmed && !graphRefresh)
     )
       return;
+    // Keep the graph warm even while collapsed. Hovering/pinning must neither
+    // trigger a fresh read nor cancel an in-flight background update.
     // Graph aliases/configuration can change without a repository operation.
     // Revalidate graph metadata even when immutable content is already cached.
     let cancelled = false;
@@ -502,7 +503,6 @@ function App() {
     queued.confirmed?.version,
     queued.pending,
     queued.recovering,
-    logReveal.visible,
     graphRefresh,
     busy === "switching change",
   ]);
