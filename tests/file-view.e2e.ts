@@ -152,6 +152,19 @@ try {
   await expect(oneFile).toHaveAttribute("aria-pressed", "true");
   await expect(allFiles).toHaveAttribute("aria-pressed", "false");
   await expect(page.locator(".file-bar")).toContainText(firstPath);
+  const fileBarTitle = page.locator(".file-bar-title");
+  await expect(fileBarTitle.locator(".file-bar-filename")).toHaveText(
+    firstPath,
+  );
+  await expect(fileBarTitle.locator(".line-counts")).toHaveText("+10−10");
+  await expect(
+    fileBarTitle.getByRole("button", {
+      name: `Squash file ${firstPath}`,
+      exact: true,
+    }),
+  ).toBeVisible();
+  await expect(page.locator(".file-bar-tools .line-counts")).toHaveCount(0);
+  await expect(page.locator(".file-bar-tools .squash-file")).toHaveCount(0);
   await expect(page.locator(".file-diff-section")).toHaveCount(1);
   await expect(section(firstPath)).toBeVisible();
   await expect(page.locator(".file-diff-heading")).toHaveCount(0);

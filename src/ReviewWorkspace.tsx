@@ -620,11 +620,27 @@ export function ReviewViewer({
   return (
     <main className="viewer">
       <div className="file-bar">
-        <span>
-          {fileView === "all"
-            ? "All changed files"
-            : (file?.path ?? "Reviewed change")}
-        </span>
+        <div className="file-bar-title">
+          <span className="file-bar-filename">
+            {fileView === "all"
+              ? "All changed files"
+              : (file?.path ?? "Reviewed change")}
+          </span>
+          {file && fileView === "single" && (
+            <>
+              <LineCounts
+                additions={file.additions}
+                deletions={file.deletions}
+              />
+              <SquashFileButton
+                file={file}
+                disabled={squashDisabled}
+                unavailable={state?.squashUnavailable}
+                onSquash={onSquashFile}
+              />
+            </>
+          )}
+        </div>
         <div className="file-bar-tools">
           <DiffSearchControls
             open={searchOpen}
@@ -652,20 +668,6 @@ export function ReviewViewer({
             onNext={() => moveSearch(1)}
             onClose={closeSearch}
           />
-          {file && fileView === "single" && (
-            <>
-              <LineCounts
-                additions={file.additions}
-                deletions={file.deletions}
-              />
-              <SquashFileButton
-                file={file}
-                disabled={squashDisabled}
-                unavailable={state?.squashUnavailable}
-                onSquash={onSquashFile}
-              />
-            </>
-          )}
           <ToggleGroup
             label="File view"
             grouped

@@ -515,10 +515,22 @@ kbd {
   padding: 0 15px;
   flex-shrink: 0;
 }
-.file-bar > span:first-child {
-  white-space: nowrap;
+.file-bar-title {
+  min-width: 0;
+  flex: 1 1 240px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.file-bar-filename {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.file-bar-title .line-counts,
+.file-bar-title .squash-file {
+  flex-shrink: 0;
 }
 .file-bar-tools {
   flex-wrap: wrap;
