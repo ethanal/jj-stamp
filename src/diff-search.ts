@@ -8,13 +8,27 @@ export interface DiffSearchMatch {
   side: "additions" | "deletions";
 }
 
+export interface DiffSearchResult {
+  matches: DiffSearchMatch[];
+  error: string;
+}
+
 /** Search every patch row, including rows outside the virtualized DOM window. */
-export function findDiffMatches(
+export function searchDiffRows(
   files: readonly DiffFile[],
   query: string,
-): DiffSearchMatch[] {
-  if (!query) return [];
-  const needle = query.toLocaleLowerCase();
+  regex: boolean,
+): DiffSearchResult {
+  if (!query) return { matches: [], error: "" };
+  let pattern: RegExp | null = null;
+  if (regex) {
+    try {
+      pattern = new RegExp(query, "iu");
+    } catch {
+      return { matches: [], error: "Invalid regex" };
+    }
+  }
+  const needle = regex ? "" : query.toLocaleLowerCase();
   const matches: DiffSearchMatch[] = [];
   for (const file of files) {
     if (file.unsupported) continue;
@@ -24,7 +38,13 @@ export function findDiffMatches(
         const side = marker === "-" ? "deletions" : "additions";
         const line = side === "deletions" ? row.oldLine : row.newLine;
         if (line == null) continue;
-        if (!row.raw.slice(1).toLocaleLowerCase().includes(needle)) continue;
+        const text = row.raw.slice(1);
+        if (
+          pattern
+            ? !pattern.test(text)
+            : !text.toLocaleLowerCase().includes(needle)
+        )
+          continue;
         matches.push({
           path: file.path,
           hunkId: hunk.id,
@@ -35,5 +55,5 @@ export function findDiffMatches(
       }
     }
   }
-  return matches;
+  return { matches, error: "" };
 }

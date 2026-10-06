@@ -204,6 +204,20 @@ try {
   const search = page.getByRole("searchbox", { name: "Search diff" });
   await expect(search).toBeFocused();
   await search.fill(offscreenNeedle);
+  const searchControls = page.locator(".diff-search");
+  await expect(page.locator(".diff-search-count")).toHaveText("1 / 1");
+  const searchWidth = await searchControls.evaluate(
+    (element) => (element as HTMLElement).offsetWidth,
+  );
+  await search.fill("no such diff text");
+  await expect(page.locator(".diff-search-count")).toHaveText("No results");
+  assert.equal(
+    await searchControls.evaluate(
+      (element) => (element as HTMLElement).offsetWidth,
+    ),
+    searchWidth,
+  );
+  await search.fill(offscreenNeedle);
   await expect(page.locator(".diff-search-count")).toHaveText("1 / 1");
   await expect(addition(secondPath, 110)).toHaveAttribute(
     "data-fold-search-current",
@@ -219,6 +233,33 @@ try {
   await expect(addition(secondPath, 110)).toBeInViewport();
   await page.getByRole("button", { name: "Stacked", exact: true }).click();
   await expect(addition(secondPath, 110)).toBeInViewport();
+  const regex = page.getByRole("button", {
+    name: "Use regular expression",
+    exact: true,
+  });
+  await regex.click();
+  await expect(regex).toHaveAttribute("aria-pressed", "true");
+  await search.fill(`^updated tests/long-beta\\.ts line (100|110)$`);
+  await expect(page.locator(".diff-search-count")).toHaveText("1 / 2");
+  await expect(addition(secondPath, 100)).toHaveAttribute(
+    "data-fold-search-current",
+    "",
+  );
+  await search.press("Enter");
+  await expect(page.locator(".diff-search-count")).toHaveText("2 / 2");
+  await expect(addition(secondPath, 110)).toHaveAttribute(
+    "data-fold-search-current",
+    "",
+  );
+  await search.fill("[");
+  await expect(search).toHaveAttribute("aria-invalid", "true");
+  await expect(page.locator(".diff-search-count")).toHaveText("Invalid regex");
+  assert.equal(
+    await searchControls.evaluate(
+      (element) => (element as HTMLElement).offsetWidth,
+    ),
+    searchWidth,
+  );
   await search.press("Escape");
   await expect(search).toHaveCount(0);
   await expect(allFiles).toBeFocused();

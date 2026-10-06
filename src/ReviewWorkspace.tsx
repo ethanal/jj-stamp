@@ -13,7 +13,7 @@ import type { ErrorDetail } from "./api";
 import { ChangedFilesTree } from "./ChangedFilesTree";
 import { CodeDiff } from "./CodeDiff";
 import { DiffRuntime, DiffViewport } from "./DiffRuntime";
-import { findDiffMatches } from "./diff-search";
+import { searchDiffRows } from "./diff-search";
 import { ChangeId } from "./ReviewToolbar";
 import { SidebarResize } from "./SidebarResize";
 import { SplitDiffLayout } from "./SplitDiffLayout";
@@ -279,6 +279,8 @@ function ErrorBanner({
 function DiffSearchControls({
   open,
   query,
+  regex,
+  error,
   current,
   total,
   inputRef,
@@ -286,12 +288,15 @@ function DiffSearchControls({
   disabled,
   onOpen,
   onQuery,
+  onRegex,
   onPrevious,
   onNext,
   onClose,
 }: {
   open: boolean;
   query: string;
+  regex: boolean;
+  error: string;
   current: number;
   total: number;
   inputRef: RefObject<HTMLInputElement | null>;
@@ -299,6 +304,7 @@ function DiffSearchControls({
   disabled: boolean;
   onOpen: () => void;
   onQuery: (query: string) => void;
+  onRegex: () => void;
   onPrevious: () => void;
   onNext: () => void;
   onClose: () => void;
@@ -333,6 +339,7 @@ function DiffSearchControls({
         ref={inputRef}
         type="search"
         aria-label="Search diff"
+        aria-invalid={error ? true : undefined}
         placeholder="Find in diff"
         value={query}
         onChange={(event) => onQuery(event.target.value)}
@@ -348,8 +355,18 @@ function DiffSearchControls({
           }
         }}
       />
+      <button
+        className={`diff-search-regex${regex ? " active" : ""}`}
+        aria-label="Use regular expression"
+        aria-pressed={regex}
+        title="Use regular expression (case-insensitive)"
+        onClick={onRegex}
+      >
+        .*
+      </button>
       <output className="diff-search-count" aria-live="polite">
-        {query ? (total ? `${current + 1} / ${total}` : "No results") : ""}
+        {error ||
+          (query ? (total ? `${current + 1} / ${total}` : "No results") : "")}
       </output>
       <button
         aria-label="Previous search result"
@@ -452,6 +469,7 @@ export function ReviewViewer({
   const searchScope = `${contentIdentity}\u0000${renderVersion}\u0000${fileView}\u0000${fileView === "single" ? (file?.path ?? "") : ""}`;
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
+  const [searchRegex, setSearchRegex] = useState(false);
   const [searchCursor, setSearchCursor] = useState({
     scope: searchScope,
     index: 0,
@@ -465,10 +483,11 @@ export function ReviewViewer({
     () => (fileView === "all" ? (state?.files ?? []) : file ? [file] : []),
     [fileView, state?.files, file],
   );
-  const searchMatches = useMemo(
-    () => findDiffMatches(searchFiles, searchQuery),
-    [searchFiles, searchQuery],
+  const searchResult = useMemo(
+    () => searchDiffRows(searchFiles, searchQuery, searchRegex),
+    [searchFiles, searchQuery, searchRegex],
   );
+  const { matches: searchMatches, error: searchError } = searchResult;
   const searchIndex =
     searchCursor.scope === searchScope ? searchCursor.index : 0;
   const currentSearchIndex = searchMatches.length
@@ -579,6 +598,8 @@ export function ReviewViewer({
           <DiffSearchControls
             open={searchOpen}
             query={searchQuery}
+            regex={searchRegex}
+            error={searchError}
             current={currentSearchIndex}
             total={searchMatches.length}
             inputRef={searchInput}
@@ -589,6 +610,12 @@ export function ReviewViewer({
               setSearchQuery(query);
               setSearchCursor({ scope: searchScope, index: 0 });
               setSearchRequest((request) => request + 1);
+            }}
+            onRegex={() => {
+              setSearchRegex((regex) => !regex);
+              setSearchCursor({ scope: searchScope, index: 0 });
+              setSearchRequest((request) => request + 1);
+              requestAnimationFrame(() => searchInput.current?.focus());
             }}
             onPrevious={() => moveSearch(-1)}
             onNext={() => moveSearch(1)}

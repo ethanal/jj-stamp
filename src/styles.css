@@ -562,10 +562,13 @@ kbd {
   color: var(--muted);
 }
 .diff-search-count {
-  min-width: 50px;
+  width: 82px;
+  flex: 0 0 82px;
+  overflow: hidden;
   color: var(--muted);
   font-size: 10px;
   text-align: right;
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
 .diff-search button {
@@ -577,6 +580,13 @@ kbd {
   color: var(--muted);
 }
 .diff-search button:hover:not(:disabled) {
+  background: var(--hover);
+}
+.diff-search-regex {
+  font-weight: 600;
+}
+.diff-search-regex.active {
+  color: var(--strong);
   background: var(--hover);
 }
 .line-counts {
