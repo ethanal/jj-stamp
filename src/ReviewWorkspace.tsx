@@ -355,6 +355,10 @@ function DiffSearchControls({
           }
         }}
       />
+      <output className="diff-search-count" aria-live="polite">
+        {error ||
+          (query ? (total ? `${current + 1} / ${total}` : "No results") : "")}
+      </output>
       <button
         className={`diff-search-regex${regex ? " active" : ""}`}
         aria-label="Use regular expression"
@@ -364,17 +368,23 @@ function DiffSearchControls({
       >
         .*
       </button>
-      <output className="diff-search-count" aria-live="polite">
-        {error ||
-          (query ? (total ? `${current + 1} / ${total}` : "No results") : "")}
-      </output>
       <button
         aria-label="Previous search result"
         title="Previous result (Shift+Enter)"
         disabled={!total}
         onClick={onPrevious}
       >
-        ↑
+        <svg
+          viewBox="0 0 16 16"
+          width="14"
+          height="14"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.4"
+          aria-hidden="true"
+        >
+          <path d="m4 10 4-4 4 4" />
+        </svg>
       </button>
       <button
         aria-label="Next search result"
@@ -382,14 +392,34 @@ function DiffSearchControls({
         disabled={!total}
         onClick={onNext}
       >
-        ↓
+        <svg
+          viewBox="0 0 16 16"
+          width="14"
+          height="14"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.4"
+          aria-hidden="true"
+        >
+          <path d="m4 6 4 4 4-4" />
+        </svg>
       </button>
       <button
         aria-label="Close search"
         title="Close (Escape)"
         onClick={onClose}
       >
-        ×
+        <svg
+          viewBox="0 0 16 16"
+          width="14"
+          height="14"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.4"
+          aria-hidden="true"
+        >
+          <path d="m4.5 4.5 7 7m0-7-7 7" />
+        </svg>
       </button>
     </div>
   );

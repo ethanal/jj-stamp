@@ -574,10 +574,15 @@ kbd {
 .diff-search button {
   width: 22px;
   height: 22px;
+  flex: 0 0 22px;
   display: grid;
   place-items: center;
   border-radius: 3px;
   color: var(--muted);
+  line-height: 1;
+}
+.diff-search button svg {
+  display: block;
 }
 .diff-search button:hover:not(:disabled) {
   background: var(--hover);
