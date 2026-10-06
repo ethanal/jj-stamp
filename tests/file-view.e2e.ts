@@ -203,6 +203,7 @@ try {
   await page.keyboard.press("Control+f");
   const search = page.getByRole("searchbox", { name: "Search diff" });
   await expect(search).toBeFocused();
+  await expect(search).toHaveAttribute("type", "text");
   await search.fill(offscreenNeedle);
   const searchControls = page.locator(".diff-search");
   await expect(page.locator(".diff-search-count")).toHaveText("1 / 1");

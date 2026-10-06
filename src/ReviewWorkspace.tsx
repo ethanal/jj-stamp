@@ -337,7 +337,8 @@ function DiffSearchControls({
     <div className="diff-search" role="search">
       <input
         ref={inputRef}
-        type="search"
+        type="text"
+        role="searchbox"
         aria-label="Search diff"
         aria-invalid={error ? true : undefined}
         placeholder="Find in diff"
