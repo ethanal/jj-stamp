@@ -748,7 +748,7 @@ kbd {
   z-index: 5;
   display: flex;
   align-items: center;
-  gap: 14px;
+  gap: 10px;
   padding: 10px 15px;
   background: var(--panel);
   border-bottom: 1px solid var(--border);
@@ -761,7 +761,7 @@ kbd {
   font-weight: 500;
 }
 .file-diff-heading .line-counts {
-  margin-left: auto;
+  flex-shrink: 0;
 }
 .code-surface {
   position: relative;

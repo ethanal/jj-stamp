@@ -144,6 +144,22 @@ const addition = (path: string, line: number): Locator =>
 const selectedRows = (path: string) =>
   section(path).locator("[data-line][data-fold-selected]");
 
+async function assertAdjacentFileActions(heading: Locator) {
+  const gaps = await heading.evaluate((element) => {
+    const filename = element.querySelector("h2, .file-bar-filename")!;
+    const counts = element.querySelector(".line-counts")!;
+    const squash = element.querySelector(".squash-file")!;
+    return [
+      counts.getBoundingClientRect().left -
+        filename.getBoundingClientRect().right,
+      squash.getBoundingClientRect().left -
+        counts.getBoundingClientRect().right,
+    ];
+  });
+  for (const gap of gaps)
+    assert(Math.abs(gap - 10) < 1, `Expected a 10px gap, got ${gap}px`);
+}
+
 try {
   await page.goto(url);
 
@@ -163,6 +179,7 @@ try {
       exact: true,
     }),
   ).toBeVisible();
+  await assertAdjacentFileActions(fileBarTitle);
   await expect(page.locator(".file-bar-tools .line-counts")).toHaveCount(0);
   await expect(page.locator(".file-bar-tools .squash-file")).toHaveCount(0);
   await expect(page.locator(".file-diff-section")).toHaveCount(1);
@@ -213,6 +230,12 @@ try {
       section(path).locator(".file-diff-heading .line-counts"),
     ).toHaveText(counts);
   }
+  for (const width of [1440, 600]) {
+    await page.setViewportSize({ width, height: 900 });
+    for (const heading of await page.locator(".file-diff-heading").all())
+      await assertAdjacentFileActions(heading);
+  }
+  await page.setViewportSize({ width: 1440, height: 900 });
   await expect(section(unsupportedPath).locator(".unsupported")).toContainText(
     "Binary files cannot be reviewed line by line.",
   );
