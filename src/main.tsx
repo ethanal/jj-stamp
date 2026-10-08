@@ -191,6 +191,7 @@ function App() {
   const [graphRefresh, setGraphRefresh] = useState(0);
   const [showFiles, setShowFiles] = useState(() => readExpanded("files"));
   const [showLog, setShowLog] = useState(() => readExpanded("log"));
+  const [logFocusRequest, setLogFocusRequest] = useState(0);
   const filesReveal = useSidebarReveal(showFiles, hoverSidebars && !dragging);
   const logReveal = useSidebarReveal(showLog, hoverSidebars && !dragging);
   const [style, setStyle] = useState<DiffStyle>(() => {
@@ -643,6 +644,8 @@ function App() {
       const intent = ++navigationIntent.current;
       clear();
       setError("");
+      // @ resolves live on the server, so it cannot reuse a graph-row preview.
+      if (changeId === "@") setRevisionPreview(null);
       const revision = log.find(
         (row) => row.revision?.changeId === changeId,
       )?.revision;
@@ -749,8 +752,13 @@ function App() {
           event.preventDefault();
           void refresh();
           break;
+        case "@":
+          event.preventDefault();
+          selectRevision("@");
+          break;
         case "l":
           event.preventDefault();
+          if (!showLog) setLogFocusRequest((value) => value + 1);
           setShowLog((value) => !value);
           break;
         case "f":
@@ -771,7 +779,17 @@ function App() {
     };
     document.addEventListener("keydown", key);
     return () => document.removeEventListener("keydown", key);
-  }, [squash, undo, refresh, queue, clear, dragging, file?.path]);
+  }, [
+    squash,
+    undo,
+    refresh,
+    queue,
+    clear,
+    dragging,
+    file?.path,
+    showLog,
+    selectRevision,
+  ]);
   const additions =
     state?.files.reduce((sum, file) => sum + file.additions, 0) ?? 0;
   const deletions =
@@ -892,6 +910,7 @@ function App() {
           loadFile={loadFile}
         />
         <RevisionGraph
+          focusRequest={logFocusRequest}
           rows={log}
           source={source}
           expanded={showLog}

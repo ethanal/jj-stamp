@@ -538,7 +538,7 @@ test("invalid choices retain source and previews; immutable choices are readable
     target: original.parent!.changeId,
     selections: selections(original),
   });
-  for (const changeId of ["", "@", "@ | @-", "--help", "abc123"]) {
+  for (const changeId of ["", "@-", " @", "@ ", "@ | @-", "--help", "abc123"]) {
     await rejectsCode(
       service.selectRevision({ version: original.version, changeId }),
       "INVALID_REQUEST",
@@ -637,6 +637,10 @@ test("in-process pending recovery prevents source switching, but restart forgets
       version: state.version,
       changeId: state.parent!.changeId,
     }),
+    "RECOVERY_REQUIRED",
+  );
+  await rejectsCode(
+    service.selectRevision({ version: state.version, changeId: "@" }),
     "RECOVERY_REQUIRED",
   );
   assert.deepEqual(await service.getState(), state);
@@ -866,6 +870,11 @@ test("divergent API choices cannot poison an unrelated selected source", async (
   const before = await service.getState();
   await rejectsCode(
     service.selectRevision({ version: before.version, changeId: divergentId }),
+    "INVALID_REVISION",
+  );
+  assert.equal(await revisionId(options.repoPath, "@", "divergent"), "true");
+  await rejectsCode(
+    service.selectRevision({ version: before.version, changeId: "@" }),
     "INVALID_REVISION",
   );
   assert.deepEqual(await service.getState(), before);
@@ -1386,3 +1395,97 @@ test("a filtered graph stays read-only while getState can auto-follow a missing 
   assert.notEqual(followed.version, graph.version);
   assert.deepEqual(await service.getState(), followed);
 });
+
+test("literal @ resolves live, invalidates previews, and remains pinned after a later workspace move", async () => {
+  const options = await fixture();
+  const service = new ReviewService({
+    repoPath: options.repoPath,
+    revision: "@-",
+  });
+  const initial = await service.getState();
+  const preview = await service.preview({
+    version: initial.version,
+    target: initial.parent!.changeId,
+    selections: selections(initial),
+  });
+  const workingCopy = await revisionId(options.repoPath, "@");
+  const selected = (
+    await service.selectRevision({ version: initial.version, changeId: "@" })
+  ).state;
+  assert.equal(selected.source.changeId, workingCopy);
+  assert.equal(selected.operation, initial.operation);
+  await rejectsCode(service.squash(preview.token), "STALE_PREVIEW");
+
+  await jj(options.repoPath, ["new", "-m", "New live working copy"]);
+  const movedId = await revisionId(options.repoPath, "@");
+  const pinned = await service.getState();
+  assert.equal(pinned.source.changeId, workingCopy);
+  await rejectsCode(
+    service.selectRevision({ version: selected.version, changeId: "@" }),
+    "STALE_STATE",
+  );
+  assert.deepEqual(await service.getState(), pinned);
+  const moved = (
+    await service.selectRevision({ version: pinned.version, changeId: "@" })
+  ).state;
+  assert.equal(moved.source.changeId, movedId);
+  assert.deepEqual(moved.files, []);
+});
+
+for (const race of [
+  "workspace",
+  "old eligibility",
+  "candidate eligibility",
+  "diff failure",
+] as const) {
+  test(`literal @ selection preserves the prior source and watch scope after ${race} during capture`, async () => {
+    const options = await fixture();
+    let initial: State;
+    let candidate = "";
+    let armed = false;
+    let injected = false;
+    const service = new ReviewService({
+      repoPath: options.repoPath,
+      revision: "@-",
+      jjRunner: async (cwd, args) => {
+        const result = await jj(cwd, args);
+        if (armed && !injected && args[0] === "diff") {
+          injected = true;
+          if (race === "workspace") {
+            await jj(cwd, ["new", "-m", "Concurrent workspace move"]);
+          } else if (race === "diff failure") {
+            throw new Error("injected candidate diff failure");
+          } else {
+            await jj(cwd, [
+              "config",
+              "set",
+              "--repo",
+              'revset-aliases."conflicts()"',
+              `change_id("${race === "old eligibility" ? initial.source.changeId : candidate}")`,
+            ]);
+          }
+        }
+        return result;
+      },
+    });
+    initial = await service.getState();
+    candidate = await revisionId(options.repoPath, "@");
+    const paths = service.getWatchPaths();
+    const published: string[][] = [];
+    service.subscribeWatchPaths((paths) => published.push(paths));
+    armed = true;
+    const request = service.selectRevision({
+      version: initial.version,
+      changeId: "@",
+    });
+    if (race === "diff failure")
+      await assert.rejects(request, /injected candidate diff failure/);
+    else await rejectsCode(request, "STALE_STATE");
+    assert.equal(injected, true);
+    assert.deepEqual(service.getWatchPaths(), paths);
+    assert.deepEqual(published, []);
+    const after = await service.getState();
+    assert.equal(after.source.changeId, initial.source.changeId);
+    if (race !== "workspace") assert.equal(after.operation, initial.operation);
+  });
+}

@@ -1686,6 +1686,10 @@ test("revision API validates strict versioned identity input and returns the exp
     {},
     { version: state.version },
     { version: state.version, changeId: "@-" },
+    { version: state.version, changeId: "@ | @-" },
+    { version: state.version, changeId: " @" },
+    { version: state.version, changeId: "@ " },
+    { version: state.version, changeId: "all()" },
     { version: state.version, changeId: "k".repeat(65) },
     {
       version: state.version,
@@ -1748,6 +1752,53 @@ test("revision API validates strict versioned identity input and returns the exp
     ),
   );
   assert.deepEqual(await service.getState(), immutable);
+
+  // The shortcut must work without a working-copy row in the filtered graph.
+  await jj(state.repo.path, [
+    "config",
+    "set",
+    "--repo",
+    "user.email",
+    "other@example.com",
+  ]);
+  const filteredGraph = await (await fetch(`${base}/graph`)).json();
+  assert.ok(
+    !filteredGraph.rows.some(
+      (row: { isWorkingCopy?: boolean }) => row.isWorkingCopy,
+    ),
+  );
+  const workingCopyResponse = await select({
+    version: filteredGraph.version,
+    changeId: "@",
+  });
+  assert.equal(workingCopyResponse.status, 200);
+  const { state: workingCopy } = (await workingCopyResponse.json()) as {
+    state: State;
+  };
+  assert.deepEqual(workingCopy.source, state.source);
+  assert.deepEqual(workingCopy.files, state.files);
+
+  await jj(state.repo.path, ["new", "-m", "Moved since shortcut response"]);
+  const staleWorkingCopy = await select({
+    version: workingCopy.version,
+    changeId: "@",
+  });
+  assert.equal(staleWorkingCopy.status, 409);
+  assert.equal((await staleWorkingCopy.json()).code, "STALE_STATE");
+  assert.equal(
+    (await service.getState()).source.changeId,
+    workingCopy.source.changeId,
+  );
+  const freshGraph = await (await fetch(`${base}/graph`)).json();
+  const movedResponse = await select({
+    version: freshGraph.version,
+    changeId: "@",
+  });
+  assert.equal(movedResponse.status, 200);
+  const { state: moved } = (await movedResponse.json()) as { state: State };
+  assert.notEqual(moved.source.changeId, workingCopy.source.changeId);
+  assert.equal(moved.source.description, "Moved since shortcut response");
+  assert.deepEqual(await service.getState(), moved);
 });
 
 test("native callback failure includes its full invocation over HTTP and never retried by reads or restart", async (t) => {

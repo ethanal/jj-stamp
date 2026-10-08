@@ -798,6 +798,7 @@ export function ReviewViewer({
 }
 
 export function RevisionGraph({
+  focusRequest = 0,
   rows,
   source,
   expanded,
@@ -813,6 +814,7 @@ export function RevisionGraph({
   onToggle,
   onSelectRevision,
 }: {
+  focusRequest?: number;
   rows: LogRow[];
   source?: Revision;
   expanded: boolean;
@@ -829,6 +831,19 @@ export function RevisionGraph({
   onSelectRevision: (changeId: string) => void;
 }) {
   const visible = expanded || peeking;
+  const graph = useRef<HTMLPreElement>(null);
+  const lastFocusRequest = useRef(0);
+  useLayoutEffect(() => {
+    const element = graph.current;
+    if (!element || !visible || focusRequest === lastFocusRequest.current)
+      return;
+    lastFocusRequest.current = focusRequest;
+    const current = element.querySelector<HTMLButtonElement>(
+      '.log-change[aria-pressed="true"]:not(:disabled)',
+    );
+    (current ?? element).focus({ preventScroll: true });
+    current?.scrollIntoView({ block: "nearest" });
+  }, [focusRequest, visible]);
   return (
     <aside
       {...hoverHandlers}
@@ -866,6 +881,69 @@ export function RevisionGraph({
         </span>
       )}
       <pre
+        ref={graph}
+        tabIndex={0}
+        onKeyDown={(event) => {
+          if (
+            !event.defaultPrevented &&
+            !event.repeat &&
+            !event.ctrlKey &&
+            !event.metaKey &&
+            !event.altKey &&
+            !event.nativeEvent.isComposing
+          ) {
+            // @ changes the source; the next arrow should start there, not at
+            // the old focused row. l must move focus before hiding the graph.
+            if (event.key === "@")
+              event.currentTarget.focus({ preventScroll: true });
+            else if (event.key.toLowerCase() === "l" && expanded)
+              event.currentTarget.parentElement
+                ?.querySelector<HTMLButtonElement>(".sidebar-toggle")
+                ?.focus({ preventScroll: true });
+          }
+          if (
+            !visible ||
+            event.defaultPrevented ||
+            event.ctrlKey ||
+            event.metaKey ||
+            event.altKey ||
+            event.shiftKey ||
+            event.nativeEvent.isComposing ||
+            (event.key !== "ArrowUp" && event.key !== "ArrowDown")
+          )
+            return;
+          event.preventDefault();
+          event.stopPropagation();
+          const buttons = [
+            ...event.currentTarget.querySelectorAll<HTMLButtonElement>(
+              ".log-change:not(:disabled)",
+            ),
+          ];
+          if (!buttons.length) return;
+          let index = buttons.findIndex(
+            (button) => button === document.activeElement,
+          );
+          if (index < 0)
+            index = buttons.findIndex(
+              (button) => button.getAttribute("aria-pressed") === "true",
+            );
+          const next =
+            index < 0
+              ? event.key === "ArrowDown"
+                ? 0
+                : buttons.length - 1
+              : Math.max(
+                  0,
+                  Math.min(
+                    buttons.length - 1,
+                    index + (event.key === "ArrowDown" ? 1 : -1),
+                  ),
+                );
+          const button = buttons[next];
+          button.focus({ preventScroll: true });
+          button.scrollIntoView({ block: "nearest" });
+          if (next !== index) button.click();
+        }}
         className="jj-log"
         id="log-sidebar-content"
         hidden={!visible}

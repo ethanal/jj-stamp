@@ -510,6 +510,9 @@ export class ReviewService {
     selections = [{}],
     snapshot = true,
   }: ViewOptions = {}): Promise<ReviewView[]> {
+    const checkWorkingCopy = selections.some(
+      (selection) => selection.workingCopy,
+    );
     const revsets = selections.map((selection) => {
       const source = selection.workingCopy
         ? "@"
@@ -540,7 +543,11 @@ export class ReviewService {
           // membership testing so an empty/sparse conflicts() does not walk
           // all visible history. Preserve configured conflicts() aliases.
           contained(`(${metadataRevset}) & conflicts()`) +
-          ' ++ "\\t" ++ json(self.contained_in("mutable()")) ++ "\\n"',
+          ' ++ "\\t" ++ json(self.contained_in("mutable()"))' +
+          // @ names one commit even when its change is divergent. Unlike a
+          // change_id() lookup, counting its rows alone cannot establish safety.
+          (checkWorkingCopy ? ' ++ "\\t" ++ json(!hidden && !divergent)' : "") +
+          ' ++ "\\n"',
       ])
     ).stdout
       .trim()
@@ -549,7 +556,7 @@ export class ReviewService {
       .map((line) =>
         parseRevisionRecord(
           line,
-          selections.length * 3 + 2,
+          selections.length * 3 + 2 + Number(checkWorkingCopy),
           "Unrecognized revision metadata.",
         ),
       );
@@ -559,13 +566,21 @@ export class ReviewService {
         source: flags[index * 3],
         target: flags[index * 3 + 1],
         parent: flags[index * 3 + 2],
-        conflict: flags[flags.length - 2],
-        mutable: flags[flags.length - 1],
+        conflict: flags[selections.length * 3],
+        mutable: flags[selections.length * 3 + 1],
+        availableWorkingCopy: flags[selections.length * 3 + 2],
       }));
       const sources = metadata
         .filter((entry) => entry.source)
         .map((entry) => entry.revision);
-      if (selection.requireAvailable && sources.length !== 1)
+      if (
+        selection.requireAvailable &&
+        (sources.length !== 1 ||
+          (selection.workingCopy &&
+            metadata.some(
+              (entry) => entry.source && !entry.availableWorkingCopy,
+            )))
+      )
         throw new ApiError(
           400,
           "INVALID_REVISION",
@@ -766,7 +781,7 @@ export class ReviewService {
       if (
         !input ||
         typeof input.changeId !== "string" ||
-        !/^[k-z]{1,64}$/.test(input.changeId) ||
+        (input.changeId !== "@" && !/^[k-z]{1,64}$/.test(input.changeId)) ||
         Object.keys(input).some(
           (key) => key !== "version" && key !== "changeId",
         )
@@ -774,14 +789,18 @@ export class ReviewService {
         throw new ApiError(
           400,
           "INVALID_REQUEST",
-          "Supply a change ID and the current state version.",
+          "Supply a change ID or literal @ and the current state version.",
         );
       await this.init();
       // Resolve both identities and their live eligibility in one snapshot.
       // The candidate is not published until its diff and BOTH views validate.
+      // Keep @ moving in both queries so a workspace move during capture fails;
+      // publish only the resulting full change ID, never a persistent revset.
       const selections = [
         { allowUnavailable: true },
-        { changeId: input.changeId, requireAvailable: true },
+        input.changeId === "@"
+          ? { workingCopy: true, requireAvailable: true }
+          : { changeId: input.changeId, requireAvailable: true },
       ];
       const views = await this.readViews({ selections });
       const operation = await this.operation();

@@ -364,7 +364,7 @@ export function createApi(
     const input = z
       .object({
         version,
-        changeId: z.string().regex(/^[k-z]{1,64}$/),
+        changeId: z.union([z.literal("@"), z.string().regex(/^[k-z]{1,64}$/)]),
       })
       .strict()
       .parse(req.body);
