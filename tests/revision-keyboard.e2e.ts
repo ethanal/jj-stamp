@@ -89,6 +89,8 @@ try {
   await page.getByRole("button", { name: "Collapse log sidebar" }).click();
   await page.keyboard.press("l");
   await expect(row("middle")).toBeFocused();
+  await expect(row("middle")).toHaveCSS("outline-style", "none");
+  await expect(row("middle").locator("..")).not.toHaveCSS("box-shadow", "none");
   await page.keyboard.press("ArrowUp");
   await selected("top");
   await expect(row("top")).toBeFocused();
@@ -113,6 +115,10 @@ try {
   await selected("working-copy");
   assert.equal(requests.at(-1)?.changeId, "@");
   await expect(page.getByLabel("jj log output")).toBeFocused();
+  await expect(page.getByLabel("jj log output")).toHaveCSS(
+    "outline-style",
+    "none",
+  );
   await page.keyboard.press("ArrowDown");
   await selected("top");
   await expect(row("top")).toBeFocused();
@@ -130,11 +136,26 @@ try {
   holdNext = true;
   await page.keyboard.press("ArrowDown");
   await expect.poll(() => release !== undefined).toBe(true);
+  await expect(page.locator(".log-status")).toHaveText("loading…");
+  await expect(page.locator(".log-loading-spinner")).toBeVisible();
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await expect(page.locator(".log-loading-spinner")).toHaveCSS(
+    "animation-name",
+    "none",
+  );
+  await page.emulateMedia({ reducedMotion: "no-preference" });
   await page.keyboard.press("ArrowDown");
   await expect(row("bottom")).toBeFocused();
+  await expect(row("bottom")).toHaveCSS("outline-style", "none");
+  await expect(row("bottom").locator("..")).not.toHaveCSS(
+    "background-color",
+    "rgba(0, 0, 0, 0)",
+  );
+  await expect(page.locator(".log-status")).toHaveText("loading…");
   release!();
   release = undefined;
   await selected("bottom");
+  await expect(page.locator(".log-loading")).toHaveCount(0);
   assert.deepEqual(
     requests.slice(-2).map(({ changeId }) => changeId),
     ["middle", "bottom"],
@@ -179,6 +200,7 @@ try {
   failNext = true;
   await page.keyboard.press("Shift+Digit2");
   await expect(page.locator(".error")).toContainText("Selection is stale");
+  await expect(page.locator(".log-loading")).toHaveCount(0);
   await selected("working-copy");
   assert.equal(requests.length, beforeIgnored + 1);
   assert.deepEqual(errors, []);

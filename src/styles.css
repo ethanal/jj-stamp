@@ -378,6 +378,29 @@ kbd {
 .log-status {
   margin-left: auto;
 }
+.log-loading {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.log-loading-spinner {
+  width: 10px;
+  height: 10px;
+  border: 1.5px solid currentColor;
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: log-loading-spin 900ms linear infinite;
+}
+@keyframes log-loading-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .log-loading-spinner {
+    animation: none;
+  }
+}
 .sidebar-body {
   display: flex;
   flex-direction: column;
@@ -874,6 +897,18 @@ kbd {
 }
 .log-change:disabled {
   opacity: 1;
+}
+/* Keep keyboard focus visible on the row, without a box around the change ID. */
+.log-change:focus-visible,
+.jj-log:focus-visible {
+  outline: none;
+}
+.log-row:has(.log-change:focus-visible),
+.jj-log:focus-visible .log-row.is-current {
+  box-shadow: inset 2px 0 var(--muted);
+}
+.log-row:has(.log-change:focus-visible):not(.is-current) {
+  background: var(--hover);
 }
 .queue-count {
   color: var(--modified);

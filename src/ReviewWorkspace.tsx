@@ -807,6 +807,7 @@ export function RevisionGraph({
   width,
   pending,
   loading,
+  switching = false,
   dragging,
   idleActionDisabled,
   hasVersion,
@@ -823,6 +824,7 @@ export function RevisionGraph({
   width: number;
   pending: number;
   loading: boolean;
+  switching?: boolean;
   dragging: boolean;
   idleActionDisabled: boolean;
   hasVersion: boolean;
@@ -862,8 +864,19 @@ export function RevisionGraph({
         {visible && (
           <>
             <span>jj log</span>
-            <span className="log-status">
-              {pending ? `${pending} queued` : loading ? "updating…" : ""}
+            <span className="log-status" aria-live="polite" aria-atomic="true">
+              {pending ? (
+                `${pending} queued`
+              ) : switching ? (
+                <span className="log-loading">
+                  <span className="log-loading-spinner" aria-hidden="true" />
+                  loading…
+                </span>
+              ) : loading ? (
+                "updating…"
+              ) : (
+                ""
+              )}
             </span>
           </>
         )}

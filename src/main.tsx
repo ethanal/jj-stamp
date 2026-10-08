@@ -36,6 +36,7 @@ import {
   RevisionHeading,
   revisionPageTitle,
 } from "./ReviewToolbar";
+import { ShortcutsDialog } from "./ShortcutsDialog";
 import { useSidebarReveal } from "./useSidebarReveal";
 import "./styles.css";
 
@@ -828,6 +829,7 @@ function App() {
         >
           refresh <kbd>r</kbd>
         </button>
+        <ShortcutsDialog disabled={dragging} />
         <SettingsDialog
           colorScheme={colorScheme}
           onColorSchemeChange={setColorScheme}
@@ -919,6 +921,7 @@ function App() {
           width={logReveal.peeking ? logPeekWidth : logWidth}
           pending={queued.pending}
           loading={busy === "switching change" ? false : logLoading}
+          switching={busy === "switching change"}
           dragging={dragging}
           idleActionDisabled={
             busy === "switching change" ? false : idleActionDisabled

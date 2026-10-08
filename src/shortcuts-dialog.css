@@ -1,0 +1,102 @@
+.settings-dialog.shortcuts-dialog {
+  box-sizing: border-box;
+  width: min(860px, calc(100vw - 32px));
+  max-height: calc(100dvh - 32px);
+  padding: 20px;
+  overflow: hidden;
+}
+.shortcuts-dialog[open] {
+  display: flex;
+  flex-direction: column;
+}
+.shortcuts-dialog .settings-heading {
+  flex-shrink: 0;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+.shortcuts-dialog .settings-heading button {
+  flex-shrink: 0;
+}
+.shortcuts-content {
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+  padding: 2px 6px 4px 2px;
+}
+.shortcuts-description,
+.shortcuts-note {
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.6;
+  margin: 0 0 14px;
+}
+.shortcuts-groups {
+  columns: 2;
+  column-gap: 28px;
+}
+.shortcuts-group {
+  min-width: 0;
+  break-inside: avoid;
+  margin-bottom: 20px;
+}
+.shortcuts-group:last-child {
+  margin-bottom: 0;
+}
+.shortcuts-group h3 {
+  color: var(--strong);
+  font-size: 12px;
+  font-weight: 600;
+  margin: 0 0 10px;
+  padding-bottom: 7px;
+  border-bottom: 1px solid var(--border);
+}
+.shortcuts-group dl {
+  margin: 0;
+}
+.shortcut-entry {
+  display: grid;
+  grid-template-columns: 112px minmax(0, 1fr);
+  align-items: start;
+  gap: 10px;
+}
+.shortcut-entry + .shortcut-entry {
+  margin-top: 8px;
+}
+/* Global shortcuts need less key space than the modified/pointer gestures. */
+.shortcuts-group:first-child .shortcut-entry {
+  grid-template-columns: 56px minmax(0, 1fr);
+}
+.shortcut-entry dt,
+.shortcut-entry dd {
+  margin: 0;
+  line-height: 1.5;
+}
+.shortcuts-dialog .shortcut-entry kbd {
+  display: inline-block;
+  color: var(--strong);
+  background: var(--chrome);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 0 5px;
+  font-size: 11px;
+  white-space: normal;
+}
+.shortcut-entry dd {
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+@media (max-width: 600px) {
+  .settings-dialog.shortcuts-dialog {
+    width: calc(100vw - 20px);
+    max-height: calc(100dvh - 20px);
+    padding: 14px;
+  }
+  .shortcuts-groups {
+    columns: 1;
+  }
+  .shortcut-entry {
+    grid-template-columns: 100px minmax(0, 1fr);
+    gap: 8px;
+  }
+}
