@@ -263,6 +263,14 @@ try {
     "aria-pressed",
     "true",
   );
+  // notifications.ts has no changes in the parent, so navigation falls back
+  // to its first changed file. That file remains selected when switching back.
+  assert.equal(parentState.files[0].path, "src/preferences.ts");
+  await expect(page.locator(".file-bar")).toContainText("src/preferences.ts");
+  await expect(treeRow("src/preferences.ts")).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
   let releasePreview!: () => void;
   let capturePreview!: () => void;
   const previewGate = new Promise<void>((resolve) => {
@@ -301,9 +309,18 @@ try {
     "title",
     initial.source.changeId,
   );
+  await expect(page.locator(".file-bar")).toContainText("src/preferences.ts");
+  await expect(treeRow("src/preferences.ts")).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  await expect(page.locator("[data-line][data-fold-selected]")).toHaveCount(0);
+  // Subsequent scenarios exercise notification lines; select that file rather
+  // than assuming revision navigation resets to the first file.
+  await treeRow("src/notifications.ts").click();
   await expect(codeLine(21)).toBeVisible();
   console.log(
-    "✓ Click a mutable graph change, display its unique parent, clear old selection, and switch back",
+    "✓ Click a mutable graph change, display its unique parent, clear old selection, and retain the active file when switching back",
   );
   const immutable = (
     await jj(repoPath, ["log", "--no-graph", "-r", "@--", "-T", "change_id"])
@@ -396,6 +413,12 @@ try {
     "title",
     initial.source.changeId,
   );
+  await expect(page.locator(".file-bar")).toContainText(immutableParentPath);
+  await expect(treeRow(immutableParentPath)).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  await treeRow("src/notifications.ts").click();
   await expect(codeLine(21)).toBeVisible();
   await expectSquashActions("src/notifications.ts");
   await jj(repoPath, [
@@ -1370,7 +1393,9 @@ try {
 
   // Any explicitly selected change that disappears follows the current @ on a
   // focus refresh, even when the selected change was not @ and the graph is
-  // collapsed.
+  // collapsed. Finish background graph/prefetch reads before mutating the
+  // fixture: this scenario tests missing-source fallback, not stale-read races.
+  await page.waitForLoadState("networkidle");
   await jj(repoPath, ["new", "-m", "Explicit non-working-copy selection"]);
   const selectedNonWorkingCopy = (
     await jj(repoPath, ["log", "--no-graph", "-r", "@", "-T", "change_id"])
@@ -1400,6 +1425,8 @@ try {
     "title",
     selectedNonWorkingCopy,
   );
+  await page.waitForLoadState("networkidle");
+  await expect(page.getByRole("alert")).toHaveCount(0);
   await page.getByRole("button", { name: "Collapse log sidebar" }).click();
   await expect(page.getByLabel("jj log output")).toBeHidden();
   await jj(repoPath, ["abandon", selectedNonWorkingCopy]);
