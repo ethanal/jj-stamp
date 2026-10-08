@@ -188,6 +188,18 @@ try {
   await allFiles.click();
   await expect(allFiles).toHaveAttribute("aria-pressed", "true");
   await expect(page.locator(".file-bar")).toContainText("All changed files");
+  // One divider below the toolbar, including when later headings stick to it.
+  await expect(page.locator(".file-bar")).toHaveCSS(
+    "border-bottom-width",
+    "1px",
+  );
+  for (const heading of await page.locator(".file-diff-heading").all()) {
+    await expect(heading).toHaveCSS("border-top-width", "0px");
+    await expect(heading).toHaveCSS("border-bottom-width", "1px");
+  }
+  await expect(section(firstPath)).toHaveCSS("border-top-width", "0px");
+  await expect(section(secondPath)).toHaveCSS("border-top-width", "1px");
+
   await expect(page.locator(".file-diff-section")).toHaveCount(3);
   for (const [path, counts] of [
     [firstPath, "+10−10"],

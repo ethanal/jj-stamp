@@ -98,6 +98,14 @@ export function useAppearancePreferences() {
   const [logWidth, setLogWidth] = usePreference("log-width", (value) =>
     parseSidebarWidth("log", value),
   );
+  const [filesPeekWidth, setFilesPeekWidth] = usePreference(
+    "files-peek-width",
+    (value) => parseSidebarWidth("files", value),
+  );
+  const [logPeekWidth, setLogPeekWidth] = usePreference(
+    "log-peek-width",
+    (value) => parseSidebarWidth("log", value),
+  );
   useEffect(() => {
     document.documentElement.dataset.colorScheme = colorScheme;
   }, [colorScheme]);
@@ -112,6 +120,10 @@ export function useAppearancePreferences() {
     setFilesWidth,
     logWidth,
     setLogWidth,
+    filesPeekWidth,
+    setFilesPeekWidth,
+    logPeekWidth,
+    setLogPeekWidth,
   };
 }
 

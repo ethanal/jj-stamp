@@ -122,7 +122,7 @@ export function FilesSidebar({
       className={`sidebar ${visible ? "" : "is-collapsed"} ${peeking ? "is-peeking" : ""}`}
       aria-label="Files sidebar"
     >
-      {expanded && (
+      {visible && (
         <SidebarResize
           side="files"
           width={width}
@@ -835,7 +835,7 @@ export function RevisionGraph({
       className={`log-panel ${visible ? "" : "is-collapsed"} ${peeking ? "is-peeking" : ""}`}
       aria-label="Revision graph"
     >
-      {expanded && (
+      {visible && (
         <SidebarResize
           side="log"
           width={width}

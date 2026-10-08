@@ -65,6 +65,10 @@ function App() {
     setFilesWidth,
     logWidth,
     setLogWidth,
+    filesPeekWidth,
+    setFilesPeekWidth,
+    logPeekWidth,
+    setLogPeekWidth,
   } = useAppearancePreferences();
   const [queue] = useState(
     () =>
@@ -820,6 +824,8 @@ function App() {
           {
             "--files-preferred-width": `${filesWidth}px`,
             "--log-preferred-width": `${logWidth}px`,
+            "--files-peek-width": `${filesPeekWidth}px`,
+            "--log-peek-width": `${logPeekWidth}px`,
           } as CSSProperties
         }
       >
@@ -831,14 +837,14 @@ function App() {
           expanded={showFiles}
           peeking={filesReveal.peeking}
           hoverHandlers={filesReveal.handlers}
-          width={filesWidth}
+          width={filesReveal.peeking ? filesPeekWidth : filesWidth}
           resizeDisabled={dragging}
           navigationDisabled={
             dragging ||
             queued.recovering ||
             (!!busy && busy !== "refreshing" && busy !== "switching change")
           }
-          onResize={setFilesWidth}
+          onResize={filesReveal.peeking ? setFilesPeekWidth : setFilesWidth}
           onToggle={() => {
             filesReveal.dismiss();
             setShowFiles((value) => !value);
@@ -891,7 +897,7 @@ function App() {
           expanded={showLog}
           peeking={logReveal.peeking}
           hoverHandlers={logReveal.handlers}
-          width={logWidth}
+          width={logReveal.peeking ? logPeekWidth : logWidth}
           pending={queued.pending}
           loading={busy === "switching change" ? false : logLoading}
           dragging={dragging}
@@ -899,7 +905,7 @@ function App() {
             busy === "switching change" ? false : idleActionDisabled
           }
           hasVersion={!!logVersion.current}
-          onResize={setLogWidth}
+          onResize={logReveal.peeking ? setLogPeekWidth : setLogWidth}
           onToggle={() => {
             logReveal.dismiss();
             setShowLog((value) => !value);

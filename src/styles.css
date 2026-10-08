@@ -327,12 +327,12 @@ kbd {
 /* Preview widths are independent of the saved, resizable pinned widths. */
 .sidebar.is-peeking {
   --peek-offset-x: calc(-100% + 30px);
-  width: min(245px, 36vw);
+  width: min(var(--files-peek-width, 245px), 36vw);
   justify-self: start;
 }
 .log-panel.is-peeking {
   --peek-offset-x: calc(100% - 30px);
-  width: min(350px, 36vw);
+  width: min(var(--log-peek-width, 350px), 36vw);
   justify-self: end;
 }
 @keyframes sidebar-peek {
@@ -738,6 +738,10 @@ kbd {
   min-height: 0;
   padding-bottom: 20px;
 }
+/* Section separators scroll away instead of doubling the toolbar divider. */
+.all-files-section + .all-files-section {
+  border-top: 1px solid var(--border);
+}
 .file-diff-heading {
   position: sticky;
   top: 0;
@@ -747,7 +751,7 @@ kbd {
   gap: 14px;
   padding: 10px 15px;
   background: var(--panel);
-  border-block: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
 }
 .file-diff-heading h2 {
   margin: 0;
@@ -983,7 +987,7 @@ kbd {
     border-top: 1px solid var(--border);
   }
   .sidebar.is-peeking {
-    width: min(245px, 35vw);
+    width: min(var(--files-peek-width, 245px), 35vw);
   }
   .log-panel.is-peeking {
     --peek-offset-x: 0px;

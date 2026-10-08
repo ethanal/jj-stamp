@@ -404,6 +404,53 @@ try {
       .click();
     await page.locator(".viewer").hover();
   }
+  // Hover widths resize independently, without pinning or moving the viewer.
+  // Pointer capture keeps the preview open even when dragging outside its bounds.
+  for (const [side, panel, body, resize, initial, pinned, direction] of [
+    ["files", filesPanel, filesBody, files, 245, "120", 1],
+    ["log", logPanel, logBody, log, 350, "160", -1],
+  ] as const) {
+    await panel.hover();
+    await expect(body).toBeVisible();
+    await expect(resize).toHaveAttribute("aria-valuenow", String(initial));
+    await panel.evaluate((element) =>
+      element.getAnimations().forEach((animation) => animation.finish()),
+    );
+    const edge = await resize.boundingBox();
+    assert(edge);
+    const x = edge.x + edge.width / 2;
+    await page.mouse.move(x, edge.y + 80);
+    await page.mouse.down();
+    await page.mouse.move(x + direction * 60, edge.y - 20, { steps: 5 });
+    await expect(body).toBeVisible();
+    await expect(panel).toHaveCSS("width", `${initial + 60}px`);
+    await page.mouse.move(x + direction * 60, edge.y + 80);
+    await page.mouse.up();
+    await expect(body).toBeVisible();
+    await expect(resize).not.toHaveClass(/is-resizing/);
+    await resize.focus();
+    await page.keyboard.press(side === "files" ? "ArrowRight" : "ArrowLeft");
+    await expect(panel).toHaveCSS("width", `${initial + 70}px`);
+    assert.deepEqual(await page.locator(".viewer").boundingBox(), viewerBox);
+    assert.deepEqual(
+      await page.evaluate(
+        (side) => ({
+          expanded: localStorage.getItem(`jj-stamp.${side}-expanded`),
+          pinned: localStorage.getItem(`jj-stamp.${side}-width`),
+          peek: localStorage.getItem(`jj-stamp.${side}-peek-width`),
+        }),
+        side,
+      ),
+      { expanded: "false", pinned, peek: String(initial + 70) },
+    );
+    await page.keyboard.press("Escape");
+    await expect(body).toBeHidden();
+    await page.locator(".viewer").hover();
+    await panel.hover();
+    await expect(panel).toHaveCSS("width", `${initial + 70}px`);
+    await page.locator(".viewer").hover();
+    await expect(body).toBeHidden();
+  }
   await page.emulateMedia({ reducedMotion: "reduce" });
   await filesPanel.hover();
   await expect(filesBody).toBeVisible();
@@ -430,6 +477,15 @@ try {
   await page.reload();
   await expect(filesBody).toBeHidden();
   await expect(logBody).toBeHidden();
+  for (const [panel, body, width] of [
+    [filesPanel, filesBody, "315px"],
+    [logPanel, logBody, "420px"],
+  ] as const) {
+    await panel.hover();
+    await expect(panel).toHaveCSS("width", width);
+    await page.locator(".viewer").hover();
+    await expect(body).toBeHidden();
+  }
   // A collapsed startup warms the graph before the first hover. Repeated
   // reveals must reuse it rather than briefly showing "updating…" each time.
   await expect(page.locator(".log-row")).toHaveCount(graphRows.length);
