@@ -56,6 +56,8 @@ function retainActivePath(files: RepoState["files"], current: string): string {
 
 function App() {
   const {
+    vimMode,
+    setVimMode,
     hoverSidebars,
     setHoverSidebars,
     fileView,
@@ -758,6 +760,7 @@ function App() {
           selectRevision("@");
           break;
         case "l":
+          if (vimMode) break;
           event.preventDefault();
           if (!showLog) setLogFocusRequest((value) => value + 1);
           setShowLog((value) => !value);
@@ -789,6 +792,7 @@ function App() {
     dragging,
     file?.path,
     showLog,
+    vimMode,
     selectRevision,
   ]);
   const additions =
@@ -835,6 +839,8 @@ function App() {
           onColorSchemeChange={setColorScheme}
           hoverSidebars={hoverSidebars}
           onHoverSidebarsChange={setHoverSidebars}
+          vimMode={vimMode}
+          onVimModeChange={setVimMode}
           disabled={dragging}
         />
       </header>
@@ -883,6 +889,7 @@ function App() {
           fileView={fileView}
           style={style}
           colorScheme={colorScheme}
+          vimMode={vimMode}
           selections={selections}
           range={range}
           busy={busy}

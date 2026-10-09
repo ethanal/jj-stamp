@@ -9,6 +9,7 @@ import {
   colorSchemes,
   parseFileView,
   parseHoverSidebars,
+  parseVimMode,
   parseColorScheme,
   parseSidebarWidth,
   resizeFromKey,
@@ -60,6 +61,12 @@ test("hover reveal is opt-in and validates its stored preference", () => {
   for (const value of [null, "", "false", "unknown", "1"])
     assert.equal(parseHoverSidebars(value), false);
   assert.equal(parseHoverSidebars("true"), true);
+});
+
+test("Vim mode is opt-in and accepts only the exact stored true value", () => {
+  for (const value of [null, "", "false", "TRUE", " true", "true ", "1"])
+    assert.equal(parseVimMode(value), false);
+  assert.equal(parseVimMode("true"), true);
 });
 
 test("sidebar keyboard resizing follows the physical edge in either sidebar", () => {
@@ -190,6 +197,8 @@ test("settings uses a labeled, initially closed native dialog and a named close 
       onColorSchemeChange() {},
       hoverSidebars: false,
       onHoverSidebarsChange() {},
+      vimMode: false,
+      onVimModeChange() {},
     }),
   );
   assert.match(html, /aria-haspopup="dialog"/);
@@ -198,8 +207,11 @@ test("settings uses a labeled, initially closed native dialog and a named close 
   assert.match(html, /<h2[^>]*>Settings<\/h2>/);
   assert.match(html, /aria-label="Close settings"/);
   assert.match(html, /<span>Color scheme<\/span>/);
-  assert.match(html, /type="checkbox"/);
-  assert.match(html, /Show collapsed sidebars on hover/);
+  assert.equal(html.match(/type="checkbox"/g)?.length, 2);
+  const hoverPosition = html.indexOf("Show collapsed sidebars on hover");
+  const vimPosition = html.indexOf("Vim mode");
+  assert.ok(hoverPosition >= 0);
+  assert.ok(vimPosition > hoverPosition);
   assert.doesNotMatch(html, /checked=""/);
 });
 

@@ -23,6 +23,9 @@ export function parseFileView(value: string | null): FileView {
 export function parseHoverSidebars(value: string | null): boolean {
   return value === "true";
 }
+export function parseVimMode(value: string | null): boolean {
+  return value === "true";
+}
 export type SidebarSide = "files" | "log";
 export const sidebarLimits = {
   files: { min: 120, max: 520, initial: 245 },
@@ -83,6 +86,7 @@ function usePreference<T extends string | number | boolean>(
   return [value, setValue] as const;
 }
 export function useAppearancePreferences() {
+  const [vimMode, setVimMode] = usePreference("vim-mode", parseVimMode);
   const [hoverSidebars, setHoverSidebars] = usePreference(
     "hover-sidebars",
     parseHoverSidebars,
@@ -110,6 +114,8 @@ export function useAppearancePreferences() {
     document.documentElement.dataset.colorScheme = colorScheme;
   }, [colorScheme]);
   return {
+    vimMode,
+    setVimMode,
     hoverSidebars,
     setHoverSidebars,
     fileView,

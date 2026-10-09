@@ -435,6 +435,7 @@ export function ReviewViewer({
   fileView,
   style,
   colorScheme,
+  vimMode,
   selections,
   range,
   busy,
@@ -468,6 +469,7 @@ export function ReviewViewer({
   fileView: FileView;
   style: DiffStyle;
   colorScheme: ColorScheme;
+  vimMode: boolean;
   selections: Selections;
   range: SelectedLineRange | null;
   busy: string;
@@ -766,6 +768,8 @@ export function ReviewViewer({
                       contentIdentity={contentIdentity}
                       style={style}
                       colorScheme={colorScheme}
+                      vimMode={vimMode}
+                      active={entry.path === file.path}
                       selections={entry.path === file.path ? selections : {}}
                       range={entry.path === file.path ? range : null}
                       search={

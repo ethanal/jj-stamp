@@ -229,6 +229,7 @@ try {
   const hoverSetting = page.getByRole("checkbox", {
     name: "Show collapsed sidebars on hover",
   });
+  const vimSetting = page.getByRole("checkbox", { name: "Vim mode" });
   await expect(dialog).not.toBeVisible();
   await expect(picker).not.toBeVisible();
   await settings.click();
@@ -242,11 +243,14 @@ try {
   await expect(hoverSetting).toBeFocused();
   await expect(hoverSetting).not.toBeChecked();
   await page.keyboard.press("Tab");
+  await expect(vimSetting).toBeFocused();
+  await expect(vimSetting).not.toBeChecked();
+  await page.keyboard.press("Tab");
   await expect(
     page.getByRole("button", { name: "Close settings" }),
   ).toBeFocused();
   await page.keyboard.press("Shift+Tab");
-  await expect(hoverSetting).toBeFocused();
+  await expect(vimSetting).toBeFocused();
   await page.getByRole("button", { name: "Close settings" }).focus();
   // App shortcuts must not operate on the inert background while settings is open.
   await page.keyboard.press("l");
@@ -290,6 +294,11 @@ try {
   await expect(log).toHaveAttribute("aria-valuenow", "400");
   await settings.click();
   await picker.selectOption("light");
+  await vimSetting.check();
+  await expect(vimSetting).toBeChecked();
+  await expect
+    .poll(() => page.evaluate(() => localStorage.getItem("jj-stamp.vim-mode")))
+    .toBe("true");
   await expect(page.locator("html")).toHaveAttribute(
     "data-color-scheme",
     "light",
@@ -308,9 +317,18 @@ try {
   await expect(dialog).not.toBeVisible();
   await settings.click();
   await expect(picker).toHaveValue("light");
+  await expect(vimSetting).toBeChecked();
+  await vimSetting.uncheck();
+  await expect
+    .poll(() => page.evaluate(() => localStorage.getItem("jj-stamp.vim-mode")))
+    .toBe("false");
   await page.getByRole("button", { name: "Close settings" }).click();
   await expect(dialog).not.toBeVisible();
   await expect(settings).toBeFocused();
+  await page.reload();
+  await settings.click();
+  await expect(vimSetting).not.toBeChecked();
+  await page.getByRole("button", { name: "Close settings" }).click();
   await page.getByRole("button", { name: "Collapse files sidebar" }).click();
   await expect(files).toHaveCount(0);
   await page.getByRole("button", { name: "Expand files sidebar" }).click();
@@ -637,9 +655,15 @@ try {
   const noStorageHover = noStorage.getByRole("checkbox", {
     name: "Show collapsed sidebars on hover",
   });
+  const noStorageVim = noStorage.getByRole("checkbox", { name: "Vim mode" });
   await expect(noStorageHover).not.toBeChecked();
+  await expect(noStorageVim).not.toBeChecked();
   await noStorageHover.check();
+  await noStorageVim.check();
   await expect(noStorageHover).toBeChecked();
+  await expect(noStorageVim).toBeChecked();
+  await noStorageVim.uncheck();
+  await expect(noStorageVim).not.toBeChecked();
   await noStorage.getByLabel("Color scheme").selectOption("light");
   await expect(noStorage.locator("html")).toHaveAttribute(
     "data-color-scheme",

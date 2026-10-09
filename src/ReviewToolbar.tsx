@@ -88,10 +88,14 @@ export function SettingsDialog({
   onColorSchemeChange,
   hoverSidebars,
   onHoverSidebarsChange,
+  vimMode,
+  onVimModeChange,
   disabled,
 }: {
   colorScheme: ColorScheme;
   onColorSchemeChange: (scheme: ColorScheme) => void;
+  vimMode: boolean;
+  onVimModeChange: (enabled: boolean) => void;
   hoverSidebars: boolean;
   onHoverSidebarsChange: (enabled: boolean) => void;
   disabled: boolean;
@@ -153,6 +157,15 @@ export function SettingsDialog({
             onChange={(event) => onHoverSidebarsChange(event.target.checked)}
           />
           <span>Show collapsed sidebars on hover</span>
+        </label>
+        <label className="settings-checkbox">
+          <input
+            type="checkbox"
+            checked={vimMode}
+            disabled={disabled}
+            onChange={(event) => onVimModeChange(event.target.checked)}
+          />
+          <span>Vim mode</span>
         </label>
       </dialog>
     </>

@@ -11,7 +11,7 @@
     "test": "tsx --test tests/*.test.ts",
     "benchmark": "tsx scripts/benchmark.ts",
     "benchmark:browser": "tsx scripts/responsiveness.ts",
-    "test:browser": "tsx tests/code-diff.e2e.ts && tsx tests/split-diff.e2e.ts && tsx tests/copy-selection.e2e.ts && tsx tests/preferences.e2e.ts && tsx tests/shortcuts.e2e.ts && tsx tests/revision-keyboard.e2e.ts && tsx tests/file-view.e2e.ts && tsx tests/focus-refresh.e2e.ts && tsx tests/filesystem-refresh.e2e.ts && tsx tests/prefetch.e2e.ts && tsx tests/hunk-context-worker.e2e.ts && tsx tests/diff-runtime.e2e.ts && tsx tests/browser.e2e.ts",
+    "test:browser": "tsx tests/code-diff.e2e.ts && tsx tests/split-diff.e2e.ts && tsx tests/copy-selection.e2e.ts && tsx tests/preferences.e2e.ts && tsx tests/shortcuts.e2e.ts && tsx tests/vim-mode.e2e.ts && tsx tests/revision-keyboard.e2e.ts && tsx tests/file-view.e2e.ts && tsx tests/focus-refresh.e2e.ts && tsx tests/filesystem-refresh.e2e.ts && tsx tests/prefetch.e2e.ts && tsx tests/hunk-context-worker.e2e.ts && tsx tests/diff-runtime.e2e.ts && tsx tests/browser.e2e.ts",
     "format": "prettier --write src server scripts tests cli.ts vite.config.ts tsconfig.json package.json README.md",
     "format:check": "prettier --check src server scripts tests cli.ts vite.config.ts tsconfig.json package.json README.md",
     "test:all": "npm run check && npm test && npm run test:browser && npm run test:cli",
