@@ -12,6 +12,7 @@ const groups = [
       ["l", "Toggle the log sidebar (outside Vim mode)"],
       ["@", "Review the working-copy change"],
       ["↑ / ↓", "Review adjacent changes in the log (Vim: k / j)"],
+      ["Enter", "Open the focused log change and hide the log"],
       ["?", "Open this shortcut reference"],
       ["Escape", "Clear selection and errors; close an open search or dialog"],
     ],

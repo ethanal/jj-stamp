@@ -710,7 +710,7 @@ export function ReviewViewer({
         onDismiss={onDismissError}
       />
       <SplitDiffLayout active={style === "split"} disabled={dragging}>
-        <DiffViewport className="viewer-scroll" ref={scrollRef}>
+        <DiffViewport className="viewer-scroll" ref={scrollRef} tabIndex={-1}>
           <DiffRuntime colorScheme={colorScheme}>
             {!state ? (
               <div className="empty">
@@ -819,6 +819,7 @@ export function RevisionGraph({
   onResize,
   onToggle,
   onSelectRevision,
+  onOpenRevision,
 }: {
   focusRequest?: number;
   vimMode: boolean;
@@ -837,6 +838,7 @@ export function RevisionGraph({
   onResize: (width: number) => void;
   onToggle: () => void;
   onSelectRevision: (changeId: string) => void;
+  onOpenRevision: (changeId: string) => void;
 }) {
   const visible = expanded || peeking;
   const graph = useRef<HTMLPreElement>(null);
@@ -923,15 +925,10 @@ export function RevisionGraph({
           const up = event.key === "ArrowUp" || (vimMode && event.key === "k");
           const down =
             event.key === "ArrowDown" || (vimMode && event.key === "j");
+          const open = event.key === "Enter";
           if (
             !visible ||
-            event.defaultPrevented ||
-            event.ctrlKey ||
-            event.metaKey ||
-            event.altKey ||
-            event.shiftKey ||
-            event.nativeEvent.isComposing ||
-            (!up && !down) ||
+            (!up && !down && !open) ||
             event.nativeEvent
               .composedPath()
               .some(
@@ -942,6 +939,21 @@ export function RevisionGraph({
               )
           )
             return;
+          const ignored =
+            event.defaultPrevented ||
+            event.ctrlKey ||
+            event.metaKey ||
+            event.altKey ||
+            event.shiftKey ||
+            event.nativeEvent.isComposing ||
+            (open && event.repeat);
+          if (open) {
+            // Suppress the button's native click, including repeated/modified
+            // Enter, so confirming never dispatches a second selection.
+            event.preventDefault();
+            event.stopPropagation();
+          }
+          if (ignored) return;
           event.preventDefault();
           event.stopPropagation();
           const buttons = [
@@ -957,6 +969,11 @@ export function RevisionGraph({
             index = buttons.findIndex(
               (button) => button.getAttribute("aria-pressed") === "true",
             );
+          if (open) {
+            const changeId = buttons[index]?.dataset.changeId;
+            if (changeId) onOpenRevision(changeId);
+            return;
+          }
           const next =
             index < 0
               ? down
@@ -989,6 +1006,7 @@ export function RevisionGraph({
                     <>
                       <button
                         className="log-change"
+                        data-change-id={row.revision.changeId}
                         aria-label={`Review change ${row.revision.changeId}`}
                         aria-pressed={current}
                         title={`${row.revision.changeId}\n${row.revision.description}${row.mutable ? "" : "\nImmutable change"}`}

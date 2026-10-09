@@ -195,6 +195,7 @@ function App() {
   const [showFiles, setShowFiles] = useState(() => readExpanded("files"));
   const [showLog, setShowLog] = useState(() => readExpanded("log"));
   const [logFocusRequest, setLogFocusRequest] = useState(0);
+  const [openRevisionId, setOpenRevisionId] = useState<string | null>(null);
   const filesReveal = useSidebarReveal(showFiles, hoverSidebars && !dragging);
   const logReveal = useSidebarReveal(showLog, hoverSidebars && !dragging);
   const [style, setStyle] = useState<DiffStyle>(() => {
@@ -688,6 +689,7 @@ function App() {
         });
     },
     onError: (error) => {
+      setOpenRevisionId(null);
       navigationIntent.current++;
       setRevisionPreview(null);
       setError(error);
@@ -710,7 +712,7 @@ function App() {
   );
   useEffect(() => () => navigation.dispose(), [navigation]);
   const selectRevision = useCallback(
-    (changeId: string) => {
+    (changeId: string, open = false) => {
       const current = queue.getSnapshot();
       if (
         (lock.current && busyRef.current !== "switching change") ||
@@ -720,10 +722,38 @@ function App() {
         !logVersion.current
       )
         return;
+      setOpenRevisionId(open ? changeId : null);
+      // Arrow/j/k navigation already selected this revision. Enter only needs
+      // to dismiss the graph once that selection has been acknowledged.
+      if (
+        open &&
+        !lock.current &&
+        current.confirmed?.source.changeId === changeId
+      )
+        return;
       navigation.request(changeId, logVersion.current);
     },
     [queue, dragging, navigation],
   );
+  useLayoutEffect(() => {
+    if (!openRevisionId || busy) return;
+    setOpenRevisionId(null);
+    if (queued.confirmed?.source.changeId !== openRevisionId) return;
+    logReveal.dismiss();
+    setShowLog(false);
+    // Wait for the confirmed revision's DOM, not the outgoing/cached diff.
+    // Empty and unsupported revisions still need focus outside the hidden log.
+    const surface = fileSections.current
+      .get(file?.path ?? "")
+      ?.querySelector<HTMLElement>(".code-surface");
+    (surface ?? scroll.current)?.focus({ preventScroll: true });
+  }, [
+    openRevisionId,
+    busy,
+    queued.confirmed?.source.changeId,
+    file?.path,
+    logReveal.dismiss,
+  ]);
   useEffect(() => {
     const key = (event: KeyboardEvent) => {
       if (
@@ -762,6 +792,7 @@ function App() {
         case "l":
           if (vimMode) break;
           event.preventDefault();
+          setOpenRevisionId(null);
           if (!showLog) setLogFocusRequest((value) => value + 1);
           setShowLog((value) => !value);
           break;
@@ -937,10 +968,12 @@ function App() {
           hasVersion={!!logVersion.current}
           onResize={logReveal.peeking ? setLogPeekWidth : setLogWidth}
           onToggle={() => {
+            setOpenRevisionId(null);
             logReveal.dismiss();
             setShowLog((value) => !value);
           }}
           onSelectRevision={(changeId) => void selectRevision(changeId)}
+          onOpenRevision={(changeId) => selectRevision(changeId, true)}
         />
       </div>
       <ReviewStatusBar

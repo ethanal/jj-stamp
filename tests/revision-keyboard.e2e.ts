@@ -205,6 +205,90 @@ try {
   assert.equal(requests.length, beforeIgnored + 1);
   await page.keyboard.press("Escape");
 
+  // Enter opens a keyboard-focused commit, closes the log only on success,
+  // and gives even an empty revision a usable focus target outside the log.
+  const expandLog = page.getByRole("button", { name: "Expand log sidebar" });
+  const collapseLog = page.getByRole("button", {
+    name: "Collapse log sidebar",
+  });
+  await page.keyboard.press("l");
+  await row("middle").focus(); // Tab-style navigation hasn't selected it yet.
+  const beforeOpen = requests.length;
+  await page.keyboard.press("Enter");
+  await selected("middle");
+  await expect(expandLog).toBeVisible();
+  await expect(page.locator(".viewer-scroll")).toBeFocused();
+  assert.equal(
+    requests.length,
+    beforeOpen + 1,
+    "No duplicate native Enter click",
+  );
+  await page.keyboard.press("l");
+  await expect(row("middle")).toBeFocused();
+  await page.keyboard.press("ArrowDown");
+  await selected("bottom");
+  const beforeConfirm = requests.length;
+  await page.keyboard.press("Enter");
+  await expect(expandLog).toBeVisible();
+  assert.equal(
+    requests.length,
+    beforeConfirm,
+    "Confirming an acknowledged revision needs no POST",
+  );
+
+  await page.keyboard.press("l");
+  holdNext = true;
+  await page.keyboard.press("ArrowUp");
+  await expect.poll(() => release !== undefined).toBe(true);
+  await page.keyboard.press("ArrowUp");
+  await expect(row("top")).toBeFocused();
+  await page.keyboard.press("Enter");
+  await expect(collapseLog).toBeVisible();
+  release!();
+  release = undefined;
+  await selected("top");
+  await expect(expandLog).toBeVisible();
+  await expect(page.locator(".viewer-scroll")).toBeFocused();
+  assert.deepEqual(
+    requests.slice(-2).map(({ changeId }) => changeId),
+    ["middle", "top"],
+  );
+
+  await page.keyboard.press("l");
+  const beforeEnterGuards = requests.length;
+  for (const key of [
+    "Shift+Enter",
+    "Control+Enter",
+    "Meta+Enter",
+    "Alt+Enter",
+  ]) {
+    await page.keyboard.press(key);
+    await expect(collapseLog).toBeVisible();
+  }
+  await row("top").dispatchEvent("keydown", { key: "Enter", repeat: true });
+  await row("top").dispatchEvent("keydown", {
+    key: "Enter",
+    isComposing: true,
+  });
+  await expect(collapseLog).toBeVisible();
+  assert.equal(requests.length, beforeEnterGuards);
+  failNext = true;
+  holdNext = true;
+  await page.keyboard.press("ArrowDown");
+  await expect.poll(() => release !== undefined).toBe(true);
+  await page.keyboard.press("Enter");
+  release!();
+  release = undefined;
+  await expect(page.locator(".error")).toContainText("Selection is stale");
+  await selected("top");
+  await expect(collapseLog).toBeVisible();
+  await expect(row("middle")).toBeFocused();
+  await page.keyboard.press("Escape");
+  await page.keyboard.press("l");
+  // Restore the absent-from-log selection used by the Vim navigation checks.
+  await page.keyboard.press("Shift+Digit2");
+  await selected("working-copy");
+
   // Vim log motions share the arrow path, including repeats, bounds and intent
   // coalescing. They are opt-in and only operate while the log has focus.
   const settings = page.getByRole("button", { name: "settings", exact: true });
@@ -295,7 +379,7 @@ try {
   await expect(row("top")).toBeFocused();
   assert.deepEqual(errors, []);
   console.log(
-    "Revision keyboard checks passed: @, log focus/arrows/Vim motions/bounds, rapid intents, hidden graph, input/modifier guards, and errors.",
+    "Revision keyboard checks passed: @, log focus/arrows/Vim motions/bounds, Enter confirmation/focus, rapid intents, hidden graph, input/modifier guards, and errors.",
   );
 } finally {
   release?.();

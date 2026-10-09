@@ -328,9 +328,14 @@ try {
   await expect
     .poll(() => mutations.filter((route) => route === "revision").length)
     .toBe(revisionsBefore + 2);
-  await largeSurface.focus();
+  await page.keyboard.press("Enter");
+  await expect(
+    page.getByRole("button", { name: "Expand log sidebar" }),
+  ).toBeVisible();
+  await expect(largeSurface).toBeFocused();
   await page.keyboard.press("k");
   await at(161, "addition"); // Diff j/k still operates outside the log.
+  await page.getByRole("button", { name: "Expand log sidebar" }).click();
 
   // Disabling removes Vim behavior and restores the log shortcut.
   await settings.click();
