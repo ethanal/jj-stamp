@@ -302,6 +302,36 @@ try {
   await page.keyboard.press("j");
   await at(162, "addition");
   await expect(selected()).toHaveCount(0);
+  // Log j/k must consume the event before any mounted diff can steal focus.
+  const sourceRow = page.getByRole("button", {
+    name: `Review change ${source.changeId}`,
+    exact: true,
+  });
+  const parentRow = page.getByRole("button", {
+    name: `Review change ${parent.changeId}`,
+    exact: true,
+  });
+  const revisionsBefore = mutations.filter(
+    (route) => route === "revision",
+  ).length;
+  await sourceRow.focus();
+  await page.keyboard.press("j");
+  await expect(parentRow).toBeFocused();
+  await expect
+    .poll(() => mutations.filter((route) => route === "revision").length)
+    .toBe(revisionsBefore + 1);
+  await page.keyboard.press("j"); // At the boundary, don't fall through to the diff.
+  await expect(parentRow).toBeFocused();
+  await expect(largeSurface).not.toBeFocused();
+  await page.keyboard.press("k");
+  await expect(sourceRow).toBeFocused();
+  await expect
+    .poll(() => mutations.filter((route) => route === "revision").length)
+    .toBe(revisionsBefore + 2);
+  await largeSurface.focus();
+  await page.keyboard.press("k");
+  await at(161, "addition"); // Diff j/k still operates outside the log.
+
   // Disabling removes Vim behavior and restores the log shortcut.
   await settings.click();
   await vim.uncheck();

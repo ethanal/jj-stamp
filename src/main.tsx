@@ -920,6 +920,7 @@ function App() {
         />
         <RevisionGraph
           focusRequest={logFocusRequest}
+          vimMode={vimMode}
           rows={log}
           source={source}
           expanded={showLog}

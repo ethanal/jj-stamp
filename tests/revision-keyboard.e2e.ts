@@ -203,9 +203,99 @@ try {
   await expect(page.locator(".log-loading")).toHaveCount(0);
   await selected("working-copy");
   assert.equal(requests.length, beforeIgnored + 1);
+  await page.keyboard.press("Escape");
+
+  // Vim log motions share the arrow path, including repeats, bounds and intent
+  // coalescing. They are opt-in and only operate while the log has focus.
+  const settings = page.getByRole("button", { name: "settings", exact: true });
+  const graph = page.getByLabel("jj log output");
+  await settings.click();
+  await page.getByRole("checkbox", { name: "Vim mode" }).check();
+  await page.keyboard.press("Escape");
+  await page.getByRole("button", { name: "Expand log sidebar" }).click();
+  await graph.focus();
+  await page.keyboard.press("j");
+  await selected("top");
+  await expect(row("top")).toBeFocused();
+  const vimAtTop = requests.length;
+  await page.keyboard.press("k");
+  assert.equal(requests.length, vimAtTop);
+  await page.keyboard.press("j");
+  await selected("middle");
+  await page.keyboard.press("j");
+  await selected("bottom");
+  await expect(row("bottom")).toBeFocused();
+  const vimAtBottom = requests.length;
+  await page.keyboard.press("j");
+  assert.equal(requests.length, vimAtBottom);
+  await row("bottom").dispatchEvent("keydown", { key: "k", repeat: true });
+  await selected("middle");
+  await expect(row("middle")).toBeFocused();
+
+  const beforeVimGuards = requests.length;
+  for (const init of [
+    { ctrlKey: true },
+    { metaKey: true },
+    { altKey: true },
+    { shiftKey: true },
+    { isComposing: true },
+    { prevented: true },
+  ]) {
+    await row("middle").evaluate((element, init) => {
+      const event = new KeyboardEvent("keydown", {
+        key: "j",
+        bubbles: true,
+        cancelable: true,
+        ...init,
+      });
+      if ("prevented" in init) event.preventDefault();
+      element.dispatchEvent(event);
+    }, init);
+  }
+  await settings.click();
+  await page.keyboard.press("j");
+  await page.keyboard.press("k");
+  await page.keyboard.press("Escape");
+  // Even an editable descendant of the graph keeps its normal typing behavior.
+  await graph.evaluate((element) => {
+    const input = document.createElement("input");
+    input.id = "vim-log-input";
+    element.append(input);
+    input.focus();
+  });
+  await page.keyboard.type("jk");
+  await expect(page.locator("#vim-log-input")).toHaveValue("jk");
+  await page.locator("#vim-log-input").evaluate((input) => input.remove());
+  assert.equal(requests.length, beforeVimGuards);
+
+  await row("middle").focus();
+  holdNext = true;
+  await page.keyboard.press("j");
+  await expect.poll(() => release !== undefined).toBe(true);
+  await expect(row("bottom")).toBeFocused();
+  await page.keyboard.press("k");
+  await page.keyboard.press("k");
+  await expect(row("top")).toBeFocused();
+  release!();
+  release = undefined;
+  await selected("top");
+  assert.deepEqual(
+    requests.slice(-2).map(({ changeId }) => changeId),
+    ["bottom", "top"],
+  );
+
+  await settings.click();
+  await page.getByRole("checkbox", { name: "Vim mode" }).uncheck();
+  await page.keyboard.press("Escape");
+  await row("top").focus();
+  const vimDisabled = requests.length;
+  await page.keyboard.press("j");
+  await page.keyboard.press("k");
+  assert.equal(requests.length, vimDisabled);
+  await expect(row("top")).toBeFocused();
   assert.deepEqual(errors, []);
   console.log(
-    "Revision keyboard checks passed: @, log focus/arrows/bounds, rapid intents, hidden graph, input/modifier guards, and errors.",
+    "Revision keyboard checks passed: @, log focus/arrows/Vim motions/bounds, rapid intents, hidden graph, input/modifier guards, and errors.",
   );
 } finally {
   release?.();

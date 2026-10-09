@@ -11,7 +11,7 @@ const groups = [
       ["f", "Focus the active file’s diff"],
       ["l", "Toggle the log sidebar (outside Vim mode)"],
       ["@", "Review the working-copy change"],
-      ["↑ / ↓", "Review adjacent changes while focused in the log"],
+      ["↑ / ↓", "Review adjacent changes in the log (Vim: k / j)"],
       ["?", "Open this shortcut reference"],
       ["Escape", "Clear selection and errors; close an open search or dialog"],
     ],

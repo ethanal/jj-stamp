@@ -803,6 +803,7 @@ export function ReviewViewer({
 
 export function RevisionGraph({
   focusRequest = 0,
+  vimMode,
   rows,
   source,
   expanded,
@@ -820,6 +821,7 @@ export function RevisionGraph({
   onSelectRevision,
 }: {
   focusRequest?: number;
+  vimMode: boolean;
   rows: LogRow[];
   source?: Revision;
   expanded: boolean;
@@ -913,11 +915,14 @@ export function RevisionGraph({
             // the old focused row. l must move focus before hiding the graph.
             if (event.key === "@")
               event.currentTarget.focus({ preventScroll: true });
-            else if (event.key.toLowerCase() === "l" && expanded)
+            else if (!vimMode && event.key.toLowerCase() === "l" && expanded)
               event.currentTarget.parentElement
                 ?.querySelector<HTMLButtonElement>(".sidebar-toggle")
                 ?.focus({ preventScroll: true });
           }
+          const up = event.key === "ArrowUp" || (vimMode && event.key === "k");
+          const down =
+            event.key === "ArrowDown" || (vimMode && event.key === "j");
           if (
             !visible ||
             event.defaultPrevented ||
@@ -926,7 +931,15 @@ export function RevisionGraph({
             event.altKey ||
             event.shiftKey ||
             event.nativeEvent.isComposing ||
-            (event.key !== "ArrowUp" && event.key !== "ArrowDown")
+            (!up && !down) ||
+            event.nativeEvent
+              .composedPath()
+              .some(
+                (node) =>
+                  node instanceof HTMLElement &&
+                  (node.matches("input, textarea, select") ||
+                    node.isContentEditable),
+              )
           )
             return;
           event.preventDefault();
@@ -946,15 +959,12 @@ export function RevisionGraph({
             );
           const next =
             index < 0
-              ? event.key === "ArrowDown"
+              ? down
                 ? 0
                 : buttons.length - 1
               : Math.max(
                   0,
-                  Math.min(
-                    buttons.length - 1,
-                    index + (event.key === "ArrowDown" ? 1 : -1),
-                  ),
+                  Math.min(buttons.length - 1, index + (down ? 1 : -1)),
                 );
           const button = buttons[next];
           button.focus({ preventScroll: true });
