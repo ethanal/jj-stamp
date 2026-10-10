@@ -11,6 +11,7 @@ import {
 import type { FileDiffLoadedFiles, SelectedLineRange } from "@pierre/diffs";
 import type { ErrorDetail } from "./api";
 import { ChangedFilesTree } from "./ChangedFilesTree";
+import type { VimSelectionRequest } from "./vim-navigation";
 import { CodeDiff } from "./CodeDiff";
 import { DiffRuntime, DiffViewport } from "./DiffRuntime";
 import { searchDiffRows } from "./diff-search";
@@ -436,6 +437,7 @@ export function ReviewViewer({
   style,
   colorScheme,
   vimMode,
+  vimSelection,
   selections,
   range,
   busy,
@@ -470,6 +472,7 @@ export function ReviewViewer({
   style: DiffStyle;
   colorScheme: ColorScheme;
   vimMode: boolean;
+  vimSelection: VimSelectionRequest | null;
   selections: Selections;
   range: SelectedLineRange | null;
   busy: string;
@@ -769,6 +772,9 @@ export function ReviewViewer({
                       style={style}
                       colorScheme={colorScheme}
                       vimMode={vimMode}
+                      vimSelection={
+                        vimSelection?.path === entry.path ? vimSelection : null
+                      }
                       active={entry.path === file.path}
                       selections={entry.path === file.path ? selections : {}}
                       range={entry.path === file.path ? range : null}

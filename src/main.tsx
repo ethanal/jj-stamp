@@ -17,6 +17,8 @@ import {
   specsForRefs,
   type RowRef,
 } from "./optimistic";
+import { advanceVimSelection, firstVimSelection } from "./vim-squash";
+import type { VimSelectionRequest } from "./vim-navigation";
 import { ContentStore } from "./content-store";
 import { RevisionNavigation } from "./revision-navigation";
 import { FilesystemRefresh, parseRepositoryChange } from "./filesystem-refresh";
@@ -129,6 +131,10 @@ function App() {
   // latest selection when its response arrives, including sidebar navigation.
   const rangeRef = useRef(range);
   rangeRef.current = range;
+  const [vimSelection, setVimSelection] = useState<VimSelectionRequest | null>(
+    null,
+  );
+  const vimSelectionRequest = useRef(0);
   const [picked, setPicked] = useState<RowRef[]>([]);
   const [dragging, setDragging] = useState(false);
   const [busy, setBusy] = useState("");
@@ -266,6 +272,7 @@ function App() {
     .join("\n\n");
   const diagnostics = [...queued.errorDetails, ...(localError?.details ?? [])];
   const clear = useCallback(() => {
+    setVimSelection(null);
     setRange(null);
     setPicked([]);
     setNotice("");
@@ -552,6 +559,7 @@ function App() {
       if (lock.current || current.recovering || !current.view) return;
       try {
         if (next) setActivePath(path);
+        setVimSelection(null);
         setPicked(refsFromSelection(current.view, selected));
         setRange(next);
         setNotice("");
@@ -581,6 +589,7 @@ function App() {
         return;
       }
       if (!path && !count) return;
+      let enqueued = false;
       try {
         // Read the latest projection, not the original patch: earlier queued
         // selections may already have removed part (or all) of this file.
@@ -589,12 +598,40 @@ function App() {
         setError("");
         setNotice("");
         queue.enqueue(refs);
+        enqueued = true;
+        const snapshot = queue.getSnapshot();
+        const projected =
+          snapshot.halted || snapshot.recovering ? null : snapshot.view;
+        if (vimMode && !path && range && file && projected) {
+          let nextFile = projected.files.find(
+            (entry) => entry.path === file.path,
+          );
+          let next = advanceVimSelection(file, nextFile, range, style, refs);
+          if (!nextFile) {
+            nextFile = projected.files.find(
+              (entry) => !entry.unsupported && entry.hunks.length,
+            );
+            next = nextFile ? firstVimSelection(nextFile, style) : null;
+          }
+          if (next && nextFile) {
+            setActivePath(nextFile.path);
+            setPicked(refsFromSelection(projected, next.selections));
+            setRange(next.range);
+            setVimSelection({
+              request: ++vimSelectionRequest.current,
+              path: nextFile.path,
+              range: next.range,
+            });
+            return;
+          }
+        }
         clear();
       } catch (error) {
+        if (enqueued) clear();
         setError(error);
       }
     },
-    [queue, picked, count, dragging, clear],
+    [queue, picked, count, dragging, clear, vimMode, range, file, style],
   );
   const undo = useCallback(async () => {
     const current = queue.getSnapshot();
@@ -919,6 +956,7 @@ function App() {
           style={style}
           colorScheme={colorScheme}
           vimMode={vimMode}
+          vimSelection={vimSelection}
           selections={selections}
           range={range}
           busy={busy}

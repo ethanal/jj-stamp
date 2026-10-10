@@ -794,6 +794,15 @@ kbd {
 .code-surface:focus-visible {
   outline: none;
 }
+/* One overlay spans both panes, gutters, and split padding rows. */
+.vim-line-cursor {
+  position: absolute;
+  left: 0;
+  right: 0;
+  z-index: 3;
+  pointer-events: none;
+  box-shadow: inset 0 0 0 2px var(--diff-selection-border);
+}
 .editor-error {
   position: relative;
   z-index: 5;

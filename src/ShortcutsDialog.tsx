@@ -5,7 +5,7 @@ const groups = [
   {
     title: "Review & navigation",
     shortcuts: [
-      ["s", "Squash selected changed lines into the parent"],
+      ["s", "Squash selected lines; Vim keeps the next line selected"],
       ["u", "Undo the last squash"],
       ["r", "Refresh repository state"],
       ["f", "Focus the active file’s diff"],

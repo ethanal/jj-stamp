@@ -39,7 +39,11 @@ import {
   readRenderedRightHandLines,
 } from "./copy-selection";
 import { colorSchemes, type ColorScheme } from "./preferences";
-import { moveVimLine, vimLines } from "./vim-navigation";
+import {
+  moveVimLine,
+  vimLines,
+  type VimSelectionRequest,
+} from "./vim-navigation";
 import { SplitDiffResize } from "./SplitDiffLayout";
 
 type Point = LinePoint;
@@ -124,7 +128,6 @@ const separatorCSS = `
   scrollbar-gutter: auto;
   overflow-x: auto;
 }
-[data-fold-vim-cursor] { outline: 2px solid var(--diff-selection-border, #79c9ff); outline-offset: -2px; }
 [data-line], [data-column-number] { cursor: default; touch-action: none; }
 [data-line] { user-select: text; -webkit-user-select: text; }
 [data-column-number] { user-select: none; }
@@ -269,6 +272,7 @@ export function CodeDiff({
   style,
   colorScheme = "dark",
   vimMode = false,
+  vimSelection = null,
   active = true,
   selections,
   contextDisabled,
@@ -287,6 +291,7 @@ export function CodeDiff({
   style: "unified" | "split";
   colorScheme?: ColorScheme;
   vimMode?: boolean;
+  vimSelection?: VimSelectionRequest | null;
   active?: boolean;
   selections: Selections;
   contextDisabled: boolean;
@@ -306,6 +311,7 @@ export function CodeDiff({
   loadFile: (path: string, version: string) => Promise<FileDiffLoadedFiles>;
 }) {
   const root = useRef<HTMLDivElement>(null);
+  const vimOverlay = useRef<HTMLDivElement>(null);
   const fileLoadKey = `${contentIdentity}\u0000${file.path}`;
   const contextLoadKey = `${fileLoadKey}\u0000${file.patch}`;
   const [hydratedHunkContexts, setHydratedHunkContexts] = useState<{
@@ -335,6 +341,7 @@ export function CodeDiff({
   const searchScrollToken = useRef("");
   const vimCursor = useRef<Point | null>(null);
   const visualAnchor = useRef<Point | null>(null);
+  const appliedVimSelection = useRef(0);
   const current = useRef({
     file,
     range,
@@ -367,6 +374,7 @@ export function CodeDiff({
   };
   const paint = useCallback(() => {
     const shadow = container.current?.shadowRoot;
+    if (vimOverlay.current) vimOverlay.current.hidden = true;
     if (!shadow) return;
     const { file, selections, range, style, hunkContexts, search } =
       current.current;
@@ -469,6 +477,15 @@ export function CodeDiff({
           row.toggleAttribute("data-fold-search-current", isCurrent);
         }
       });
+    const cursorRow = shadow.querySelector<HTMLElement>(
+      "[data-line][data-fold-vim-cursor]",
+    );
+    if (cursorRow && vimOverlay.current && root.current) {
+      const box = cursorRow.getBoundingClientRect();
+      vimOverlay.current.style.top = `${box.top - root.current.getBoundingClientRect().top}px`;
+      vimOverlay.current.style.height = `${box.height}px`;
+      vimOverlay.current.hidden = false;
+    }
     for (const column of shadow.querySelectorAll<HTMLElement>("[data-code]")) {
       const gutters = new Map(
         [...column.querySelectorAll<HTMLElement>("[data-column-number]")].map(
@@ -554,14 +571,14 @@ export function CodeDiff({
   useLayoutEffect(() => {
     vimCursor.current = null;
     visualAnchor.current = null;
-  }, [file.path, file.patch, contentIdentity, vimMode]);
+  }, [file.path, file.patch, vimMode]);
   useEffect(() => {
     if (!vimMode) return;
     document.addEventListener("focusin", paint);
     return () => document.removeEventListener("focusin", paint);
   }, [paint, vimMode]);
   useLayoutEffect(() => {
-    // Squash, file switching and external clears must end visual mode too.
+    // External clears end visual mode; a Vim squash supplies a new range.
     if (!range) visualAnchor.current = null;
     paint();
   }, [
@@ -863,6 +880,77 @@ export function CodeDiff({
       ),
     );
   }, []);
+  const scrollToVimCursor = useCallback(() => {
+    const next = vimCursor.current;
+    const rendered = instance.current;
+    const shadow = container.current?.shadowRoot;
+    if (!next || !rendered || !shadow) return false;
+    const rows = [...shadow.querySelectorAll<HTMLElement>("[data-line]")];
+    const row = rows.find((row) => {
+      const point = pointFromElement(row);
+      return point?.line === next.line && point.side === next.side;
+    });
+    const viewport = root.current?.closest<HTMLElement>(".viewer-scroll");
+    if (!viewport) return false;
+    const box = viewport.getBoundingClientRect();
+    let top: number | undefined;
+    let height = diffVirtualMetrics.lineHeight;
+    if (row) {
+      const rect = row.getBoundingClientRect();
+      top = viewport.scrollTop + rect.top - box.top;
+      height = rect.height;
+    } else {
+      // Virtual rows need renderer coordinates, not a DOM-only navigation list.
+      const position = (
+        rendered as DiffInstance & {
+          getLinePosition?: (
+            line: number,
+            side: Point["side"],
+          ) => { top: number; height: number } | undefined;
+        }
+      ).getLinePosition?.(next.line, next.side);
+      if (position && container.current) {
+        top =
+          viewport.scrollTop +
+          container.current.getBoundingClientRect().top -
+          box.top +
+          position.top;
+        height = position.height;
+      }
+    }
+    if (top === undefined) return false;
+    if (top < viewport.scrollTop) viewport.scrollTop = top;
+    else if (top + height > viewport.scrollTop + viewport.clientHeight)
+      viewport.scrollTop = top + height - viewport.clientHeight;
+    return true;
+  }, []);
+  useLayoutEffect(() => {
+    if (
+      !vimMode ||
+      !vimSelection ||
+      appliedVimSelection.current === vimSelection.request
+    )
+      return;
+    appliedVimSelection.current = vimSelection.request;
+    const point: Point = {
+      line: vimSelection.range.end,
+      side:
+        vimSelection.range.endSide ?? vimSelection.range.side ?? "additions",
+    };
+    vimCursor.current = point;
+    visualAnchor.current = point;
+    root.current?.focus({ preventScroll: true });
+    paint();
+    let frame = 0;
+    let attempts = 0;
+    const scroll = () => {
+      paint();
+      if (scrollToVimCursor() || attempts++ >= 30) return;
+      frame = requestAnimationFrame(scroll);
+    };
+    frame = requestAnimationFrame(scroll);
+    return () => cancelAnimationFrame(frame);
+  }, [vimMode, vimSelection, paint, scrollToVimCursor]);
   useEffect(() => {
     const key = (event: KeyboardEvent) => {
       const state = current.current;
@@ -958,47 +1046,11 @@ export function CodeDiff({
         state.onSelection(null, {});
       }
       paint();
-      const row = rows.find((row) => {
-        const point = pointFromElement(row);
-        return point?.line === next.line && point.side === next.side;
-      });
-      const viewport = root.current?.closest<HTMLElement>(".viewer-scroll");
-      if (!viewport) return;
-      const box = viewport.getBoundingClientRect();
-      let top: number | undefined;
-      let height = diffVirtualMetrics.lineHeight;
-      if (row) {
-        const rect = row.getBoundingClientRect();
-        top = viewport.scrollTop + rect.top - box.top;
-        height = rect.height;
-      } else {
-        // Virtual rows need renderer coordinates, not a DOM-only navigation list.
-        const position = (
-          rendered as DiffInstance & {
-            getLinePosition?: (
-              line: number,
-              side: Point["side"],
-            ) => { top: number; height: number } | undefined;
-          }
-        ).getLinePosition?.(next.line, next.side);
-        if (position && container.current) {
-          top =
-            viewport.scrollTop +
-            container.current.getBoundingClientRect().top -
-            box.top +
-            position.top;
-          height = position.height;
-        }
-      }
-      if (top !== undefined) {
-        if (top < viewport.scrollTop) viewport.scrollTop = top;
-        else if (top + height > viewport.scrollTop + viewport.clientHeight)
-          viewport.scrollTop = top + height - viewport.clientHeight;
-      }
+      scrollToVimCursor();
     };
     document.addEventListener("keydown", key);
     return () => document.removeEventListener("keydown", key);
-  }, [paint, select]);
+  }, [paint, select, scrollToVimCursor]);
   const pointerDown = useCallback(
     (event: ReactPointerEvent<HTMLDivElement>) => {
       // Alt-drag is native text selection: never preventDefault or focus.
@@ -1150,6 +1202,7 @@ export function CodeDiff({
       ) {
         if (phase === "unmount") {
           instance.current = null;
+          if (vimOverlay.current) vimOverlay.current.hidden = true;
           return;
         }
         instance.current = rendered;
@@ -1222,6 +1275,12 @@ export function CodeDiff({
         }
       }}
     >
+      <div
+        ref={vimOverlay}
+        className="vim-line-cursor"
+        aria-hidden="true"
+        hidden
+      />
       {style === "split" &&
         fileDiff &&
         fileDiff.hunks.length > 0 &&
