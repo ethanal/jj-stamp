@@ -917,7 +917,7 @@ export function RevisionGraph({
             // the old focused row. l must move focus before hiding the graph.
             if (event.key === "@")
               event.currentTarget.focus({ preventScroll: true });
-            else if (!vimMode && event.key.toLowerCase() === "l" && expanded)
+            else if (event.key.toLowerCase() === "l" && expanded)
               event.currentTarget.parentElement
                 ?.querySelector<HTMLButtonElement>(".sidebar-toggle")
                 ?.focus({ preventScroll: true });

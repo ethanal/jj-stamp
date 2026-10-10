@@ -790,7 +790,6 @@ function App() {
           selectRevision("@");
           break;
         case "l":
-          if (vimMode) break;
           event.preventDefault();
           setOpenRevisionId(null);
           if (!showLog) setLogFocusRequest((value) => value + 1);
@@ -823,7 +822,6 @@ function App() {
     dragging,
     file?.path,
     showLog,
-    vimMode,
     selectRevision,
   ]);
   const additions =

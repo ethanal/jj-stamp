@@ -9,7 +9,7 @@ const groups = [
       ["u", "Undo the last squash"],
       ["r", "Refresh repository state"],
       ["f", "Focus the active file’s diff"],
-      ["l", "Toggle the log sidebar (outside Vim mode)"],
+      ["l", "Toggle the log sidebar"],
       ["@", "Review the working-copy change"],
       ["↑ / ↓", "Review adjacent changes in the log (Vim: k / j)"],
       ["Enter", "Open the focused log change and hide the log"],
@@ -33,8 +33,8 @@ const groups = [
       ["Shift + click / drag", "Extend the selection from its anchor"],
       ["Alt + drag", "Select native text instead of whole lines"],
       [
-        "j / k · h / l",
-        "Vim: move cursor / resize selection; switch panes / scroll stacked",
+        "j / k",
+        "Vim: move the line cursor / extend or shrink visual selection",
       ],
       [
         "Shift + V / Escape",

@@ -175,26 +175,49 @@ try {
   await page.keyboard.press("Shift+V");
   await expect(selected()).toHaveCount(0);
 
-  // h/l scroll stacked code instead of toggling the graph.
-  await page.keyboard.press("l");
+  // h is unbound; l still toggles the log without changing cursor, selection,
+  // or horizontal scroll, even during a visual selection.
+  await page.keyboard.press("Shift+V");
+  const code = surface.locator("[data-code]").first();
+  await code.evaluate((element) => {
+    element.scrollLeft = 120;
+  });
   await expect
-    .poll(() =>
-      surface
-        .locator("[data-code]")
-        .evaluateAll((nodes) => Math.max(...nodes.map((n) => n.scrollLeft))),
-    )
-    .toBeGreaterThan(0);
-  await expect(
-    page.getByRole("button", { name: "Collapse log sidebar" }),
-  ).toBeVisible();
+    .poll(() => code.evaluate((element) => element.scrollLeft))
+    .toBe(120);
   await page.keyboard.press("h");
+  await at(2, "deletion");
+  await expect(surface).toBeFocused();
+  await expect(selected()).toHaveCount(1);
+  await page.keyboard.press("l");
+  await expect(
+    page.getByRole("button", { name: "Expand log sidebar" }),
+  ).toBeVisible();
+  await at(2, "deletion");
+  await expect(selected()).toHaveCount(1);
+  await page.keyboard.press("l");
+  await expect(
+    page.getByRole("button", {
+      name: `Review change ${source.changeId}`,
+      exact: true,
+    }),
+  ).toBeFocused();
+  await at(2, "deletion");
+  await expect(selected()).toHaveCount(1);
+  await expect(surface).toHaveAttribute("data-vim-mode", "visual");
   await expect
-    .poll(() =>
-      surface
-        .locator("[data-code]")
-        .evaluateAll((nodes) => Math.max(...nodes.map((n) => n.scrollLeft))),
-    )
-    .toBe(0);
+    .poll(() => code.evaluate((element) => element.scrollLeft))
+    .toBe(120);
+  await page.keyboard.press("l"); // Closing a focused log must not hide focus.
+  await expect(
+    page.getByRole("button", { name: "Expand log sidebar" }),
+  ).toBeFocused();
+  await page.keyboard.press("l");
+  await surface.focus();
+  await page.keyboard.press("Escape");
+  await code.evaluate((element) => {
+    element.scrollLeft = 0;
+  });
 
   // Repeated motions work; browser/editor combinations and dialog keys don't.
   await surface.dispatchEvent("keydown", { key: "j", repeat: true });
@@ -243,13 +266,19 @@ try {
   await expect(selected()).toHaveCount(1);
   await page.keyboard.press("Escape");
 
-  // Split motion follows visual rows, and h/l switches sides on a paired row.
+  // Split motion follows visual rows. h/l never change the cursor side.
   await page.getByRole("button", { name: "Split", exact: true }).click();
   await added().click();
   await page.keyboard.press("Escape");
   await page.keyboard.press("h");
-  await at(2, "deletion");
+  await at(2, "addition");
   await page.keyboard.press("l");
+  await expect(
+    page.getByRole("button", { name: "Expand log sidebar" }),
+  ).toBeVisible();
+  await at(2, "addition");
+  await page.keyboard.press("l");
+  await surface.focus();
   await at(2, "addition");
   await page.keyboard.press("Shift+V");
   await expect(selected()).toHaveCount(2); // split visual line includes both changes
@@ -337,7 +366,7 @@ try {
   await at(161, "addition"); // Diff j/k still operates outside the log.
   await page.getByRole("button", { name: "Expand log sidebar" }).click();
 
-  // Disabling removes Vim behavior and restores the log shortcut.
+  // Disabling removes Vim behavior without changing the log shortcut.
   await settings.click();
   await vim.uncheck();
   await page.keyboard.press("Escape");

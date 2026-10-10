@@ -48,8 +48,7 @@ export function vimLines(
 export function moveVimLine(
   lines: readonly VimLine[],
   cursor: LinePoint | null,
-  key: "h" | "j" | "k" | "l",
-  style: "unified" | "split",
+  key: "j" | "k" | null,
 ): VimLine | null {
   if (!lines.length) return null;
 
@@ -67,15 +66,7 @@ export function moveVimLine(
     );
   }
 
-  if (key === "h" || key === "l") {
-    if (style === "unified") return current;
-    const side = key === "h" ? "deletions" : "additions";
-    return (
-      lines.find(
-        (line) => line.index === current.index && line.side === side,
-      ) ?? current
-    );
-  }
+  if (key === null) return current;
 
   const indexes = [...new Set(lines.map((line) => line.index))];
   const position = indexes.indexOf(current.index);

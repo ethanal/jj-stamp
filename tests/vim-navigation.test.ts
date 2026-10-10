@@ -138,75 +138,28 @@ const point = (line: number, side: LinePoint["side"]): LinePoint => ({
 
 test("missing and invalid cursors start at the first visual row without skipping", () => {
   const first = { index: 0, line: 20, side: "additions" };
-  assert.deepEqual(moveVimLine(lines, null, "j", "split"), first);
-  assert.deepEqual(moveVimLine(lines, null, "k", "split"), first);
-  assert.deepEqual(
-    moveVimLine(lines, point(999, "additions"), "l", "split"),
-    first,
-  );
-  assert.equal(moveVimLine([], null, "j", "unified"), null);
+  assert.deepEqual(moveVimLine(lines, null, "j"), first);
+  assert.deepEqual(moveVimLine(lines, null, "k"), first);
+  assert.deepEqual(moveVimLine(lines, point(999, "additions"), null), first);
+  assert.equal(moveVimLine([], null, "j"), null);
 });
 
 test("j and k move by visual row while preferring the current side", () => {
-  assert.deepEqual(
-    moveVimLine(lines, point(20, "additions"), "j", "split"),
-    lines[3],
-  );
-  assert.deepEqual(
-    moveVimLine(lines, point(21, "additions"), "j", "split"),
-    lines[4],
-  );
-  assert.deepEqual(
-    moveVimLine(lines, point(22, "additions"), "j", "split"),
-    lines[6],
-  );
-  assert.deepEqual(
-    moveVimLine(lines, point(11, "deletions"), "j", "split"),
-    lines[4],
-  );
-  assert.deepEqual(
-    moveVimLine(lines, point(12, "deletions"), "k", "split"),
-    lines[4],
-  );
-  assert.deepEqual(
-    moveVimLine(lines, point(23, "additions"), "k", "split"),
-    lines[4],
-  );
+  assert.deepEqual(moveVimLine(lines, point(20, "additions"), "j"), lines[3]);
+  assert.deepEqual(moveVimLine(lines, point(21, "additions"), "j"), lines[4]);
+  assert.deepEqual(moveVimLine(lines, point(22, "additions"), "j"), lines[6]);
+  assert.deepEqual(moveVimLine(lines, point(11, "deletions"), "j"), lines[4]);
+  assert.deepEqual(moveVimLine(lines, point(12, "deletions"), "k"), lines[4]);
+  assert.deepEqual(moveVimLine(lines, point(23, "additions"), "k"), lines[4]);
 });
 
 test("vertical movement clamps at the first and last visual rows", () => {
-  assert.deepEqual(
-    moveVimLine(lines, point(10, "deletions"), "k", "split"),
-    lines[0],
-  );
-  assert.deepEqual(
-    moveVimLine(lines, point(23, "additions"), "j", "split"),
-    lines[6],
-  );
+  assert.deepEqual(moveVimLine(lines, point(10, "deletions"), "k"), lines[0]);
+  assert.deepEqual(moveVimLine(lines, point(23, "additions"), "j"), lines[6]);
 });
 
-test("split h and l switch sides when a counterpart exists", () => {
-  assert.deepEqual(
-    moveVimLine(lines, point(21, "additions"), "h", "split"),
-    lines[2],
-  );
-  assert.deepEqual(
-    moveVimLine(lines, point(11, "deletions"), "l", "split"),
-    lines[3],
-  );
-  assert.deepEqual(
-    moveVimLine(lines, point(22, "additions"), "h", "split"),
-    lines[4],
-  );
-});
-
-test("unified h and l leave the current line unchanged", () => {
-  assert.deepEqual(
-    moveVimLine(lines, point(21, "additions"), "h", "unified"),
-    lines[3],
-  );
-  assert.deepEqual(
-    moveVimLine(lines, point(11, "deletions"), "l", "unified"),
-    lines[2],
-  );
+test("initialization and visual selection retain the current line without motion", () => {
+  assert.deepEqual(moveVimLine(lines, point(21, "additions"), null), lines[3]);
+  assert.deepEqual(moveVimLine(lines, point(11, "deletions"), null), lines[2]);
+  assert.deepEqual(moveVimLine(lines, null, null), lines[1]);
 });

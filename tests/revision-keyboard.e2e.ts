@@ -296,10 +296,15 @@ try {
   await settings.click();
   await page.getByRole("checkbox", { name: "Vim mode" }).check();
   await page.keyboard.press("Escape");
-  await page.getByRole("button", { name: "Expand log sidebar" }).click();
-  await graph.focus();
+  await page.keyboard.press("l");
+  await expect(graph).toBeFocused();
   await page.keyboard.press("j");
   await selected("top");
+  await expect(row("top")).toBeFocused();
+  await page.keyboard.press("Enter");
+  await expect(expandLog).toBeVisible();
+  await expect(page.locator(".viewer-scroll")).toBeFocused();
+  await page.keyboard.press("l");
   await expect(row("top")).toBeFocused();
   const vimAtTop = requests.length;
   await page.keyboard.press("k");

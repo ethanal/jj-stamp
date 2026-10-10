@@ -880,7 +880,7 @@ export function CodeDiff({
         return;
       const visual = event.key === "V" && event.shiftKey;
       const motion =
-        !event.shiftKey && ["h", "j", "k", "l"].includes(event.key);
+        !event.shiftKey && (event.key === "j" || event.key === "k");
       if ((!visual && !motion) || (visual && event.repeat)) return;
       if (
         event
@@ -938,8 +938,7 @@ export function CodeDiff({
       const next = moveVimLine(
         lines,
         cursor,
-        visual || initialized ? "h" : (event.key as "h" | "j" | "k" | "l"),
-        visual || initialized ? "unified" : state.style,
+        visual || initialized ? null : (event.key as "j" | "k"),
       );
       if (!next) return;
       event.preventDefault();
@@ -957,15 +956,6 @@ export function CodeDiff({
         select(visualAnchor.current, next);
       } else if (state.range) {
         state.onSelection(null, {});
-      }
-      if (
-        motion &&
-        state.style === "unified" &&
-        (event.key === "h" || event.key === "l")
-      ) {
-        shadow.querySelectorAll<HTMLElement>("[data-code]").forEach((code) => {
-          code.scrollLeft += event.key === "h" ? -40 : 40;
-        });
       }
       paint();
       const row = rows.find((row) => {
@@ -1210,7 +1200,7 @@ export function CodeDiff({
       tabIndex={0}
       aria-description={
         vimMode
-          ? "Vim mode: j/k move between lines; h/l switch split panes or scroll horizontally; Shift+V selects lines; Escape clears selection."
+          ? "Vim mode: j/k move between lines; l toggles the log; Shift+V selects lines; Escape clears selection."
           : undefined
       }
       aria-label={`Diff for ${file.path}. Drag code to select lines; Shift-click to extend; Alt-drag to select text; press s to squash or e to open the hovered line in Neovim.`}
