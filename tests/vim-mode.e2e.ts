@@ -331,6 +331,55 @@ try {
   await page.keyboard.press("j");
   await at(162, "addition");
   await expect(selected()).toHaveCount(0);
+  // Upward scrolling must clear the sticky file heading, not just put the
+  // cursor somewhere inside the viewport (which also counts occluded rows).
+  const assertCursorVisible = async () => {
+    await expect
+      .poll(() =>
+        cursor().evaluate((row) => {
+          const surface = (row.getRootNode() as ShadowRoot).host.closest(
+            ".code-surface",
+          )!;
+          const viewport = surface.closest(".viewer-scroll")!;
+          const heading = surface
+            .closest(".file-diff-section")!
+            .querySelector(".file-diff-heading");
+          const box = row.getBoundingClientRect();
+          const bounds = viewport.getBoundingClientRect();
+          const top = Math.max(
+            bounds.top,
+            heading?.getBoundingClientRect().bottom ?? bounds.top,
+          );
+          return box.top >= top - 1 && box.bottom <= bounds.bottom + 1;
+        }),
+      )
+      .toBe(true);
+  };
+  for (const layout of ["Split", "Stacked"]) {
+    await page.getByRole("button", { name: layout, exact: true }).click();
+    await largeSurface.focus();
+    await page.keyboard.press("Shift+V");
+    for (let i = 0; i < 120; i++) await page.keyboard.press("k");
+    await at(42, "addition");
+    await assertCursorVisible();
+    await page.keyboard.press("Escape");
+    for (let i = 0; i < 120; i++) await page.keyboard.press("j");
+    await at(162, "addition");
+    await assertCursorVisible();
+  }
+
+  // A manual scroll can evict the cursor row entirely. k must use virtual
+  // coordinates to bring it back above the same sticky heading.
+  await page.locator(".viewer-scroll").evaluate((element) => {
+    element.scrollTop = element.scrollHeight;
+  });
+  await expect(cursor()).toHaveCount(0);
+  await page.keyboard.press("k");
+  await at(161, "addition");
+  await assertCursorVisible();
+  await page.keyboard.press("j");
+  await at(162, "addition");
+
   // Log j/k must consume the event before any mounted diff can steal focus.
   const sourceRow = page.getByRole("button", {
     name: `Review change ${source.changeId}`,

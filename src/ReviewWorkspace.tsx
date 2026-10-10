@@ -772,6 +772,7 @@ export function ReviewViewer({
                       style={style}
                       colorScheme={colorScheme}
                       vimMode={vimMode}
+                      resetVimCursor={halted}
                       vimSelection={
                         vimSelection?.path === entry.path ? vimSelection : null
                       }

@@ -45,6 +45,7 @@ import {
   type VimSelectionRequest,
 } from "./vim-navigation";
 import { SplitDiffResize } from "./SplitDiffLayout";
+import { remapVimCursor } from "./vim-refresh";
 
 type Point = LinePoint;
 function pointFromElement(element: Element | null): Point | null {
@@ -272,6 +273,7 @@ export function CodeDiff({
   style,
   colorScheme = "dark",
   vimMode = false,
+  resetVimCursor = false,
   vimSelection = null,
   active = true,
   selections,
@@ -291,6 +293,8 @@ export function CodeDiff({
   style: "unified" | "split";
   colorScheme?: ColorScheme;
   vimMode?: boolean;
+  /** A failed mutation must discard its speculative cursor, not remap it. */
+  resetVimCursor?: boolean;
   vimSelection?: VimSelectionRequest | null;
   active?: boolean;
   selections: Selections;
@@ -340,6 +344,8 @@ export function CodeDiff({
   const container = useRef<HTMLElement | null>(null);
   const searchScrollToken = useRef("");
   const vimCursor = useRef<Point | null>(null);
+  const previousVimFile = useRef(file);
+  const restoreVimCursor = useRef(false);
   const visualAnchor = useRef<Point | null>(null);
   const appliedVimSelection = useRef(0);
   const current = useRef({
@@ -569,9 +575,24 @@ export function CodeDiff({
       });
   }, []);
   useLayoutEffect(() => {
-    vimCursor.current = null;
+    const previous = previousVimFile.current;
+    previousVimFile.current = file;
+    restoreVimCursor.current = false;
+    if (!vimMode || resetVimCursor || previous.path !== file.path)
+      vimCursor.current = null;
+    else if (previous.patch !== file.patch && vimCursor.current) {
+      vimCursor.current = remapVimCursor(
+        previous,
+        file,
+        vimCursor.current,
+        style,
+      );
+      restoreVimCursor.current = vimCursor.current !== null;
+    }
+    // Repository refreshes still clear actionable selections: only the browse
+    // position survives. An explicit squash request below restores visual mode.
     visualAnchor.current = null;
-  }, [file.path, file.patch, vimMode]);
+  }, [file.path, file.patch, vimMode, resetVimCursor]);
   useEffect(() => {
     if (!vimMode) return;
     document.addEventListener("focusin", paint);
@@ -919,11 +940,37 @@ export function CodeDiff({
       }
     }
     if (top === undefined) return false;
-    if (top < viewport.scrollTop) viewport.scrollTop = top;
+    // In all-files mode the section heading sticks over the viewport's top.
+    // Reserve its height even before it sticks, since scrolling will pin it.
+    const heading = root.current
+      ?.closest(".file-diff-section")
+      ?.querySelector<HTMLElement>(".file-diff-heading");
+    const inset = Math.min(
+      heading?.getBoundingClientRect().height ?? 0,
+      Math.max(0, viewport.clientHeight - height),
+    );
+    if (top < viewport.scrollTop + inset) viewport.scrollTop = top - inset;
     else if (top + height > viewport.scrollTop + viewport.clientHeight)
       viewport.scrollTop = top + height - viewport.clientHeight;
     return true;
   }, []);
+  useLayoutEffect(() => {
+    if (!restoreVimCursor.current) return;
+    restoreVimCursor.current = false;
+    const focused = document.activeElement?.closest(".code-surface");
+    if (focused ? focused !== root.current : !current.current.active) return;
+    // Patch replacement rebuilds virtual rows asynchronously. Keep the remapped
+    // cursor visible without stealing focus from a sidebar or search field.
+    let frame = 0;
+    let attempts = 0;
+    const scroll = () => {
+      paint();
+      if (scrollToVimCursor() || attempts++ >= 30) return;
+      frame = requestAnimationFrame(scroll);
+    };
+    frame = requestAnimationFrame(scroll);
+    return () => cancelAnimationFrame(frame);
+  }, [file.patch, vimMode, resetVimCursor, paint, scrollToVimCursor]);
   useLayoutEffect(() => {
     if (
       !vimMode ||
@@ -1008,12 +1055,17 @@ export function CodeDiff({
         const viewport = root.current
           ?.closest(".viewer-scroll")
           ?.getBoundingClientRect();
+        const heading = root.current
+          ?.closest(".file-diff-section")
+          ?.querySelector(".file-diff-heading")
+          ?.getBoundingClientRect();
+        const visibleTop = Math.max(viewport?.top ?? 0, heading?.bottom ?? 0);
         const first = rows
           .filter((row) => {
             const box = row.getBoundingClientRect();
             return (
               !viewport ||
-              (box.bottom > viewport.top && box.top < viewport.bottom)
+              (box.bottom > visibleTop && box.top < viewport.bottom)
             );
           })
           .sort(
