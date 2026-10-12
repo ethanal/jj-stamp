@@ -150,7 +150,7 @@ try {
   const overlay = surface.locator(".vim-line-cursor");
   await expect(overlay).toHaveCSS(
     "background-color",
-    "rgba(42, 161, 152, 0.29)",
+    "rgba(42, 161, 152, 0.1)",
   );
   await expect(overlay).toHaveCSS("box-shadow", "none");
   await expect(overlay).toHaveCSS("outline-style", "none");

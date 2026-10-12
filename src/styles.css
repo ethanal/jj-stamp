@@ -801,7 +801,7 @@ kbd {
   right: 0;
   z-index: 3;
   pointer-events: none;
-  background: #2aa1984a;
+  background: rgb(42 161 152 / 10%);
 }
 .editor-error {
   position: relative;
