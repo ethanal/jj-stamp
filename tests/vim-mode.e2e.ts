@@ -147,6 +147,13 @@ try {
   // Works immediately after settings, without requiring a mouse selection.
   await page.keyboard.press("j");
   await at(1);
+  const overlay = surface.locator(".vim-line-cursor");
+  await expect(overlay).toHaveCSS(
+    "background-color",
+    "rgba(42, 161, 152, 0.29)",
+  );
+  await expect(overlay).toHaveCSS("box-shadow", "none");
+  await expect(overlay).toHaveCSS("outline-style", "none");
   await expect(surface).toBeFocused();
   await page.keyboard.press("j");
   await at(2, "deletion");

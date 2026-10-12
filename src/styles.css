@@ -801,7 +801,7 @@ kbd {
   right: 0;
   z-index: 3;
   pointer-events: none;
-  box-shadow: inset 0 0 0 2px var(--diff-selection-border);
+  background: #2aa1984a;
 }
 .editor-error {
   position: relative;
