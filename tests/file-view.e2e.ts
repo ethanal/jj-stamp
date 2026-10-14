@@ -66,7 +66,7 @@ function longFile(path: string, changedLines: number[]): DiffFile {
   };
 }
 
-const firstPath = "src/long-alpha.ts";
+const firstPath = "src/materialization/views/long-alpha.ts";
 const secondPath = "tests/long-beta.ts";
 const unsupportedPath = "vendor/archive.bin";
 const firstFile = longFile(
@@ -162,6 +162,22 @@ async function assertAdjacentFileActions(heading: Locator) {
 
 try {
   await page.goto(url);
+
+  // Compacted folder chains must not look like separate underlined links,
+  // even while hovering a segment. Keep row-level keyboard focus intact.
+  const folderSegment = page
+    .locator(".file-tree [data-item-flattened-subitem]")
+    .nth(1);
+  await expect(folderSegment).toBeVisible();
+  await folderSegment.hover();
+  await expect(folderSegment).toHaveCSS("text-decoration-line", "none");
+  const folderRow = page.getByRole("treeitem", {
+    name: "src / materialization / views",
+    exact: true,
+  });
+  await folderRow.focus();
+  await expect(folderRow).toBeFocused();
+  await expect(folderSegment).toHaveCSS("text-decoration-line", "none");
 
   const oneFile = page.getByRole("button", { name: "One file", exact: true });
   const allFiles = page.getByRole("button", { name: "All files", exact: true });

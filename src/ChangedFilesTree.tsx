@@ -45,6 +45,8 @@ export function ChangedFilesTree(props: Props) {
     // Counts are essential review metadata, not an optional trailing label.
     // Reserve their width and truncate the filename first in narrow sidebars.
     unsafeCSS: `
+      /* Compacted directory segments are labels, not individual links. */
+      [data-item-flattened-subitem] { text-decoration: none; }
       [data-item-section="content"] { flex: 1 1 0; }
       [data-item-section="decoration"] { flex: 0 0 auto; font-size: 10px; }
       [data-item-section="decoration"] > span { display: inline-flex; gap: 4px; }
