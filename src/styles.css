@@ -21,6 +21,9 @@
   --strong: #f0f6fc;
   --muted: #8b949e;
   --border: #30363d;
+  --button-bg: var(--panel);
+  --button-fg: var(--fg);
+  --button-border: var(--border);
   --accent: #9ac3e5;
   --bookmark: #f778ba;
   --focus: #79a9d1;
@@ -82,6 +85,7 @@
   --strong: #111820;
   --muted: #576574;
   --border: #c7cfd8;
+  --button-fg: var(--muted);
   --accent: #075b9b;
   --bookmark: #a3155b;
   --focus: #0969da;
@@ -112,6 +116,8 @@
   --strong: #eee8d5;
   --muted: #839496;
   --border: #586e75;
+  --button-fg: #a4b3b2;
+  --button-border: #3e5961;
   --accent: #2aa198;
   --bookmark: #e875b2;
   --focus: #268bd2;
@@ -143,6 +149,7 @@
   --strong: #073642;
   --muted: #657b83;
   --border: #d4cbb5;
+  --button-fg: #586e75;
   --accent: #006d9c;
   --bookmark: #a3155b;
   --focus: #268bd2;
@@ -258,17 +265,17 @@ kbd {
   flex-shrink: 0;
   font-size: 10px;
 }
-/* One compact, outlined treatment for header and review actions. */
+/* Panel-matched fills and softer labels keep outlined actions unobtrusive. */
 .action-button {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   min-height: 28px;
   padding: 3px 9px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--button-border);
   border-radius: 4px;
-  background: var(--bg);
-  color: var(--strong);
+  background: var(--button-bg);
+  color: var(--button-fg);
   font-size: 12px;
   line-height: 20px;
   white-space: nowrap;
@@ -276,6 +283,7 @@ kbd {
 .action-button:hover:not(:disabled) {
   border-color: var(--muted);
   background: var(--hover);
+  color: var(--button-fg);
 }
 .action-button:active:not(:disabled) {
   background: var(--selected-bg);
@@ -286,6 +294,7 @@ kbd {
 }
 .toolbar-actions,
 .statusbar-actions {
+  --button-bg: var(--chrome);
   display: flex;
   align-items: center;
   gap: 6px;
@@ -665,23 +674,26 @@ kbd {
 .layout-toggle {
   display: flex;
   overflow: hidden;
-  border: 1px solid var(--border);
+  border: 1px solid var(--button-border);
   border-radius: 4px;
-  background: var(--bg);
+  background: var(--button-bg);
 }
 .layout-toggle button {
   min-height: 26px;
   padding: 3px 9px;
   font-size: 12px;
   line-height: 20px;
-  color: var(--muted);
+  color: var(--button-fg);
   white-space: nowrap;
 }
 .layout-toggle button + button {
-  border-left: 1px solid var(--border);
+  border-left: 1px solid var(--button-border);
 }
 .layout-toggle button:hover:not(:disabled) {
   background: var(--hover);
+}
+.layout-toggle button:not(.active):hover:not(:disabled) {
+  color: var(--button-fg);
 }
 .layout-toggle button.active {
   background: var(--selected-bg);

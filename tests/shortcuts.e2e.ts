@@ -112,18 +112,55 @@ const actions = page.locator(
 const clearSelection = page.getByRole("button", { name: "Clear", exact: true });
 
 async function assertOutlinedActions() {
+  const scheme = await page.locator("html").getAttribute("data-color-scheme");
+  const labelColors: Record<string, string> = {
+    dark: "rgb(201, 209, 217)",
+    dim: "rgb(205, 217, 229)",
+    light: "rgb(87, 101, 116)",
+    "solarized-dark": "rgb(164, 179, 178)",
+    "solarized-light": "rgb(88, 110, 117)",
+  };
+  const labelColor = labelColors[scheme ?? "dark"];
   for (const action of await actions.all()) {
     await expect(action).toHaveCSS("border-top-width", "1px");
     await expect(action).toHaveCSS("border-top-style", "solid");
     await expect(action).toHaveCSS("border-radius", "4px");
     await expect(action).toHaveCSS("height", "28px");
+    await expect(action).toHaveCSS("color", labelColor);
     await expect(action).toHaveCSS(
       "background-color",
-      await refresh.evaluate(
-        (element) => getComputedStyle(element).backgroundColor,
+      await action.evaluate(
+        (element) =>
+          getComputedStyle(element.closest(".topbar, .statusbar")!)
+            .backgroundColor,
       ),
     );
+    if (scheme === "solarized-dark")
+      await expect(action).toHaveCSS("border-top-color", "rgb(62, 89, 97)");
   }
+  const fileBarColor = await page
+    .locator(".file-bar")
+    .evaluate((element) => getComputedStyle(element).backgroundColor);
+  const searchButton = page.getByRole("button", { name: "Find in diff" });
+  await expect(searchButton).toHaveCSS("background-color", fileBarColor);
+  await expect(searchButton).toHaveCSS("color", labelColor);
+  for (const group of await page.locator(".layout-toggle").all()) {
+    await expect(group).toHaveCSS("background-color", fileBarColor);
+    await expect(group.locator('button[aria-pressed="false"]')).toHaveCSS(
+      "color",
+      labelColor,
+    );
+    assert.notEqual(
+      await group
+        .locator('button[aria-pressed="true"]')
+        .evaluate((element) => getComputedStyle(element).backgroundColor),
+      fileBarColor,
+      "The selected view stays distinct from the panel-matched fill",
+    );
+  }
+  await refresh.hover();
+  await expect(refresh).toHaveCSS("color", labelColor);
+  await page.mouse.move(0, 0);
 }
 
 try {
