@@ -603,6 +603,28 @@ test(
 );
 
 test(
+  "--no-open alone serves the printed URL without launching a browser",
+  { timeout: 30_000, skip: process.platform !== "linux" },
+  async (t) => {
+    const box = await sandbox(t);
+    const repo = await createDemo(box.root);
+    const cli = box.start(["--no-open"], repo);
+    const url = await cli.url();
+    assert.equal((await request(url, "/")).status, 200);
+    const state = await request(url, "/api/state");
+    assert.equal(state.status, 200, state.body);
+    assert.equal(JSON.parse(state.body).repo.path, repo);
+    await cli.stop("SIGTERM");
+    assert.equal(cli.stderr, "", cli.diagnostics());
+    assert.equal(
+      await exists(box.opened),
+      false,
+      "--no-open must not invoke the browser opener",
+    );
+  },
+);
+
+test(
   "default launch opens exactly its printed loopback URL and SIGTERM stops it",
   { timeout: 45_000, skip: process.platform !== "linux" },
   async (t) => {
