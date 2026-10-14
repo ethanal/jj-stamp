@@ -373,6 +373,63 @@ try {
     ["bottom", "top"],
   );
 
+  // Hover previews focus the current revision without selecting anything.
+  await settings.click();
+  await page
+    .getByRole("checkbox", { name: "Show collapsed sidebars on hover" })
+    .check();
+  await page.keyboard.press("Escape");
+  await page.keyboard.press("l");
+  const panel = page.getByRole("complementary", { name: "Revision graph" });
+  const viewer = page.locator(".viewer-scroll");
+  await page.locator(".viewer").hover();
+  await viewer.focus();
+  const beforeHover = requests.length;
+  await panel.hover();
+  await expect(panel).toHaveClass(/is-peeking/);
+  await expect(row("top")).toBeFocused();
+  assert.equal(requests.length, beforeHover);
+  await page.keyboard.press("j");
+  await selected("middle");
+  await expect(row("middle")).toBeFocused();
+  await page.keyboard.press("k");
+  await selected("top");
+  await page.keyboard.press("Enter");
+  await expect(graph).toBeHidden();
+  await expect(viewer).toBeFocused();
+
+  // Leaving a preview never strands focus in the hidden graph.
+  await page.locator(".viewer").hover();
+  await panel.hover();
+  await expect(row("top")).toBeFocused();
+  await page.locator(".viewer").hover();
+  await expect(graph).toBeHidden();
+  await expect(expandLog).toBeFocused();
+
+  // Hover must not interrupt typing, even outside the log.
+  await viewer.evaluate((element) => {
+    const input = document.createElement("input");
+    input.id = "hover-input";
+    element.append(input);
+    input.focus();
+  });
+  await panel.hover();
+  await expect(page.locator("#hover-input")).toBeFocused();
+  await page.keyboard.type("jk");
+  await expect(page.locator("#hover-input")).toHaveValue("jk");
+  await page.locator("#hover-input").evaluate((element) => element.remove());
+  await page.locator(".viewer").hover();
+
+  // A dialog retains focus even if a pointer event reaches the log behind it.
+  await settings.click();
+  const vimSetting = page.getByRole("checkbox", { name: "Vim mode" });
+  await vimSetting.focus();
+  await panel.dispatchEvent("pointerover", { pointerType: "mouse" });
+  await expect(vimSetting).toBeFocused();
+  await panel.dispatchEvent("pointerout", { pointerType: "mouse" });
+  await page.keyboard.press("Escape");
+  await page.keyboard.press("l");
+
   await settings.click();
   await page.getByRole("checkbox", { name: "Vim mode" }).uncheck();
   await page.keyboard.press("Escape");
@@ -382,6 +439,10 @@ try {
   await page.keyboard.press("k");
   assert.equal(requests.length, vimDisabled);
   await expect(row("top")).toBeFocused();
+  await page.locator(".viewer").hover();
+  await viewer.focus();
+  await panel.hover();
+  await expect(viewer).toBeFocused();
   assert.deepEqual(errors, []);
   console.log(
     "Revision keyboard checks passed: @, log focus/arrows/Vim motions/bounds, Enter confirmation/focus, rapid intents, hidden graph, input/modifier guards, and errors.",

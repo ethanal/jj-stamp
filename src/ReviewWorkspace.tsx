@@ -956,21 +956,54 @@ export function RevisionGraph({
 }) {
   const visible = expanded || peeking;
   const graph = useRef<HTMLPreElement>(null);
-  const lastFocusRequest = useRef(0);
-  useLayoutEffect(() => {
+  const [hovered, setHovered] = useState(false);
+  const focusGraph = useCallback(() => {
     const element = graph.current;
-    if (!element || !visible || focusRequest === lastFocusRequest.current)
-      return;
-    lastFocusRequest.current = focusRequest;
+    if (!element) return;
     const current = element.querySelector<HTMLButtonElement>(
       '.log-change[aria-pressed="true"]:not(:disabled)',
     );
     (current ?? element).focus({ preventScroll: true });
     current?.scrollIntoView({ block: "nearest" });
-  }, [focusRequest, visible]);
+  }, []);
+  const lastFocusRequest = useRef(0);
+  useLayoutEffect(() => {
+    if (!visible || focusRequest === lastFocusRequest.current) return;
+    lastFocusRequest.current = focusRequest;
+    focusGraph();
+  }, [focusRequest, visible, focusGraph]);
+  useLayoutEffect(() => {
+    const active = document.activeElement;
+    if (
+      !hovered ||
+      !visible ||
+      !vimMode ||
+      dragging ||
+      document.querySelector("dialog[open]") ||
+      graph.current?.contains(active) ||
+      (active instanceof HTMLElement &&
+        (active.matches("input, textarea, select") || active.isContentEditable))
+    )
+      return;
+    // Wait for a hover preview to render before focusing its selected row.
+    // Reuse normal log key handling rather than letting the diff consume j/k.
+    focusGraph();
+  }, [hovered, visible, vimMode, dragging, focusGraph]);
   return (
     <aside
       {...hoverHandlers}
+      onPointerEnter={(event) => {
+        hoverHandlers?.onPointerEnter?.(event);
+        if (event.pointerType !== "touch" && !event.buttons) setHovered(true);
+      }}
+      onPointerLeave={(event) => {
+        setHovered(false);
+        hoverHandlers?.onPointerLeave?.(event);
+      }}
+      onPointerCancel={(event) => {
+        setHovered(false);
+        hoverHandlers?.onPointerCancel?.(event);
+      }}
       className={`log-panel ${visible ? "" : "is-collapsed"} ${peeking ? "is-peeking" : ""}`}
       aria-label="Revision graph"
     >

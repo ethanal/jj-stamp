@@ -399,7 +399,14 @@ try {
   const revisionsBefore = mutations.filter(
     (route) => route === "revision",
   ).length;
-  await sourceRow.focus();
+  await page.locator(".viewer").hover();
+  await largeSurface.focus();
+  await sourceRow.hover();
+  await expect(sourceRow).toBeFocused();
+  assert.equal(
+    mutations.filter((route) => route === "revision").length,
+    revisionsBefore,
+  );
   await page.keyboard.press("j");
   await expect(parentRow).toBeFocused();
   await expect
