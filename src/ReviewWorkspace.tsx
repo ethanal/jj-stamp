@@ -1,12 +1,14 @@
 import {
   useCallback,
   useEffect,
+  useId,
   useLayoutEffect,
   useMemo,
   useRef,
   useState,
   type HTMLAttributes,
   type RefObject,
+  type ReactNode,
 } from "react";
 import type { FileDiffLoadedFiles, SelectedLineRange } from "@pierre/diffs";
 import type { ErrorDetail } from "./api";
@@ -427,6 +429,80 @@ function DiffSearchControls({
   );
 }
 
+function FileDiffSection({
+  file,
+  allFiles,
+  disabled,
+  collapsed,
+  onCollapsedChange,
+  revealRequest,
+  sectionRef,
+  onCollapse,
+  actions,
+  children,
+}: {
+  file: DiffFile;
+  allFiles: boolean;
+  disabled: boolean;
+  collapsed: boolean;
+  onCollapsedChange: (path: string, collapsed: boolean) => void;
+  revealRequest: string | null;
+  sectionRef: (element: HTMLElement | null) => void;
+  onCollapse: () => void;
+  actions: ReactNode;
+  children: ReactNode;
+}) {
+  const contentId = useId();
+  const expanded = !allFiles || !collapsed;
+  const label = `${expanded ? "Collapse" : "Expand"} file ${file.path}`;
+  // Search and keyboard selection must be able to reveal hidden lines.
+  useLayoutEffect(() => {
+    if (revealRequest !== null) onCollapsedChange(file.path, false);
+  }, [file.path, onCollapsedChange, revealRequest]);
+  return (
+    <section
+      className={`file-diff-section ${allFiles ? "all-files-section" : ""}${expanded ? "" : " is-collapsed"}`}
+      aria-label={`Diff for ${file.path}`}
+      data-file-path={file.path}
+      ref={sectionRef}
+    >
+      {allFiles && (
+        <div className="file-diff-heading">
+          <button
+            className="file-collapse"
+            aria-label={label}
+            title={label}
+            aria-expanded={expanded}
+            aria-controls={contentId}
+            disabled={disabled}
+            onClick={() => {
+              onCollapsedChange(file.path, !collapsed);
+              if (!collapsed) onCollapse();
+            }}
+          >
+            <svg
+              viewBox="0 0 16 16"
+              width="14"
+              height="14"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.4"
+              aria-hidden="true"
+            >
+              <path d={expanded ? "m4 6 4 4 4-4" : "m6 4 4 4-4 4"} />
+            </svg>
+          </button>
+          <h2>{file.path}</h2>
+          {actions}
+        </div>
+      )}
+      <div id={contentId} hidden={!expanded}>
+        {expanded && children}
+      </div>
+    </section>
+  );
+}
+
 export function ReviewViewer({
   state,
   source,
@@ -502,6 +578,25 @@ export function ReviewViewer({
   onUndo: () => void;
   loadFile: (path: string, version: string) => Promise<FileDiffLoadedFiles>;
 }) {
+  const collapseScope = JSON.stringify([state?.repo.path, source?.changeId]);
+  const [collapsedScope, setCollapsedScope] = useState(collapseScope);
+  const [collapsedFiles, setCollapsedFiles] = useState<Set<string>>(new Set());
+  if (collapsedScope !== collapseScope) {
+    setCollapsedScope(collapseScope);
+    setCollapsedFiles(new Set());
+  }
+  const onFileCollapsedChange = useCallback(
+    (path: string, collapsed: boolean) => {
+      setCollapsedFiles((previous) => {
+        if (previous.has(path) === collapsed) return previous;
+        const next = new Set(previous);
+        if (collapsed) next.add(path);
+        else next.delete(path);
+        return next;
+      });
+    },
+    [],
+  );
   const searchScope = `${contentIdentity}\u0000${renderVersion}\u0000${fileView}\u0000${fileView === "single" ? (file?.path ?? "") : ""}`;
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
@@ -734,19 +829,30 @@ export function ReviewViewer({
               </div>
             ) : (
               (fileView === "all" ? state.files : [file]).map((entry) => (
-                <section
-                  key={`${source?.changeId}:${entry.path}`}
-                  className={`file-diff-section ${fileView === "all" ? "all-files-section" : ""}`}
-                  aria-label={`Diff for ${entry.path}`}
-                  data-file-path={entry.path}
-                  ref={(element) => {
+                <FileDiffSection
+                  key={`${state.repo.path}:${source?.changeId}:${entry.path}`}
+                  file={entry}
+                  allFiles={fileView === "all"}
+                  collapsed={collapsedFiles.has(entry.path)}
+                  onCollapsedChange={onFileCollapsedChange}
+                  disabled={working || halted || dragging}
+                  revealRequest={
+                    searchOpen && currentSearchMatch?.path === entry.path
+                      ? `search:${searchRequest}:${currentSearchIndex}`
+                      : vimSelection?.path === entry.path
+                        ? `vim:${vimSelection.request}`
+                        : null
+                  }
+                  sectionRef={(element) => {
                     if (element) fileSections.current.set(entry.path, element);
                     else fileSections.current.delete(entry.path);
                   }}
-                >
-                  {fileView === "all" && (
-                    <div className="file-diff-heading">
-                      <h2>{entry.path}</h2>
+                  onCollapse={() => {
+                    if (entry.path === file.path)
+                      onSelection(entry.path, null, {});
+                  }}
+                  actions={
+                    <>
                       <LineCounts
                         additions={entry.additions}
                         deletions={entry.deletions}
@@ -757,8 +863,9 @@ export function ReviewViewer({
                         unavailable={state.squashUnavailable}
                         onSquash={onSquashFile}
                       />
-                    </div>
-                  )}
+                    </>
+                  }
+                >
                   {entry.unsupported ? (
                     <div className="unsupported">
                       <p>{entry.unsupported}</p>
@@ -798,7 +905,7 @@ export function ReviewViewer({
                       loadFile={loadFile}
                     />
                   )}
-                </section>
+                </FileDiffSection>
               ))
             )}
           </DiffRuntime>

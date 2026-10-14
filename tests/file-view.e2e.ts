@@ -243,6 +243,65 @@ try {
     0,
   );
 
+  // Each file collapses independently, including unsupported files. Hidden
+  // selections are cleared so the squash shortcut cannot act on unseen lines.
+  const collapse = (path: string) =>
+    section(path).getByRole("button", {
+      name: `Collapse file ${path}`,
+      exact: true,
+    });
+  const expand = (path: string) =>
+    section(path).getByRole("button", {
+      name: `Expand file ${path}`,
+      exact: true,
+    });
+  await addition(firstPath, 10).click();
+  await expect(page.getByRole("status")).toContainText(
+    "1 changed line selected",
+  );
+  await expect(collapse(firstPath)).toHaveCSS("width", "24px");
+  await expect(collapse(firstPath)).toHaveCSS("height", "24px");
+  await expect(collapse(firstPath)).toHaveAttribute("aria-expanded", "true");
+  const contentId = await collapse(firstPath).getAttribute("aria-controls");
+  assert(contentId);
+  await collapse(firstPath).click();
+  await expect(expand(firstPath)).toHaveAttribute("aria-expanded", "false");
+  await expect(expand(firstPath)).toBeFocused();
+  await expect(page.locator(`[id="${contentId}"]`)).toBeHidden();
+  await expect(section(firstPath).locator(".code-surface")).toHaveCount(0);
+  await expect(page.getByRole("status")).not.toContainText(
+    "1 changed line selected",
+  );
+  await expect(collapse(secondPath)).toHaveAttribute("aria-expanded", "true");
+  await collapse(secondPath).click();
+  await collapse(unsupportedPath).click();
+  await expect(section(unsupportedPath).locator(".unsupported")).toHaveCount(0);
+  for (const path of [firstPath, secondPath, unsupportedPath]) {
+    await expect(section(path).locator(".file-diff-heading")).toBeVisible();
+    await expect(section(path).locator(".line-counts")).toBeVisible();
+    await expect(section(path).locator(".squash-file")).toBeVisible();
+    const box = await section(path).boundingBox();
+    assert(box && box.height < 70, "Collapsed files only occupy a heading");
+  }
+
+  // One-file mode always shows the diff without discarding the all-files state.
+  await oneFile.click();
+  await expect(section(firstPath).locator(".code-surface")).toBeVisible();
+  await expect(page.locator(".file-collapse")).toHaveCount(0);
+  await allFiles.click();
+  await expect(expand(firstPath)).toHaveAttribute("aria-expanded", "false");
+  await expand(firstPath).focus();
+  await page.keyboard.press("Enter");
+  await expect(collapse(firstPath)).toBeFocused();
+  await expect(section(firstPath).locator(".code-surface")).toBeVisible();
+  await expect(collapse(firstPath)).toHaveAttribute("aria-expanded", "true");
+  await expand(unsupportedPath).focus();
+  await page.keyboard.press("Space");
+  await expect(section(unsupportedPath).locator(".unsupported")).toBeVisible();
+  // Leave beta collapsed: find must expand it before revealing its match.
+  await expect(expand(secondPath)).toHaveAttribute("aria-expanded", "false");
+  await allFiles.click();
+
   const viewport = page.locator(".viewer-scroll");
   // App-level find searches patch data, so virtualized offscreen rows are
   // reachable even though browser find cannot see their DOM yet.
@@ -268,6 +327,7 @@ try {
   );
   await search.fill(offscreenNeedle);
   await expect(page.locator(".diff-search-count")).toHaveText("1 / 1");
+  await expect(collapse(secondPath)).toHaveAttribute("aria-expanded", "true");
   await expect(addition(secondPath, 110)).toHaveAttribute(
     "data-fold-search-current",
     "",
@@ -505,7 +565,12 @@ try {
   await page.keyboard.press("Tab");
   await expect(sidebarSquash).toHaveCount(0);
 
-  // A whole-file action ignores the active line selection in another file.
+  // Whole-file actions remain available while collapsed and ignore another
+  // file's active line selection.
+  await collapse(secondPath).click();
+  await viewport.evaluate((element) => {
+    element.scrollTop = 0;
+  });
   await addition(firstPath, 10).click();
   await section(secondPath)
     .getByRole("button", { name: `Squash file ${secondPath}`, exact: true })
@@ -529,6 +594,8 @@ try {
   };
   await page.keyboard.press("r");
   await expect(section(secondPath)).toHaveCount(1);
+  await expect(expand(secondPath)).toHaveAttribute("aria-expanded", "false");
+  await expand(secondPath).click();
   await oneFile.click();
   await page
     .locator(".file-bar")
@@ -704,9 +771,26 @@ try {
     );
   }
 
+  // Collapse choices survive refreshes of this change, but not a new revision.
+  await allFiles.click();
+  await collapse(firstPath).click();
+  serverState = {
+    ...structuredClone(initialState),
+    source: {
+      ...source,
+      changeId: "anotherchangeid",
+      commitId: "abcdef0123456789",
+    },
+    version: "fixture-other-revision",
+    operation: "fixture-op-other-revision",
+  };
+  await page.keyboard.press("r");
+  await expect(collapse(firstPath)).toHaveAttribute("aria-expanded", "true");
+  await expect(section(firstPath).locator(".code-surface")).toBeVisible();
+
   assert.deepEqual(errors, []);
   console.log(
-    "File view browser checks passed: mode rendering/persistence, section navigation, file-scoped selection, focus, unsupported/empty states, squash targeting, and log padding.",
+    "File view browser checks passed: mode rendering/persistence, file collapse/expand, section navigation, file-scoped selection, focus, unsupported/empty states, squash targeting, and log padding.",
   );
 } finally {
   await fixture.close();
