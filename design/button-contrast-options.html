@@ -1,0 +1,487 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>jj-stamp · Quieter button options</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --bg: #fdf6e3;
+        --panel: #eee8d5;
+        --fg: #657b83;
+        --strong: #073642;
+        --border: #d4cbb5;
+        --hover: #e3dcc7;
+        --focus: #268bd2;
+        --soft-label: #586e75;
+        --soft-border: #d4cbb5;
+        --inset: #e3dcc7;
+        --inset-border: #c9bea5;
+        --inset-hover: #dad2bb;
+        --inset-selected: #d5ccb5;
+        --quiet-border: #ddd5c0;
+        --added: #657b00;
+        --added-bg: #eeebc9;
+      }
+      :root[data-theme="dark"] {
+        color-scheme: dark;
+        --bg: #002b36;
+        --panel: #073642;
+        --fg: #839496;
+        --strong: #eee8d5;
+        --border: #586e75;
+        --hover: #0b414d;
+        --focus: #268bd2;
+        --soft-label: #a4b3b2;
+        --soft-border: #3e5961;
+        --inset: #032f3a;
+        --inset-border: #36545c;
+        --inset-hover: #0b414d;
+        --inset-selected: #0b414d;
+        --quiet-border: #294c55;
+        --added: #a2b85b;
+        --added-bg: #123b3a;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--fg);
+        font:
+          14px/1.5 system-ui,
+          sans-serif;
+      }
+      main {
+        max-width: 1160px;
+        margin: auto;
+        padding: 28px 28px 32px;
+      }
+      h1,
+      h2,
+      p {
+        margin: 0;
+      }
+      h1 {
+        font-size: 25px;
+        color: var(--strong);
+        letter-spacing: -0.5px;
+        font-weight: 650;
+      }
+      .intro {
+        margin: 5px 0 18px;
+      }
+      .controls {
+        display: flex;
+        gap: 22px;
+        flex-wrap: wrap;
+        align-items: center;
+        margin-bottom: 20px;
+      }
+      .controls label {
+        display: flex;
+        gap: 7px;
+        align-items: center;
+        cursor: pointer;
+      }
+      .controls input {
+        accent-color: var(--focus);
+      }
+      .controls small {
+        margin-left: auto;
+      }
+      button {
+        font: inherit;
+        cursor: pointer;
+      }
+      button:focus-visible,
+      input:focus-visible {
+        outline: 2px solid var(--focus);
+        outline-offset: 2px;
+      }
+      button:disabled {
+        opacity: 0.4;
+        cursor: default;
+      }
+      .option {
+        margin-top: 20px;
+      }
+      .heading {
+        display: flex;
+        align-items: baseline;
+        gap: 9px;
+        margin-bottom: 8px;
+        flex-wrap: wrap;
+      }
+      .heading h2 {
+        font-size: 16px;
+        color: var(--strong);
+        font-weight: 600;
+      }
+      .heading p {
+        font-size: 12px;
+      }
+      .badge {
+        font:
+          12px ui-monospace,
+          monospace;
+        color: var(--strong);
+        border: 1px solid var(--border);
+        border-radius: 3px;
+        padding: 1px 6px;
+      }
+      .recommend {
+        font-size: 10px;
+        color: var(--soft-label);
+        border-radius: 3px;
+        padding: 1px 5px;
+        border: 1px solid var(--soft-border);
+      }
+      .preview {
+        --button-bg: var(--bg);
+        --button-fg: var(--strong);
+        --button-border: var(--border);
+        --button-hover: var(--hover);
+        --button-selected: var(--hover);
+        border: 1px solid var(--border);
+        border-radius: 5px;
+        overflow: hidden;
+        font:
+          12px/1.5 ui-monospace,
+          SFMono-Regular,
+          Consolas,
+          monospace;
+      }
+      .a {
+        --button-bg: var(--panel);
+        --button-fg: var(--soft-label);
+        --button-border: var(--soft-border);
+      }
+      .b {
+        --button-bg: var(--inset);
+        --button-fg: var(--soft-label);
+        --button-border: var(--inset-border);
+        --button-hover: var(--inset-hover);
+        --button-selected: var(--inset-selected);
+      }
+      .c {
+        --button-bg: var(--panel);
+        --button-fg: var(--soft-label);
+        --button-border: var(--quiet-border);
+      }
+      .bar {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 6px 13px;
+        min-height: 41px;
+        background: var(--panel);
+      }
+      .bar + .bar {
+        border-top: 1px solid var(--border);
+      }
+      .meta {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        min-width: 0;
+        font-size: 11px;
+      }
+      .meta span {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .change {
+        color: var(--strong);
+      }
+      .actions {
+        display: flex;
+        gap: 6px;
+        flex-shrink: 0;
+        align-items: center;
+        margin-left: auto;
+      }
+      .btn {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        padding: 3px 9px;
+        height: 28px;
+        border: 1px solid var(--button-border);
+        border-radius: 4px;
+        background: var(--button-bg);
+        color: var(--button-fg);
+        font-size: 12px;
+        line-height: 20px;
+        white-space: nowrap;
+      }
+      .btn:hover:not(:disabled) {
+        background: var(--button-hover);
+        border-color: var(--fg);
+      }
+      .btn:active:not(:disabled) {
+        background: var(--hover);
+      }
+      .toolbar {
+        border-top: 1px solid var(--border);
+        min-height: 39px;
+        padding-block: 5px;
+      }
+      .toolbar .filename {
+        font-size: 11px;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .segment {
+        display: flex;
+        border: 1px solid var(--button-border);
+        border-radius: 4px;
+        overflow: hidden;
+        background: var(--button-bg);
+      }
+      .segment button {
+        height: 26px;
+        border: 0;
+        background: transparent;
+        color: var(--button-fg);
+        padding: 3px 9px;
+        line-height: 20px;
+        font-size: 12px;
+        white-space: nowrap;
+      }
+      .segment button + button {
+        border-left: 1px solid var(--button-border);
+      }
+      .segment button[aria-pressed="true"] {
+        background: var(--button-selected);
+        color: var(--strong);
+      }
+      .segment button:hover {
+        background: var(--button-hover);
+      }
+      .segment button:focus-visible {
+        outline-offset: -2px;
+      }
+      .code {
+        border-block: 1px solid var(--border);
+        padding: 9px 13px 9px 22px;
+        font-size: 11px;
+        background: var(--bg);
+        overflow: auto;
+      }
+      .code-line {
+        display: flex;
+        gap: 14px;
+        min-width: 400px;
+        white-space: pre;
+        line-height: 20px;
+      }
+      .code-line.added {
+        color: var(--added);
+        background: var(--added-bg);
+      }
+      .num {
+        color: var(--fg);
+        min-width: 20px;
+      }
+      .status {
+        font-size: 10px;
+        overflow: hidden;
+        white-space: nowrap;
+        text-overflow: ellipsis;
+      }
+      .current .bar {
+        min-height: 48px;
+      }
+      .current-label {
+        font-size: 11px;
+      }
+      .current .divider {
+        height: 18px;
+        width: 1px;
+        background: var(--border);
+        margin-inline: 6px;
+      }
+      .note {
+        margin-top: 20px;
+        font-size: 12px;
+        border-top: 1px solid var(--border);
+        padding-top: 12px;
+      }
+      #announcement {
+        min-height: 18px;
+        font-size: 11px;
+        margin-top: 7px;
+      }
+      @media (max-width: 700px) {
+        main {
+          padding: 20px 14px;
+        }
+        .controls {
+          gap: 12px;
+        }
+        .controls small {
+          width: 100%;
+          margin: 0;
+        }
+        .meta span:not(.change) {
+          display: none;
+        }
+        .toolbar {
+          flex-wrap: wrap;
+          gap: 6px;
+        }
+        .toolbar .actions {
+          margin-left: 0;
+          flex-wrap: wrap;
+        }
+        .toolbar .filename {
+          width: 100%;
+        }
+        .current .bar {
+          flex-wrap: wrap;
+        }
+        .current .actions {
+          flex-wrap: wrap;
+          margin: 0;
+        }
+        .current-label {
+          width: 100%;
+        }
+        .current .divider {
+          display: none;
+        }
+        .bar.footer {
+          flex-wrap: wrap;
+          gap: 5px;
+        }
+        .footer .status {
+          width: 100%;
+        }
+        .heading {
+          gap: 7px;
+        }
+        .heading p {
+          width: 100%;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Same buttons. Quieter surfaces.</h1>
+      <p class="intro">
+        Three lower-contrast versions of A. Only the fill, border, and label
+        colors change.
+      </p>
+      <div class="controls">
+        <label><input id="theme" type="checkbox" /> Solarized dark</label>
+        <label
+          ><input id="selection" type="checkbox" checked /> Lines
+          selected</label
+        >
+        <small>Design previews · hover or Tab to compare states</small>
+      </div>
+      <div class="preview current" aria-label="Current button appearance">
+        <div class="bar">
+          <span class="current-label">Current, for comparison</span>
+          <div class="actions">
+            <button class="btn" type="button">Refresh</button
+            ><button class="btn" type="button">Settings</button
+            ><span class="divider"></span>
+            <button class="btn selection-action" type="button">Squash</button
+            ><button class="btn" type="button" disabled>Undo</button
+            ><button class="btn selection-action" type="button" data-clear>
+              Clear
+            </button>
+          </div>
+        </div>
+      </div>
+      <div id="options"></div>
+      <p class="note">
+        All options keep visible button boundaries and keyboard focus rings. No
+        shortcut labels, shadows, or icons. Preview only; the application is
+        unchanged.
+      </p>
+      <p id="announcement" role="status" aria-live="polite"></p>
+    </main>
+    <script>
+      const options = [
+        {
+          id: "a",
+          title: "Panel-matched",
+          description:
+            "Match the toolbar background; soften the label. The smallest change.",
+        },
+        {
+          id: "b",
+          title: "Darker fill",
+          description:
+            "A slightly darker surface instead of a bright cream fill. More subdued, still clearly a button.",
+          recommended: true,
+        },
+        {
+          id: "c",
+          title: "Quiet outline",
+          description:
+            "Panel-matched fill with a fainter border. The least prominent at rest.",
+        },
+      ];
+      for (const option of options) {
+        const section = document.createElement("section");
+        section.className = "option";
+        section.setAttribute("aria-labelledby", `title-${option.id}`);
+        section.innerHTML = `<div class="heading"><span class="badge">${option.id.toUpperCase()}</span><h2 id="title-${option.id}">${option.title}</h2>${option.recommended ? '<span class="recommend">Recommended</span>' : ""}<p>${option.description}</p></div>
+  <div class="preview ${option.id}" aria-label="${option.title} preview">
+    <div class="bar"><div class="meta"><span class="change">yxlslwuv</span><span>Polish notification delivery</span></div><div class="actions"><button class="btn" type="button">Refresh</button><button class="btn" type="button">Settings</button></div></div>
+    <div class="bar toolbar"><span class="filename">src/notifications.ts</span><div class="actions"><button class="btn" type="button">Search</button><div class="segment" role="group" aria-label="File view"><button type="button" aria-pressed="true">One file</button><button type="button" aria-pressed="false">All files</button></div><div class="segment" role="group" aria-label="Diff layout"><button type="button" aria-pressed="true">Stacked</button><button type="button" aria-pressed="false">Split</button></div></div></div>
+    <div class="code" aria-label="Example code"><div class="code-line"><span class="num">20</span><span>  function formatSubject(notification) {</span></div><div class="code-line added"><span class="num">21</span><span>+   return notification.subject.trim();</span></div><div class="code-line"><span class="num">22</span><span>  }</span></div></div>
+    <div class="bar footer"><span class="status">1 changed line selected</span><div class="actions"><button class="btn selection-action" type="button">Squash</button><button class="btn" type="button" disabled>Undo</button><button class="btn selection-action" type="button" data-clear>Clear</button></div></div>
+  </div>`;
+        document.querySelector("#options").append(section);
+      }
+      const selection = document.querySelector("#selection");
+      function updateSelection() {
+        document
+          .querySelectorAll(".selection-action")
+          .forEach((button) => (button.disabled = !selection.checked));
+        document
+          .querySelectorAll(".status")
+          .forEach(
+            (status) =>
+              (status.textContent = selection.checked
+                ? "1 changed line selected"
+                : "Drag code to select lines"),
+          );
+      }
+      selection.addEventListener("change", updateSelection);
+      document.querySelector("#theme").addEventListener("change", (event) => {
+        document.documentElement.dataset.theme = event.target.checked
+          ? "dark"
+          : "light";
+      });
+      document.addEventListener("click", (event) => {
+        const button = event.target.closest("button");
+        if (!button) return;
+        if (button.closest(".segment")) {
+          button.parentElement
+            .querySelectorAll("button")
+            .forEach((item) =>
+              item.setAttribute("aria-pressed", String(item === button)),
+            );
+          return;
+        }
+        if (button.hasAttribute("data-clear")) {
+          selection.checked = false;
+          updateSelection();
+        }
+        document.querySelector("#announcement").textContent =
+          `${button.textContent} — design preview only. No repository action performed.`;
+      });
+    </script>
+  </body>
+</html>
