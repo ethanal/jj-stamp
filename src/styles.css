@@ -913,6 +913,9 @@ kbd {
   min-height: 100%;
   outline: none;
 }
+/* The viewport holds keyboard focus while an opened revision loads (or is
+   empty). Like the code surface, it should not draw a panel-wide focus ring. */
+.viewer-scroll:focus-visible,
 .code-surface:focus-visible {
   outline: none;
 }

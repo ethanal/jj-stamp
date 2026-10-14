@@ -220,11 +220,19 @@ try {
   await expect(expandLog).toBeVisible();
   await expect(page.getByLabel("jj log output")).toBeHidden();
   await expect(page.locator(".viewer-scroll")).toBeFocused();
+  await expect(page.locator(".viewer-scroll")).toHaveCSS(
+    "outline-style",
+    "none",
+  );
   release!();
   release = undefined;
   await selected("middle");
   await expect(expandLog).toBeVisible();
   await expect(page.locator(".viewer-scroll")).toBeFocused();
+  await expect(page.locator(".viewer-scroll")).toHaveCSS(
+    "outline-style",
+    "none",
+  );
   assert.equal(
     requests.length,
     beforeOpen + 1,
