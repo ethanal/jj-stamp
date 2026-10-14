@@ -1,0 +1,629 @@
+<!doctype html>
+<html lang="en" data-theme="solarized-light">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>jj-stamp · Settings layout options</title>
+    <style>
+      @font-face {
+        font-family: "Source Code Pro";
+        src: url("../src/fonts/SourceCodePro.ttf") format("truetype");
+        font-weight: 200 900;
+        font-display: swap;
+      }
+      :root {
+        color-scheme: light;
+        --bg: #fdf6e3;
+        --panel: #eee8d5;
+        --fg: #586e75;
+        --strong: #073642;
+        --border: #d4cbb5;
+        --hover: #e3dcc7;
+        --focus: #268bd2;
+        --selected: #d6e3d5;
+      }
+      :root[data-theme="solarized-dark"] {
+        color-scheme: dark;
+        --bg: #002b36;
+        --panel: #073642;
+        --fg: #a4b3b2;
+        --strong: #eee8d5;
+        --border: #3e5961;
+        --hover: #0b414d;
+        --focus: #2aa198;
+        --selected: #164b57;
+      }
+      :root[data-theme="dark"] {
+        color-scheme: dark;
+        --bg: #0d1117;
+        --panel: #161b22;
+        --fg: #aeb8c3;
+        --strong: #f0f6fc;
+        --border: #30363d;
+        --hover: #262e38;
+        --focus: #79a9d1;
+        --selected: #232a33;
+      }
+      :root[data-theme="dim"] {
+        color-scheme: dark;
+        --bg: #22272e;
+        --panel: #272e36;
+        --fg: #adbac7;
+        --strong: #f0f6fc;
+        --border: #444c56;
+        --hover: #373e47;
+        --focus: #85b6ff;
+        --selected: #373e47;
+      }
+      :root[data-theme="light"] {
+        color-scheme: light;
+        --bg: #fff;
+        --panel: #f6f8fa;
+        --fg: #576574;
+        --strong: #111820;
+        --border: #c7cfd8;
+        --hover: #dde5ed;
+        --focus: #0969da;
+        --selected: #dce7f2;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        color: var(--fg);
+        background: var(--bg);
+        font:
+          14px/1.6 "Source Code Pro",
+          monospace;
+      }
+      main {
+        max-width: 1540px;
+        margin: auto;
+        padding: 36px 32px;
+      }
+      h1,
+      h2,
+      h3,
+      p {
+        margin: 0;
+      }
+      h1 {
+        color: var(--strong);
+        font-size: 28px;
+        font-weight: 600;
+        letter-spacing: -1px;
+      }
+      .intro {
+        margin-top: 6px;
+        max-width: 900px;
+      }
+      .top {
+        display: flex;
+        justify-content: space-between;
+        gap: 24px;
+        align-items: center;
+        margin-bottom: 28px;
+      }
+      .theme-control {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        flex-shrink: 0;
+      }
+      button,
+      select,
+      input {
+        font: inherit;
+      }
+      button,
+      select {
+        color: var(--strong);
+        background: var(--panel);
+        border: 1px solid var(--border);
+        border-radius: 5px;
+      }
+      button {
+        cursor: pointer;
+      }
+      button:hover {
+        background: var(--hover);
+      }
+      select {
+        padding: 8px 32px 8px 12px;
+        min-height: 42px;
+        max-width: 100%;
+        cursor: pointer;
+      }
+      :focus-visible {
+        outline: 2px solid var(--focus);
+        outline-offset: 4px;
+      }
+      .options {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 24px;
+        align-items: start;
+      }
+      .option-title {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        margin-bottom: 8px;
+        flex-wrap: wrap;
+      }
+      .option-title h2 {
+        color: var(--strong);
+        font-size: 18px;
+        font-weight: 600;
+      }
+      .letter {
+        width: 28px;
+        height: 28px;
+        border: 1px solid var(--border);
+        display: grid;
+        place-items: center;
+        border-radius: 4px;
+        color: var(--strong);
+      }
+      .recommend {
+        font-size: 13px;
+        padding: 2px 7px;
+        border-radius: 4px;
+        color: var(--strong);
+        background: var(--selected);
+      }
+      .description {
+        min-height: 74px;
+        margin-bottom: 18px;
+      }
+      .panel {
+        background: var(--panel);
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 24px;
+        font-size: 15px;
+        line-height: 1.5;
+        box-shadow: 0 8px 24px #0000000a;
+      }
+      .panel header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 16px;
+        margin-bottom: 24px;
+      }
+      .panel h3 {
+        color: var(--strong);
+        font-size: 22px;
+        font-weight: 600;
+      }
+      .close {
+        display: grid;
+        place-items: center;
+        width: 36px;
+        height: 36px;
+        flex-shrink: 0;
+        background: transparent;
+        border-color: transparent;
+        font-size: 26px;
+        line-height: 1;
+      }
+      .close:hover {
+        border-color: var(--border);
+      }
+      .label {
+        color: var(--strong);
+        font-weight: 500;
+      }
+      .select-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+      }
+      .select-row select {
+        min-width: 0;
+        font-size: 14px;
+      }
+      .check-row {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        cursor: pointer;
+        padding: 16px 0;
+        min-height: 52px;
+      }
+      input[type="checkbox"] {
+        width: 19px;
+        height: 19px;
+        margin: 0;
+        flex-shrink: 0;
+        accent-color: var(--focus);
+        cursor: pointer;
+      }
+      .compact .select-row {
+        padding-bottom: 20px;
+        margin-bottom: 4px;
+        border-bottom: 1px solid var(--border);
+      }
+      .compact .check-row:last-of-type {
+        padding-bottom: 4px;
+      }
+      .helper {
+        display: block;
+        font-size: 14px;
+        line-height: 1.55;
+        margin-top: 5px;
+        font-weight: 400;
+        color: var(--fg);
+      }
+      .group-title {
+        font-size: 14px;
+        font-weight: 500;
+        color: var(--fg);
+        margin: 24px 0 12px;
+      }
+      .group-title:first-of-type {
+        margin-top: 0;
+      }
+      .grouped .select-row {
+        align-items: flex-start;
+        flex-direction: column;
+        gap: 12px;
+      }
+      .grouped select {
+        width: 100%;
+      }
+      .grouped .check-row {
+        justify-content: space-between;
+        border-top: 1px solid var(--border);
+        padding: 18px 0;
+        gap: 20px;
+      }
+      .grouped .check-row:last-of-type {
+        padding-bottom: 0;
+      }
+      .grouped .check-row input {
+        width: 21px;
+        height: 21px;
+      }
+      .cards .subtitle {
+        margin-top: -16px;
+        margin-bottom: 24px;
+        font-size: 14px;
+      }
+      .cards .card {
+        display: block;
+        padding: 16px;
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        margin-top: 12px;
+        background: var(--bg);
+      }
+      .cards .card:first-of-type {
+        margin-top: 0;
+      }
+      .cards .card select {
+        display: block;
+        width: 100%;
+        margin-top: 14px;
+        background: var(--bg);
+      }
+      .cards .check-row {
+        align-items: flex-start;
+        gap: 12px;
+        padding: 0;
+      }
+      .cards .check-row input {
+        margin-top: 3px;
+      }
+      .spec {
+        margin: 16px 0;
+        font-size: 13px;
+      }
+      .open {
+        padding: 8px 12px;
+        min-height: 40px;
+      }
+      footer {
+        margin-top: 32px;
+        padding-top: 20px;
+        border-top: 1px solid var(--border);
+        font-size: 14px;
+      }
+      #status {
+        min-height: 24px;
+        margin-top: 8px;
+      }
+      dialog {
+        padding: 0;
+        border: 0;
+        background: transparent;
+        color: var(--fg);
+        width: min(500px, calc(100vw - 32px));
+        max-height: calc(100dvh - 32px);
+      }
+      dialog::backdrop {
+        background: #0008;
+      }
+      dialog .panel {
+        box-shadow: none;
+      }
+      dialog .panel header {
+        position: static;
+      }
+      @media (min-width: 1100px) and (max-width: 1350px) {
+        .compact .select-row {
+          align-items: stretch;
+          flex-direction: column;
+        }
+      }
+      @media (max-width: 1099px) {
+        main {
+          max-width: 720px;
+          padding: 28px 20px;
+        }
+        .options {
+          grid-template-columns: 1fr;
+          gap: 36px;
+        }
+        .top {
+          align-items: flex-start;
+          flex-direction: column;
+        }
+        .description {
+          min-height: 0;
+        }
+      }
+      @media (max-width: 420px) {
+        main {
+          padding: 24px 16px;
+        }
+        h1 {
+          font-size: 24px;
+        }
+        .panel {
+          padding: 20px;
+        }
+        .compact .select-row {
+          align-items: stretch;
+          flex-direction: column;
+        }
+        .theme-control {
+          flex-wrap: wrap;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <div class="top">
+        <div>
+          <h1>Settings, with room to read.</h1>
+          <p class="intro">
+            Three directions for the same three preferences. Larger type, calmer
+            spacing, no extra settings.
+          </p>
+        </div>
+        <label class="theme-control"
+          >Preview theme
+          <select id="theme" aria-label="Preview theme"></select
+        ></label>
+      </div>
+      <div class="options">
+        <section aria-labelledby="a-title">
+          <div class="option-title">
+            <span class="letter">A</span>
+            <h2 id="a-title">Compact cleanup</h2>
+          </div>
+          <p class="description">
+            Keep it familiar. Bigger controls, a clear heading, and just enough
+            separation.
+          </p>
+          <div class="panel compact" data-option="a">
+            <header>
+              <h3>Settings</h3>
+              <button
+                class="close"
+                aria-label="Close settings preview"
+                type="button"
+              >
+                ×
+              </button>
+            </header>
+            <label class="select-row"
+              ><span class="label">Color scheme</span
+              ><select aria-label="Color scheme" data-scheme></select
+            ></label>
+            <label class="check-row"
+              ><input type="checkbox" data-pref="hover" /><span class="label"
+                >Show collapsed sidebars on hover</span
+              ></label
+            >
+            <label class="check-row"
+              ><input type="checkbox" data-pref="vim" /><span class="label"
+                >Vim mode</span
+              ></label
+            >
+          </div>
+          <p class="spec">15px labels · 14px select · 22px title</p>
+          <button class="open" data-open="a" type="button">
+            Try dialog A ↗
+          </button>
+        </section>
+        <section aria-labelledby="b-title">
+          <div class="option-title">
+            <span class="letter">B</span>
+            <h2 id="b-title">Grouped rows</h2>
+            <span class="recommend">Recommended</span>
+          </div>
+          <p class="description">
+            Separate appearance from behavior. Short descriptions make each
+            preference easier to understand.
+          </p>
+          <div class="panel grouped" data-option="b">
+            <header>
+              <h3>Settings</h3>
+              <button
+                class="close"
+                aria-label="Close settings preview"
+                type="button"
+              >
+                ×
+              </button>
+            </header>
+            <h4 class="group-title">Appearance</h4>
+            <label class="select-row"
+              ><span class="label">Color scheme</span
+              ><select aria-label="Color scheme" data-scheme></select
+            ></label>
+            <h4 class="group-title">Behavior</h4>
+            <label class="check-row"
+              ><span
+                ><span class="label">Reveal sidebars on hover</span
+                ><span class="helper"
+                  >Peek at Files or Log while collapsed.</span
+                ></span
+              ><input type="checkbox" data-pref="hover"
+            /></label>
+            <label class="check-row"
+              ><span
+                ><span class="label">Vim mode</span
+                ><span class="helper"
+                  >Navigate and select lines with Vim keys.</span
+                ></span
+              ><input type="checkbox" data-pref="vim"
+            /></label>
+          </div>
+          <p class="spec">15px labels · 14px help · 22px title</p>
+          <button class="open" data-open="b" type="button">
+            Try dialog B ↗
+          </button>
+        </section>
+        <section aria-labelledby="c-title">
+          <div class="option-title">
+            <span class="letter">C</span>
+            <h2 id="c-title">Inset cards</h2>
+          </div>
+          <p class="description">
+            Give each setting its own surface. More visual structure, with
+            generous click targets.
+          </p>
+          <div class="panel cards" data-option="c">
+            <header>
+              <h3>Settings</h3>
+              <button
+                class="close"
+                aria-label="Close settings preview"
+                type="button"
+              >
+                ×
+              </button>
+            </header>
+            <p class="subtitle">Make the review space your own.</p>
+            <label class="card"
+              ><span class="label">Color scheme</span
+              ><select aria-label="Color scheme" data-scheme></select
+            ></label>
+            <label class="card"
+              ><span class="check-row"
+                ><input type="checkbox" data-pref="hover" /><span
+                  ><span class="label">Reveal sidebars on hover</span
+                  ><span class="helper"
+                    >Peek at Files or Log while collapsed.</span
+                  ></span
+                ></span
+              ></label
+            >
+            <label class="card"
+              ><span class="check-row"
+                ><input type="checkbox" data-pref="vim" /><span
+                  ><span class="label">Vim mode</span
+                  ><span class="helper"
+                    >Navigate and select lines with Vim keys.</span
+                  ></span
+                ></span
+              ></label
+            >
+          </div>
+          <p class="spec">15px labels · 14px help · 22px title</p>
+          <button class="open" data-open="c" type="button">
+            Try dialog C ↗
+          </button>
+        </section>
+      </div>
+      <footer>
+        Interactive design preview only. Controls stay in sync for comparison;
+        your app preferences are unchanged. Open a dialog to test keyboard focus
+        and Escape.
+      </footer>
+      <p id="status" role="status" aria-live="polite"></p>
+    </main>
+    <dialog id="preview" aria-label="Settings layout preview"></dialog>
+    <script>
+      const schemes = [
+        ["dark", "Dark"],
+        ["dim", "Dim"],
+        ["light", "Light"],
+        ["solarized-dark", "Solarized Dark"],
+        ["solarized-light", "Solarized Light"],
+      ];
+      const state = { scheme: "solarized-light", hover: false, vim: false };
+      const modal = document.querySelector("#preview");
+      for (const select of document.querySelectorAll("select")) {
+        for (const [value, label] of schemes)
+          select.add(new Option(label, value));
+      }
+      function sync() {
+        document.documentElement.dataset.theme = state.scheme;
+        document
+          .querySelectorAll("select")
+          .forEach((select) => (select.value = state.scheme));
+        document
+          .querySelectorAll("[data-pref]")
+          .forEach((input) => (input.checked = state[input.dataset.pref]));
+      }
+      sync();
+      document.addEventListener("change", (event) => {
+        const control = event.target;
+        if (control.matches("select")) state.scheme = control.value;
+        else if (control.matches("[data-pref]"))
+          state[control.dataset.pref] = control.checked;
+        else return;
+        sync();
+      });
+      document.addEventListener("click", (event) => {
+        const button = event.target.closest("button");
+        if (!button) return;
+        if (button.dataset.open) {
+          const panel = document
+            .querySelector(`[data-option="${button.dataset.open}"]`)
+            .cloneNode(true);
+          modal.replaceChildren(panel);
+          sync();
+          modal.showModal();
+          modal.querySelector(".close").focus();
+        } else if (button.matches(".close")) {
+          if (button.closest("dialog")) modal.close();
+          else
+            document.querySelector("#status").textContent =
+              "This comparison stays open. Use “Try dialog” to preview opening and closing.";
+        }
+      });
+      modal.addEventListener("keydown", (event) => {
+        if (event.key !== "Tab") return;
+        const controls = [...modal.querySelectorAll("button, select, input")];
+        const first = controls[0],
+          last = controls.at(-1);
+        if (event.shiftKey && document.activeElement === first) {
+          event.preventDefault();
+          last.focus();
+        } else if (!event.shiftKey && document.activeElement === last) {
+          event.preventDefault();
+          first.focus();
+        }
+      });
+    </script>
+  </body>
+</html>
