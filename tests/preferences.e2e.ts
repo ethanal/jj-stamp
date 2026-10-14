@@ -223,7 +223,7 @@ try {
   await expect(labeledBookmarks).toHaveCSS("color", "rgb(247, 120, 186)");
   await assertConnectedGraph();
   await expect(currentRow).toHaveCSS("box-shadow", "none");
-  const settings = page.getByRole("button", { name: "settings", exact: true });
+  const settings = page.getByRole("button", { name: "Settings", exact: true });
   const dialog = page.getByRole("dialog", { name: "Settings" });
   const picker = page.getByLabel("Color scheme");
   const hoverSetting = page.getByRole("checkbox", {
@@ -529,7 +529,7 @@ try {
     await route.fulfill({ response });
   });
   generation++;
-  await page.getByRole("button", { name: "refresh r", exact: true }).click();
+  await page.getByRole("button", { name: "Refresh", exact: true }).click();
   await expect.poll(() => graphReads).toBe(beforeReload + 2);
   await expect(logBody).toBeHidden();
   await logPanel.hover();
@@ -649,7 +649,7 @@ try {
   });
   await noStorage.goto(url);
   await noStorage
-    .getByRole("button", { name: "settings", exact: true })
+    .getByRole("button", { name: "Settings", exact: true })
     .click();
   await expect(noStorage.getByLabel("Color scheme")).toHaveValue("dark");
   const noStorageHover = noStorage.getByRole("checkbox", {

@@ -94,11 +94,10 @@ const fixture = await createBrowserFixture({
   viewport: { width: 1280, height: 720 },
 });
 const { page, url, errors } = fixture;
-const trigger = page.getByRole("button", { name: "shortcuts", exact: true });
 const dialog = page.getByRole("dialog", { name: "Keyboard shortcuts" });
 const close = dialog.getByRole("button", { name: "Close keyboard shortcuts" });
 const content = dialog.getByRole("region", { name: "Shortcut reference" });
-const settings = page.getByRole("button", { name: "settings", exact: true });
+const settings = page.getByRole("button", { name: "Settings", exact: true });
 const settingsDialog = page.getByRole("dialog", {
   name: "Settings",
   exact: true,
@@ -106,16 +105,59 @@ const settingsDialog = page.getByRole("dialog", {
 const surface = page.locator(".code-surface").first();
 const added = page.locator('[data-line-type="change-addition"]').first();
 const selected = page.locator("[data-line][data-fold-selected]");
-const refresh = page.getByRole("button", { name: "refresh r", exact: true });
+const refresh = page.getByRole("button", { name: "Refresh", exact: true });
+const actions = page.locator(
+  ".toolbar-actions > .action-button, .statusbar-actions > .action-button",
+);
+const clearSelection = page.getByRole("button", { name: "Clear", exact: true });
+
+async function assertOutlinedActions() {
+  for (const action of await actions.all()) {
+    await expect(action).toHaveCSS("border-top-width", "1px");
+    await expect(action).toHaveCSS("border-top-style", "solid");
+    await expect(action).toHaveCSS("border-radius", "4px");
+    await expect(action).toHaveCSS("height", "28px");
+    await expect(action).toHaveCSS(
+      "background-color",
+      await refresh.evaluate(
+        (element) => getComputedStyle(element).backgroundColor,
+      ),
+    );
+  }
+}
 
 try {
   await page.goto(url);
   await expect(added).toBeVisible();
   await expect(refresh).toBeEnabled();
-  await expect(trigger).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "shortcuts", exact: true }),
+  ).toHaveCount(0);
   await expect(dialog).not.toBeVisible();
+  await expect(actions).toHaveText([
+    "Refresh",
+    "Settings",
+    "Squash",
+    "Undo",
+    "Clear",
+  ]);
+  await expect(
+    page.locator(".topbar kbd, .statusbar kbd, .text-selection-hint"),
+  ).toHaveCount(0);
+  await expect(clearSelection).toBeDisabled();
+  await expect(clearSelection).toHaveCSS("opacity", "0.4");
+  await assertOutlinedActions();
+  await refresh.focus();
+  await expect(refresh).toHaveCSS("outline-style", "solid");
+  await expect(refresh).toHaveCSS("outline-width", "2px");
+  await added.click();
+  await expect(clearSelection).toBeEnabled();
+  await clearSelection.click();
+  await expect(selected).toHaveCount(0);
+  await expect(clearSelection).toBeDisabled();
 
-  await trigger.click();
+  await refresh.focus();
+  await page.keyboard.press("?");
   await expect(dialog).toBeVisible();
   assert.equal(
     await dialog.evaluate((element) => element.matches(":modal")),
@@ -151,14 +193,15 @@ try {
   await expect(close).toBeFocused();
   await close.click();
   await expect(dialog).not.toBeVisible();
-  await expect(trigger).toBeFocused();
-  await trigger.click();
+  await expect(refresh).toBeFocused();
+  await refresh.focus();
+  await page.keyboard.press("?");
   await page.keyboard.press("Escape");
   await expect(dialog).not.toBeVisible();
-  await expect(trigger).toBeFocused();
+  await expect(refresh).toBeFocused();
 
-  // Keyboard opening restores the actual previous control, not always the
-  // toolbar trigger. Escape must not clear CodeDiff's existing selection.
+  // Keyboard opening restores the actual previous control, not always a
+  // header action. Escape must not clear CodeDiff's existing selection.
   await added.click();
   await expect(selected.first()).toBeVisible();
   await expect(surface).toBeFocused();
@@ -235,7 +278,8 @@ try {
   await expect(search).toBeFocused();
   await search.fill("line");
   await expect(page.locator(".diff-search-count")).toHaveText("1 / 2");
-  await trigger.click();
+  await refresh.focus();
+  await page.keyboard.press("?");
   await content.focus();
   await page.keyboard.press("F3");
   await page.keyboard.press("Shift+F3");
@@ -307,16 +351,16 @@ try {
   await page.keyboard.press("Escape");
   await expect(settings).toBeFocused();
 
-  // While a code-selection drag is active both ways of opening are disabled.
+  // While a code-selection drag is active the shortcut cannot open help.
   const lineBox = await added.boundingBox();
   assert(lineBox);
   await page.mouse.move(lineBox.x + 30, lineBox.y + lineBox.height / 2);
   await page.mouse.down();
-  await expect(trigger).toBeDisabled();
+  await expect(settings).toBeDisabled();
   await page.keyboard.press("?");
   await expect(dialog).not.toBeVisible();
   await page.mouse.up();
-  await expect(trigger).toBeEnabled();
+  await expect(settings).toBeEnabled();
   await page.keyboard.press("?");
   await expect(dialog).toBeVisible();
   await page.keyboard.press("Escape");
@@ -337,7 +381,10 @@ try {
       return { background: style.backgroundColor, foreground: style.color };
     });
     await page.keyboard.press("Escape");
-    await trigger.click();
+    await page.mouse.move(0, 0);
+    await assertOutlinedActions();
+    await refresh.focus();
+    await page.keyboard.press("?");
     await expect(dialog).toHaveCSS(
       "background-color",
       expectedColors.background,
@@ -346,7 +393,12 @@ try {
     await page.keyboard.press("Escape");
   }
   await page.setViewportSize({ width: 360, height: 480 });
-  await trigger.click();
+  for (const action of await actions.all()) {
+    const box = await action.boundingBox();
+    assert(box && box.x >= 0 && box.x + box.width <= 360);
+  }
+  await refresh.focus();
+  await page.keyboard.press("?");
   await expect(close).toBeFocused();
   const box = await dialog.boundingBox();
   assert(
@@ -380,7 +432,7 @@ try {
   await expect(content).toBeFocused();
   await page.keyboard.press("Escape");
   await expect(dialog).not.toBeVisible();
-  await expect(trigger).toBeFocused();
+  await expect(refresh).toBeFocused();
   assert.deepEqual(errors, []);
   console.log(
     "Shortcut dialog checks passed: native modal, focus, keyboard guards, isolated background, drag guard, themes, responsive scrolling.",

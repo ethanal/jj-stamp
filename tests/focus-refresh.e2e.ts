@@ -34,7 +34,7 @@ page.on("request", (request) => {
   if (request.url().endsWith("/api/squash-lines")) squashes++;
 });
 const refreshButton = page.getByRole("button", {
-  name: "refresh r",
+  name: "Refresh",
   exact: true,
 });
 const added = () => page.locator('[data-line-type="change-addition"]').first();
@@ -171,22 +171,28 @@ const holdRead = async (route: Route) => {
   await route.fulfill({ response });
 };
 await page.route("**/api/state", holdRead);
-const hint = page.locator(".text-selection-hint");
-const hintBeforeRefresh = await hint.boundingBox();
-assert(hintBeforeRefresh);
-async function expectCenteredHint() {
-  const footerBox = await page.locator(".statusbar").boundingBox();
-  const hintBox = await hint.boundingBox();
-  assert(footerBox && hintBox);
+const actions = page.locator(".statusbar-actions");
+const actionsBeforeRefresh = await actions.boundingBox();
+assert(actionsBeforeRefresh);
+async function expectStableActions() {
+  const footer = page.locator(".statusbar");
+  const footerBox = await footer.boundingBox();
+  const padding = await footer.evaluate((element) =>
+    parseFloat(getComputedStyle(element).paddingRight),
+  );
+  const actionsBox = await actions.boundingBox();
+  assert(footerBox && actionsBox);
   assert(
     Math.abs(
-      hintBox.x + hintBox.width / 2 - (footerBox.x + footerBox.width / 2),
+      actionsBox.x +
+        actionsBox.width -
+        (footerBox.x + footerBox.width - padding),
     ) < 1,
-    "Copy hint stays centered in the footer",
+    "Review buttons stay right-aligned in the footer",
   );
   assert(
-    Math.abs(hintBox.x - hintBeforeRefresh!.x) < 1,
-    "Status text changes do not move the copy hint",
+    Math.abs(actionsBox.x - actionsBeforeRefresh!.x) < 1,
+    "Status text changes do not move the review buttons",
   );
 }
 const changeLinks = page.locator(".log-change");
@@ -206,7 +212,7 @@ await expect.poll(() => reads).toBe(before + 1);
 await expect(refreshButton).toBeDisabled();
 await readCaptured;
 await expect(page.locator(".statusbar")).toContainText("Refreshing…");
-await expectCenteredHint();
+await expectStableActions();
 // Change IDs keep their colors but cannot switch revisions during a refresh.
 await expect(page.locator(".log-change:enabled")).toHaveCount(0);
 assert.deepEqual(await changeLinkAppearance(), linksBeforeRefresh);
@@ -230,7 +236,7 @@ await expect(
   fileNavigation.getByRole("button", { name: /^Squash file / }),
 ).toHaveCount(0);
 await expect(
-  page.getByRole("button", { name: "s squash", exact: true }),
+  page.getByRole("button", { name: "Squash", exact: true }),
 ).toBeDisabled();
 const squashesBeforeRefresh = squashes;
 await page.keyboard.press("s");
@@ -255,7 +261,7 @@ await page.unroute("**/api/state", holdRead);
 await expect(page.locator(".code-surface")).toContainText("// second focus");
 await settled();
 await noReadSince(before + 2);
-await expectCenteredHint();
+await expectStableActions();
 // Sidebar navigation already cleared the selection during the first read.
 await expect(page.locator(".statusbar")).not.toContainText("selection cleared");
 

@@ -316,24 +316,13 @@ function DiffSearchControls({
     return (
       <button
         ref={triggerRef}
-        className="diff-search-open"
+        className="action-button diff-search-open"
         aria-label="Find in diff"
-        title="Find in diff (Ctrl/Cmd+F)"
+        title="Find in diff"
         disabled={disabled}
         onClick={onOpen}
       >
-        <svg
-          viewBox="0 0 16 16"
-          width="14"
-          height="14"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="1.4"
-          aria-hidden="true"
-        >
-          <circle cx="7" cy="7" r="4.25" />
-          <path d="m10.2 10.2 3.1 3.1" />
-        </svg>
+        Search
       </button>
     );
   return (
@@ -822,8 +811,12 @@ export function ReviewViewer({
                   ? "All changes queued."
                   : "No changes in this revision."}
                 {state.canUndo && !pending && (
-                  <button onClick={onUndo} disabled={working}>
-                    undo <kbd>u</kbd>
+                  <button
+                    className="action-button"
+                    onClick={onUndo}
+                    disabled={working}
+                  >
+                    Undo
                   </button>
                 )}
               </div>
@@ -1251,19 +1244,19 @@ export function ReviewStatusBar({
         )}
         {status}
       </span>
-      <span
-        className="text-selection-hint"
-        title="Cmd/Ctrl+C copies selected right-hand code; Alt+drag selects native text; e opens the hovered line in Neovim"
-      >
-        Cmd/Ctrl+C to copy · Alt+drag for text
-      </span>
-      <div className="shortcuts">
+      <div className="statusbar-actions">
         {showSquash && (
-          <button onClick={onSquash} disabled={!canSquash} title={squashTitle}>
-            <kbd>s</kbd> squash
+          <button
+            className="action-button"
+            onClick={onSquash}
+            disabled={!canSquash}
+            title={squashTitle}
+          >
+            Squash
           </button>
         )}
         <button
+          className="action-button"
           onClick={onUndo}
           disabled={!canUndo}
           title={
@@ -1272,10 +1265,15 @@ export function ReviewStatusBar({
               : "Undo last squash"
           }
         >
-          <kbd>u</kbd> undo
+          Undo
         </button>
-        <button onClick={onClear} disabled={!range || working || dragging}>
-          <kbd>esc</kbd> clear
+        <button
+          className="action-button"
+          onClick={onClear}
+          disabled={!range || working || dragging}
+          title="Clear selection"
+        >
+          Clear
         </button>
       </div>
     </footer>

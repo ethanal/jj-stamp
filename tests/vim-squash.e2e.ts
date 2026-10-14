@@ -556,7 +556,7 @@ try {
   // Outside Vim mode, squash retains the existing behavior: selection clears
   // instead of automatically entering another visual row.
   await openState(state("nonvim", [newFile("nonvim.txt", 3, "nonvim")]));
-  await page.getByRole("button", { name: "settings", exact: true }).click();
+  await page.getByRole("button", { name: "Settings", exact: true }).click();
   await page.getByRole("checkbox", { name: "Vim mode", exact: true }).uncheck();
   await page.getByRole("button", { name: "Close settings" }).click();
   await expect(surface("nonvim.txt")).toHaveAttribute("data-vim-mode", "off");

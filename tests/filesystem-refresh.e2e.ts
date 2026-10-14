@@ -625,7 +625,7 @@ async function controlledServerCoverage() {
   await deliverEvent("change", { workspace: true, heads: null });
   await advanceToHeld(held);
   await expect(
-    page.getByRole("button", { name: "refresh r", exact: true }),
+    page.getByRole("button", { name: "Refresh", exact: true }),
   ).toBeEnabled();
   await expect(page.locator(".statusbar")).not.toContainText("Refreshing…");
   const heldReads = reads;
@@ -734,7 +734,7 @@ async function controlledServerCoverage() {
     "must-not-recover",
   );
   await expect(
-    page.getByRole("button", { name: "s squash", exact: true }),
+    page.getByRole("button", { name: "Squash", exact: true }),
   ).toBeDisabled();
 
   // The server's explicit unavailable event is terminal for this page session;

@@ -178,7 +178,7 @@ try {
   const beforeIgnored = requests.length;
   await page.keyboard.press("ArrowDown");
   await page.keyboard.press("Control+Shift+Digit2");
-  await page.getByRole("button", { name: "settings", exact: true }).click();
+  await page.getByRole("button", { name: "Settings", exact: true }).click();
   await page.keyboard.press("Shift+Digit2");
   await page.keyboard.press("l");
   await expect(page.getByRole("dialog")).toBeVisible();
@@ -301,7 +301,7 @@ try {
 
   // Vim log motions share the arrow path, including repeats, bounds and intent
   // coalescing. They are opt-in and only operate while the log has focus.
-  const settings = page.getByRole("button", { name: "settings", exact: true });
+  const settings = page.getByRole("button", { name: "Settings", exact: true });
   const graph = page.getByLabel("jj log output");
   await settings.click();
   await page.getByRole("checkbox", { name: "Vim mode" }).check();

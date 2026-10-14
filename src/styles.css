@@ -258,14 +258,41 @@ kbd {
   flex-shrink: 0;
   font-size: 10px;
 }
-.topbar button {
-  color: var(--muted);
+/* One compact, outlined treatment for header and review actions. */
+.action-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 28px;
+  padding: 3px 9px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--strong);
+  font-size: 12px;
+  line-height: 20px;
   white-space: nowrap;
-  font-size: 10px;
 }
-.topbar kbd {
-  color: var(--muted);
-  margin-left: 5px;
+.action-button:hover:not(:disabled) {
+  border-color: var(--muted);
+  background: var(--hover);
+}
+.action-button:active:not(:disabled) {
+  background: var(--selected-bg);
+}
+.action-button:disabled,
+.layout-toggle button:disabled {
+  opacity: 0.4;
+}
+.toolbar-actions,
+.statusbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+.toolbar-actions {
+  margin-left: auto;
 }
 .commit-totals {
   display: flex;
@@ -563,13 +590,6 @@ kbd {
   gap: 14px;
   flex-shrink: 0;
 }
-.diff-search-open {
-  width: 24px;
-  height: 24px;
-  display: grid;
-  place-items: center;
-  color: var(--muted);
-}
 .diff-search {
   height: 28px;
   display: flex;
@@ -644,15 +664,27 @@ kbd {
 }
 .layout-toggle {
   display: flex;
-  gap: 10px;
-  padding-left: 14px;
-  border-left: 1px solid var(--border);
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
 }
 .layout-toggle button {
-  font-size: 10px;
+  min-height: 26px;
+  padding: 3px 9px;
+  font-size: 12px;
+  line-height: 20px;
   color: var(--muted);
+  white-space: nowrap;
+}
+.layout-toggle button + button {
+  border-left: 1px solid var(--border);
+}
+.layout-toggle button:hover:not(:disabled) {
+  background: var(--hover);
 }
 .layout-toggle button.active {
+  background: var(--selected-bg);
   color: var(--strong);
 }
 .settings-dialog {
@@ -817,13 +849,13 @@ kbd {
   display: block;
 }
 .statusbar {
-  min-height: 30px;
+  min-height: 40px;
   flex-shrink: 0;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
   gap: 12px;
-  padding: 0 13px;
+  padding: 5px 13px;
   border-top: 1px solid var(--border);
   background: var(--chrome);
   font-size: 10px;
@@ -837,30 +869,12 @@ kbd {
 .selection-status {
   color: var(--accent);
 }
-.shortcuts {
-  margin-left: auto;
-  display: flex;
-  align-items: center;
-  gap: 22px;
-  white-space: nowrap;
-}
-.shortcuts button {
-  font-size: 10px;
-}
-.shortcuts kbd {
-  color: var(--fg);
-  margin-right: 5px;
-}
 .empty {
   display: flex;
   align-items: center;
   gap: 20px;
   padding: 24px 16px;
   color: var(--muted);
-}
-.empty button {
-  font-size: 11px;
-  text-decoration: underline;
 }
 .jj-log {
   flex: 1;
@@ -1001,12 +1015,6 @@ kbd {
   .file-bar-tools > .line-counts {
     display: none;
   }
-  .statusbar {
-    display: flex;
-  }
-  .text-selection-hint {
-    display: none;
-  }
   .revision-info {
     gap: 9px;
   }
@@ -1076,9 +1084,6 @@ kbd {
     order: 10;
     flex-basis: 100%;
   }
-  .shortcuts {
-    gap: 12px;
-  }
 }
 @media (max-width: 600px) {
   :root {
@@ -1097,9 +1102,6 @@ kbd {
     gap: 7px;
     padding-inline: 9px;
     font-size: 11px;
-  }
-  .topbar kbd {
-    display: none;
   }
   .revision-info {
     gap: 7px;
@@ -1134,22 +1136,13 @@ kbd {
   .file-bar-tools {
     margin-left: 0;
   }
-  .layout-toggle {
-    padding-left: 0;
-    border-left: 0;
-    gap: 13px;
-  }
   .statusbar {
+    grid-template-columns: minmax(0, 1fr);
     padding: 5px 9px;
     gap: 4px;
-    flex-wrap: wrap;
   }
-  .statusbar > span {
-    flex-basis: 100%;
-  }
-  .shortcuts {
-    margin-left: 0;
-    gap: 17px;
+  .statusbar-actions {
+    justify-self: end;
   }
 }
 

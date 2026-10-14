@@ -82,9 +82,12 @@ async function drag(from: Locator, to: Locator) {
   // Guard navigation during the drag without dimming the file picker.
   await expect(filePicker).toHaveAttribute("aria-disabled", "true");
   await expect(filePicker).toHaveCSS("opacity", "1");
-  await expect(page.getByRole("button", { name: "settings" })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Settings" })).toBeDisabled();
   for (const button of await page.locator("button:disabled").all()) {
-    await expect(button).toHaveCSS("opacity", "1");
+    const outlined = await button.evaluate((element) =>
+      element.matches(".action-button, .layout-toggle button"),
+    );
+    await expect(button).toHaveCSS("opacity", outlined ? "0.4" : "1");
   }
   await page.mouse.move(b.x + Math.min(220, b.width / 2), b.y + b.height / 2, {
     steps: 8,
@@ -128,12 +131,12 @@ async function expectConfirmedSquashUnavailable(
   await expect(page.getByRole("alert")).toHaveCount(0);
   await expect(page.locator(".squash-file")).toHaveCount(0);
   await expect(
-    page.getByRole("button", { name: "s squash", exact: true }),
+    page.getByRole("button", { name: "Squash", exact: true }),
   ).toHaveCount(0);
   await expect(page.locator("[data-line][data-fold-selected]")).toHaveCount(0);
   // Keep shortcut focus outside the embedded diff. File-backed states use the
   // explicit dismiss control; the fileless merge below covers Escape dismissal.
-  await page.getByRole("button", { name: "refresh r", exact: true }).focus();
+  await page.getByRole("button", { name: "Refresh", exact: true }).focus();
   const mutationCount = mutations.length;
   await page.keyboard.press("s");
   const alert = page.getByRole("alert");
@@ -147,14 +150,14 @@ async function expectConfirmedSquashUnavailable(
   await expect(page.locator(".squash-unavailable")).toHaveCount(0);
   await expect(page.locator(".squash-file")).toHaveCount(0);
   await expect(
-    page.getByRole("button", { name: "s squash", exact: true }),
+    page.getByRole("button", { name: "Squash", exact: true }),
   ).toHaveCount(0);
 }
 async function expectSquashActions(path?: string) {
   await expect(page.locator(".squash-unavailable")).toHaveCount(0);
   await expect(page.getByRole("alert")).toHaveCount(0);
   await expect(
-    page.getByRole("button", { name: "s squash", exact: true }),
+    page.getByRole("button", { name: "Squash", exact: true }),
   ).toHaveCount(1);
   if (path)
     await expect(
@@ -295,16 +298,16 @@ try {
   await expect(page.locator(".squash-file")).toBeVisible();
   await expect(page.locator(".squash-file")).toBeDisabled();
   await expect(
-    page.getByRole("button", { name: "s squash", exact: true }),
+    page.getByRole("button", { name: "Squash", exact: true }),
   ).toBeVisible();
   await expect(
-    page.getByRole("button", { name: "s squash", exact: true }),
+    page.getByRole("button", { name: "Squash", exact: true }),
   ).toBeDisabled();
   releasePreview();
   const sourceResponse = await selectedSource;
   assert.equal(sourceResponse.status(), 200, await sourceResponse.text());
   await page.unroute("**/api/revision");
-  await expect(page.getByRole("button", { name: "refresh r" })).toBeEnabled();
+  await expect(page.getByRole("button", { name: "Refresh" })).toBeEnabled();
   await expect(page.getByLabel("Current change ID")).toHaveAttribute(
     "title",
     initial.source.changeId,
@@ -450,7 +453,7 @@ try {
   );
   await page.keyboard.press("r");
   await treeRefresh;
-  await expect(page.getByRole("button", { name: "refresh r" })).toBeEnabled();
+  await expect(page.getByRole("button", { name: "Refresh" })).toBeEnabled();
   await expect(treeRow("tests/")).toHaveAttribute("aria-expanded", "false");
   await treeRow("tests/").focus();
   await page.keyboard.press("ArrowRight");
@@ -552,7 +555,7 @@ try {
   await expect(page.getByRole("status")).toContainText(
     "1 changed line selected",
   );
-  await page.getByRole("button", { name: "settings", exact: true }).click();
+  await page.getByRole("button", { name: "Settings", exact: true }).click();
   await page
     .getByRole("combobox", { name: "Color scheme" })
     .selectOption("light");
@@ -567,7 +570,7 @@ try {
   );
   await page.reload();
   await expect(page.locator(".file-bar")).toContainText("src/notifications.ts");
-  await page.getByRole("button", { name: "settings", exact: true }).click();
+  await page.getByRole("button", { name: "Settings", exact: true }).click();
   await expect(
     page.getByRole("combobox", { name: "Color scheme" }),
   ).toHaveValue("light");
@@ -1298,7 +1301,7 @@ try {
   assert(cleanMergeState.parent);
   assert.equal(cleanMergeState.squashUnavailable, undefined);
   // Wait for authorization before the next fixture history mutation.
-  await expect(page.getByRole("button", { name: "refresh r" })).toBeEnabled();
+  await expect(page.getByRole("button", { name: "Refresh" })).toBeEnabled();
   await expectSquashActions(cleanMergeState.files[0]?.path);
   console.log(
     "✓ Two-parent change hides idle squash actions, shows the exact keyboard error, dismisses quietly, and switches back cleanly",
@@ -1364,7 +1367,7 @@ try {
     "aria-pressed",
     "true",
   );
-  await expect(page.getByRole("button", { name: "refresh r" })).toBeEnabled();
+  await expect(page.getByRole("button", { name: "Refresh" })).toBeEnabled();
   await page.getByRole("button", { name: "Collapse log sidebar" }).click();
   await expect(page.getByLabel("jj log output")).toBeHidden();
   await jj(repoPath, ["edit", replacement]);

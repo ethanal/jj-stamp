@@ -566,7 +566,7 @@ try {
     await expect(button).toHaveCSS("height", "24px");
   }
   await expect(
-    page.getByRole("button", { name: "s squash", exact: true }),
+    page.getByRole("button", { name: "Squash", exact: true }),
   ).toBeVisible();
   // Sidebar rows remain navigation-only on both hover and keyboard focus.
   const sidebarSquash = page
@@ -654,7 +654,9 @@ try {
   };
   await page.keyboard.press("r");
   await expect(page.locator(".squash-file")).toHaveCount(0);
-  await expect(page.getByRole("button", { name: "s squash" })).toHaveCount(0);
+  await expect(
+    page.getByRole("button", { name: "Squash", exact: true }),
+  ).toHaveCount(0);
   await expect(page.getByRole("alert")).toHaveCount(0);
   await treeRow(firstPath).hover();
   await expect(sidebarSquash).toHaveCount(0);
@@ -670,7 +672,9 @@ try {
   await treeRow(firstPath).click();
   await oneFile.click();
   await expect(page.locator(".squash-file")).toHaveCount(0);
-  await expect(page.getByRole("button", { name: "s squash" })).toHaveCount(0);
+  await expect(
+    page.getByRole("button", { name: "Squash", exact: true }),
+  ).toHaveCount(0);
   await addition(firstPath, 10).click();
   await page.keyboard.press("s");
   await expect(page.getByRole("alert")).toContainText(
@@ -700,7 +704,9 @@ try {
   );
   await expect(allFiles).toHaveAttribute("aria-pressed", "true");
   await expect(page.getByRole("alert")).toHaveCount(0);
-  await expect(page.getByRole("button", { name: "s squash" })).toHaveCount(0);
+  await expect(
+    page.getByRole("button", { name: "Squash", exact: true }),
+  ).toHaveCount(0);
   await page.keyboard.press("s");
   await expect(page.getByRole("alert")).toContainText(
     "The parent is immutable.",
@@ -715,7 +721,9 @@ try {
   };
   await page.keyboard.press("r");
   await expect(page.locator(".squash-file")).toHaveCount(3);
-  await expect(page.getByRole("button", { name: "s squash" })).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Squash", exact: true }),
+  ).toBeVisible();
   await expect(
     section(firstPath).getByRole("button", {
       name: `Squash file ${firstPath}`,

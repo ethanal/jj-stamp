@@ -105,12 +105,13 @@ export function SettingsDialog({
   return (
     <>
       <button
+        className="action-button"
         aria-haspopup="dialog"
         aria-controls={id}
         onClick={() => dialog.current?.showModal()}
         disabled={disabled}
       >
-        settings
+        Settings
       </button>
       <dialog
         ref={dialog}

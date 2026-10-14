@@ -112,7 +112,7 @@ const cursor = () => page.locator("[data-line][data-fold-vim-cursor]");
 const selected = () => page.locator("[data-line][data-fold-selected]");
 const added = () =>
   surface.locator('[data-line-type="change-addition"][data-line="2"]');
-const settings = page.getByRole("button", { name: "settings", exact: true });
+const settings = page.getByRole("button", { name: "Settings", exact: true });
 const vim = page.getByRole("checkbox", { name: "Vim mode", exact: true });
 async function at(line: number, side?: "addition" | "deletion") {
   await expect(cursor()).toHaveCount(1);

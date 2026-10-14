@@ -110,92 +110,81 @@ export function ShortcutsDialog({ disabled }: { disabled: boolean }) {
   }, [disabled, open]);
 
   return (
-    <>
-      <button
-        aria-haspopup="dialog"
-        aria-controls={id}
-        title="Keyboard shortcuts (?)"
-        disabled={disabled}
-        onClick={open}
-      >
-        shortcuts
-      </button>
-      <dialog
-        ref={dialog}
-        id={id}
-        className="settings-dialog shortcuts-dialog"
-        aria-labelledby={`${id}-title`}
-        aria-describedby={`${id}-description`}
-        onClose={restoreFocus}
-        onCancel={(event) => {
+    <dialog
+      ref={dialog}
+      id={id}
+      className="settings-dialog shortcuts-dialog"
+      aria-labelledby={`${id}-title`}
+      aria-describedby={`${id}-description`}
+      onClose={restoreFocus}
+      onCancel={(event) => {
+        event.preventDefault();
+        dialog.current?.close();
+      }}
+      onKeyDown={(event) => {
+        // Stop before document listeners, including CodeDiff’s Escape/editor
+        // handlers and diff search. Keyup is isolated for its Alt cursor too.
+        event.stopPropagation();
+        if (event.key === "Escape") {
           event.preventDefault();
           dialog.current?.close();
-        }}
-        onKeyDown={(event) => {
-          // Stop before document listeners, including CodeDiff’s Escape/editor
-          // handlers and diff search. Keyup is isolated for its Alt cursor too.
-          event.stopPropagation();
-          if (event.key === "Escape") {
+        } else if (event.key === "Tab") {
+          const controls = event.currentTarget.querySelectorAll<HTMLElement>(
+            'button:not(:disabled), [tabindex="0"]',
+          );
+          const first = controls[0];
+          const last = controls[controls.length - 1];
+          if (event.shiftKey && document.activeElement === first) {
             event.preventDefault();
-            dialog.current?.close();
-          } else if (event.key === "Tab") {
-            const controls = event.currentTarget.querySelectorAll<HTMLElement>(
-              'button:not(:disabled), [tabindex="0"]',
-            );
-            const first = controls[0];
-            const last = controls[controls.length - 1];
-            if (event.shiftKey && document.activeElement === first) {
-              event.preventDefault();
-              last?.focus();
-            } else if (!event.shiftKey && document.activeElement === last) {
-              event.preventDefault();
-              first?.focus();
-            }
+            last?.focus();
+          } else if (!event.shiftKey && document.activeElement === last) {
+            event.preventDefault();
+            first?.focus();
           }
-        }}
-        onKeyUp={(event) => event.stopPropagation()}
-      >
-        <div className="settings-heading">
-          <h2 id={`${id}-title`}>Keyboard shortcuts</h2>
-          <button
-            ref={closeButton}
-            autoFocus
-            aria-label="Close keyboard shortcuts"
-            onClick={() => dialog.current?.close()}
-          >
-            ×
-          </button>
-        </div>
-        <div
-          className="shortcuts-content"
-          role="region"
-          aria-label="Shortcut reference"
-          tabIndex={0}
+        }
+      }}
+      onKeyUp={(event) => event.stopPropagation()}
+    >
+      <div className="settings-heading">
+        <h2 id={`${id}-title`}>Keyboard shortcuts</h2>
+        <button
+          ref={closeButton}
+          autoFocus
+          aria-label="Close keyboard shortcuts"
+          onClick={() => dialog.current?.close()}
         >
-          <p id={`${id}-description`} className="shortcuts-description">
-            Single-key shortcuts work outside text fields and dialogs. Review
-            actions depend on the selection and repository state.
-          </p>
-          <div className="shortcuts-groups">
-            {groups.map(({ title, shortcuts, note }) => (
-              <section className="shortcuts-group" key={title}>
-                <h3>{title}</h3>
-                {note && <p className="shortcuts-note">{note}</p>}
-                <dl>
-                  {shortcuts.map(([keys, description]) => (
-                    <div className="shortcut-entry" key={keys}>
-                      <dt>
-                        <kbd>{keys}</kbd>
-                      </dt>
-                      <dd>{description}</dd>
-                    </div>
-                  ))}
-                </dl>
-              </section>
-            ))}
-          </div>
+          ×
+        </button>
+      </div>
+      <div
+        className="shortcuts-content"
+        role="region"
+        aria-label="Shortcut reference"
+        tabIndex={0}
+      >
+        <p id={`${id}-description`} className="shortcuts-description">
+          Single-key shortcuts work outside text fields and dialogs. Review
+          actions depend on the selection and repository state.
+        </p>
+        <div className="shortcuts-groups">
+          {groups.map(({ title, shortcuts, note }) => (
+            <section className="shortcuts-group" key={title}>
+              <h3>{title}</h3>
+              {note && <p className="shortcuts-note">{note}</p>}
+              <dl>
+                {shortcuts.map(([keys, description]) => (
+                  <div className="shortcut-entry" key={keys}>
+                    <dt>
+                      <kbd>{keys}</kbd>
+                    </dt>
+                    <dd>{description}</dd>
+                  </div>
+                ))}
+              </dl>
+            </section>
+          ))}
         </div>
-      </dialog>
-    </>
+      </div>
+    </dialog>
   );
 }

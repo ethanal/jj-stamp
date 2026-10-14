@@ -69,7 +69,7 @@ const { page, url, errors } = fixture;
 const surface = page.locator(".code-surface");
 const cursor = page.locator("[data-line][data-fold-vim-cursor]");
 const selected = page.locator("[data-line][data-fold-selected]");
-const refresh = page.getByRole("button", { name: "refresh r", exact: true });
+const refresh = page.getByRole("button", { name: "Refresh", exact: true });
 async function at(line: number) {
   await expect(cursor).toHaveCount(1);
   await expect(cursor).toHaveAttribute("data-line", String(line));

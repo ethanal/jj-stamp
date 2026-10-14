@@ -129,9 +129,9 @@ assert.equal(graphReads, 1);
 
 // Same immutable identities and refreshed authorization never cause refetch.
 generation++;
-await page.getByRole("button", { name: "refresh r", exact: true }).click();
+await page.getByRole("button", { name: "Refresh", exact: true }).click();
 await expect(
-  page.getByRole("button", { name: "refresh r", exact: true }),
+  page.getByRole("button", { name: "Refresh", exact: true }),
 ).toBeEnabled();
 await expect.poll(() => graphReads).toBe(2);
 await page.waitForTimeout(100);
@@ -167,7 +167,9 @@ await expect(page.locator(".code-surface")).toContainText("new 4");
 await expect(page.locator(".squash-unavailable")).toHaveCount(0);
 await expect(page.getByRole("alert")).toHaveCount(0);
 await expect(page.locator(".squash-file")).toBeDisabled();
-await expect(page.getByRole("button", { name: "s squash" })).toBeDisabled();
+await expect(
+  page.getByRole("button", { name: "Squash", exact: true }),
+).toBeDisabled();
 await expect(page.locator(".file-tree")).not.toHaveAttribute("inert", "");
 await choose(3);
 await expect(page.locator(".code-surface")).toContainText("new 3");
@@ -218,7 +220,7 @@ await page
   .click();
 await choose(1);
 await expect(
-  page.getByRole("button", { name: "refresh r", exact: true }),
+  page.getByRole("button", { name: "Refresh", exact: true }),
 ).toBeEnabled();
 await expect(page.locator(".code-surface")).toContainText("new 1");
 assert.equal(
@@ -262,7 +264,7 @@ await page.route("**/api/graph", async (route) => {
   } else await route.fulfill({ response });
 });
 generation++;
-await page.getByRole("button", { name: "refresh r", exact: true }).click();
+await page.getByRole("button", { name: "Refresh", exact: true }).click();
 await graphGates[0].ready;
 await expect(page.locator(".log-status")).toHaveText("updating…");
 await expect(
@@ -292,7 +294,7 @@ await expect(page.locator(".log-status")).toHaveText("updating…");
 await choose(4);
 await expect.poll(() => selected).toBe(4);
 await expect(
-  page.getByRole("button", { name: "refresh r", exact: true }),
+  page.getByRole("button", { name: "Refresh", exact: true }),
 ).toBeEnabled();
 assert.deepEqual(selections.at(-1), {
   changeId: revisions[4].changeId,

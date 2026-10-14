@@ -895,24 +895,27 @@ function App() {
             />
           </span>
         </RevisionHeading>
-        <button
-          onClick={() => void refresh()}
-          disabled={idleActionDisabled}
-          title="Refresh (r)"
-        >
-          refresh <kbd>r</kbd>
-        </button>
-        <ShortcutsDialog disabled={dragging} />
-        <SettingsDialog
-          colorScheme={colorScheme}
-          onColorSchemeChange={setColorScheme}
-          hoverSidebars={hoverSidebars}
-          onHoverSidebarsChange={setHoverSidebars}
-          vimMode={vimMode}
-          onVimModeChange={setVimMode}
-          disabled={dragging}
-        />
+        <div className="toolbar-actions">
+          <button
+            className="action-button"
+            onClick={() => void refresh()}
+            disabled={idleActionDisabled}
+            title="Refresh repository"
+          >
+            Refresh
+          </button>
+          <SettingsDialog
+            colorScheme={colorScheme}
+            onColorSchemeChange={setColorScheme}
+            hoverSidebars={hoverSidebars}
+            onHoverSidebarsChange={setHoverSidebars}
+            vimMode={vimMode}
+            onVimModeChange={setVimMode}
+            disabled={dragging}
+          />
+        </div>
       </header>
+      <ShortcutsDialog disabled={dragging} />
       <div
         className={`workspace ${showLog ? "" : "log-collapsed"} ${showFiles ? "" : "files-collapsed"}`}
         style={
