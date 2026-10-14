@@ -816,8 +816,35 @@ kbd {
   color: var(--strong);
   font-weight: 500;
 }
-.color-scheme-picker select,
-.font-size-picker select {
+.font-size-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+}
+.font-size-value {
+  color: var(--muted);
+  font-size: calc(var(--font-size) + 2px);
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+}
+.font-size-picker input {
+  width: 100%;
+  min-width: 0;
+  height: 28px;
+  margin: 0;
+  accent-color: var(--focus);
+  cursor: pointer;
+}
+.font-size-picker input:disabled {
+  cursor: default;
+}
+.font-size-picker input:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 3px;
+}
+.color-scheme-picker select {
   width: 100%;
   min-width: 0;
   min-height: 42px;

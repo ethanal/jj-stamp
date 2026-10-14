@@ -221,8 +221,10 @@ test("settings uses a labeled, initially closed native dialog and a named close 
   assert.match(html, /aria-label="Close settings"/);
   assert.match(html, /<span>Color scheme<\/span>/);
   assert.match(html, /aria-label="Font size"/);
-  assert.match(html, /value="13" selected=""/);
-  assert.match(html, /Applies to the UI and diffs/);
+  assert.match(html, /type="range" min="10" max="24" step="1"/);
+  assert.match(html, /aria-valuetext="13 pixels \(default\)"/);
+  assert.match(html, /value="13"/);
+  assert.doesNotMatch(html, /Applies to the UI and diffs/);
   assert.equal(html.match(/type="checkbox"/g)?.length, 2);
   const hoverPosition = html.indexOf("Reveal sidebars on hover");
   const vimPosition = html.indexOf("Vim mode");

@@ -162,28 +162,26 @@ export function SettingsDialog({
             disabled={disabled}
           />
           <label className="font-size-picker">
-            <span>Font size</span>
-            <select
+            <span className="font-size-heading">
+              <span>Font size</span>
+              <span className="font-size-value" aria-hidden="true">
+                {fontSize}px
+                {fontSize === fontSizeLimits.initial ? " (default)" : ""}
+              </span>
+            </span>
+            <input
+              type="range"
+              min={fontSizeLimits.min}
+              max={fontSizeLimits.max}
+              step={1}
               aria-label="Font size"
-              aria-describedby={`${id}-font-help`}
+              aria-valuetext={`${fontSize} pixels${fontSize === fontSizeLimits.initial ? " (default)" : ""}`}
               value={fontSize}
               disabled={disabled}
               onChange={(event) =>
                 onFontSizeChange(parseFontSize(event.target.value))
               }
-            >
-              {Array.from(
-                { length: fontSizeLimits.max - fontSizeLimits.min + 1 },
-                (_, index) => fontSizeLimits.min + index,
-              ).map((size) => (
-                <option key={size} value={size}>
-                  {size}px{size === fontSizeLimits.initial ? " (default)" : ""}
-                </option>
-              ))}
-            </select>
-            <span className="settings-help" id={`${id}-font-help`}>
-              Applies to the UI and diffs.
-            </span>
+            />
           </label>
         </section>
         <section

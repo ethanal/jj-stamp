@@ -273,7 +273,7 @@ try {
   const settings = page.getByRole("button", { name: "Settings", exact: true });
   const dialog = page.getByRole("dialog", { name: "Settings" });
   const picker = page.getByLabel("Color scheme");
-  const fontSize = page.getByLabel("Font size", { exact: true });
+  const fontSize = page.getByRole("slider", { name: "Font size", exact: true });
   const hoverSetting = page.getByRole("checkbox", {
     name: "Reveal sidebars on hover",
   });
@@ -301,6 +301,21 @@ try {
   await page.keyboard.press("Tab");
   await expect(fontSize).toBeFocused();
   await expect(fontSize).toHaveValue("13");
+  await expect(fontSize).toHaveAttribute(
+    "aria-valuetext",
+    "13 pixels (default)",
+  );
+  await expect(dialog.locator(".font-size-value")).toHaveText("13px (default)");
+  await expect(dialog).not.toContainText("Applies to the UI and diffs.");
+  await fontSize.press("ArrowRight");
+  await expect(fontSize).toHaveValue("14");
+  await expect(page.locator("html")).toHaveCSS("font-size", "14px");
+  await expect(dialog.locator(".font-size-value")).toHaveText("14px");
+  await fontSize.press("Home");
+  await expect(fontSize).toHaveValue("10");
+  await fontSize.press("End");
+  await expect(fontSize).toHaveValue("24");
+  await fontSize.fill("13");
   await page.keyboard.press("Tab");
   await expect(hoverSetting).toBeFocused();
   await expect(hoverSetting).not.toBeChecked();
@@ -355,7 +370,24 @@ try {
   await page.keyboard.press("ArrowLeft");
   await expect(log).toHaveAttribute("aria-valuenow", "400");
   await settings.click();
-  await fontSize.selectOption("18");
+  const sliderBox = await fontSize.boundingBox();
+  assert(sliderBox);
+  await page.mouse.move(
+    sliderBox.x + sliderBox.width * 0.6,
+    sliderBox.y + sliderBox.height / 2,
+  );
+  await page.mouse.down();
+  await expect(fontSize).not.toHaveValue("13");
+  await page.mouse.move(
+    sliderBox.x + sliderBox.width * 0.8,
+    sliderBox.y + sliderBox.height / 2,
+    { steps: 5 },
+  );
+  await page.mouse.up();
+  const draggedSize = Number(await fontSize.inputValue());
+  assert(draggedSize >= 20 && draggedSize <= 24);
+  await expect(page.locator("html")).toHaveCSS("font-size", `${draggedSize}px`);
+  await fontSize.fill("18");
   await expect(page.locator("html")).toHaveCSS("font-size", "18px");
   await expect(page.locator(".action-button").first()).toHaveCSS(
     "font-size",
@@ -394,7 +426,7 @@ try {
   await expect(picker).toHaveValue("light");
   await expect(fontSize).toHaveValue("18");
   await expect(page.locator("html")).toHaveCSS("font-size", "18px");
-  await fontSize.selectOption("13");
+  await fontSize.fill("13");
   await expect(vimSetting).toBeChecked();
   await vimSetting.uncheck();
   await expect
@@ -741,7 +773,9 @@ try {
   await expect(noStorage.getByLabel("Font size", { exact: true })).toHaveValue(
     "13",
   );
-  await noStorage.getByLabel("Font size", { exact: true }).selectOption("16");
+  await noStorage
+    .getByRole("slider", { name: "Font size", exact: true })
+    .fill("16");
   await expect(noStorage.locator("html")).toHaveCSS("font-size", "16px");
   const noStorageHover = noStorage.getByRole("checkbox", {
     name: "Reveal sidebars on hover",
