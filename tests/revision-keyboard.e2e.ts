@@ -392,7 +392,7 @@ try {
   // Hover previews focus the current revision without selecting anything.
   await settings.click();
   await page
-    .getByRole("checkbox", { name: "Show collapsed sidebars on hover" })
+    .getByRole("checkbox", { name: "Reveal sidebars on hover" })
     .check();
   await page.keyboard.press("Escape");
   await page.keyboard.press("l");

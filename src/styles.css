@@ -727,29 +727,104 @@ kbd {
   height: 28px;
   font-size: 20px;
 }
+/* Keep settings spacing independent of the shared keyboard-shortcuts dialog. */
+.preferences-dialog {
+  width: min(480px, calc(100vw - 32px));
+  max-height: calc(100dvh - 32px);
+  padding: 24px;
+  font-size: 15px;
+  line-height: 1.5;
+}
+.preferences-dialog[open] {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+.preferences-dialog .settings-heading {
+  margin: 0;
+  gap: 16px;
+}
+.preferences-dialog .settings-heading h2 {
+  color: var(--strong);
+  font-size: 22px;
+  font-weight: 600;
+}
+.preferences-dialog .settings-heading button {
+  width: 36px;
+  height: 36px;
+  flex-shrink: 0;
+  border-radius: 4px;
+  font-size: 26px;
+  line-height: 1;
+}
+.preferences-dialog .settings-heading button:hover {
+  background: var(--hover);
+}
+.settings-section {
+  display: grid;
+  gap: 12px;
+}
+.settings-section h3 {
+  margin: 0;
+  color: var(--muted);
+  font-size: 14px;
+  font-weight: 500;
+}
+.settings-rows {
+  display: grid;
+}
 .settings-checkbox {
   display: flex;
   align-items: center;
-  gap: 8px;
-  margin-top: 20px;
+  justify-content: space-between;
+  gap: 20px;
   cursor: pointer;
 }
+.settings-checkbox + .settings-checkbox {
+  margin-top: 16px;
+  border-top: 1px solid var(--border);
+  padding-top: 16px;
+}
+.settings-copy {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  color: var(--strong);
+  font-weight: 500;
+}
+.settings-help {
+  color: var(--fg);
+  font-size: 14px;
+  font-weight: 400;
+}
 .settings-checkbox input {
+  width: 20px;
+  height: 20px;
+  margin: 0;
   flex-shrink: 0;
   accent-color: var(--focus);
 }
+.settings-checkbox input:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 3px;
+}
 .color-scheme-picker {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
+  display: grid;
+  gap: 8px;
+  color: var(--strong);
+  font-weight: 500;
 }
 .color-scheme-picker select {
+  width: 100%;
+  min-width: 0;
+  min-height: 42px;
   background: var(--panel);
+  color: var(--fg);
   border: 1px solid var(--border);
-  border-radius: 3px;
-  padding: 2px 3px;
-  font-size: 10px;
+  border-radius: 4px;
+  padding: 8px 12px;
+  font-size: 14px;
+  font-weight: 400;
   cursor: pointer;
 }
 .split-diff-layout {

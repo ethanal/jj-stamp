@@ -270,23 +270,28 @@
       .grouped .select-row {
         align-items: flex-start;
         flex-direction: column;
-        gap: 12px;
+        gap: 8px;
       }
       .grouped select {
         width: 100%;
       }
       .grouped .check-row {
         justify-content: space-between;
-        border-top: 1px solid var(--border);
-        padding: 18px 0;
+        padding: 0;
         gap: 20px;
       }
-      .grouped .check-row:last-of-type {
-        padding-bottom: 0;
+      .grouped .check-row + .check-row {
+        margin-top: 16px;
+        border-top: 1px solid var(--border);
+        padding-top: 16px;
+      }
+      .grouped .helper {
+        margin-top: 4px;
+        line-height: 1.5;
       }
       .grouped .check-row input {
-        width: 21px;
-        height: 21px;
+        width: 20px;
+        height: 20px;
       }
       .cards .subtitle {
         margin-top: -16px;
@@ -341,7 +346,7 @@
         border: 0;
         background: transparent;
         color: var(--fg);
-        width: min(500px, calc(100vw - 32px));
+        width: min(480px, calc(100vw - 32px));
         max-height: calc(100dvh - 32px);
       }
       dialog::backdrop {

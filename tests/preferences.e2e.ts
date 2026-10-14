@@ -113,6 +113,50 @@ async function assertPeekAnimation(
     "slide from the collapsed rail",
   );
 }
+async function assertSettingsLayout(dialog: Locator) {
+  await expect(dialog).toHaveCSS("padding", "24px");
+  await expect(dialog).toHaveCSS("gap", "24px");
+  await expect(dialog.locator("h2")).toHaveCSS("font-size", "22px");
+  await expect(dialog.locator("select")).toHaveCSS("font-size", "14px");
+  await expect(dialog.locator(".settings-copy").first()).toHaveCSS(
+    "font-size",
+    "15px",
+  );
+  await expect(dialog.locator(".settings-help").first()).toHaveCSS(
+    "font-size",
+    "14px",
+  );
+  const layout = await dialog.evaluate((element) => {
+    const bounds = element.getBoundingClientRect();
+    const [header, appearance, behavior, picker, rows] = [
+      ".settings-heading",
+      ".settings-section",
+      ".settings-section:last-child",
+      "select",
+      ".settings-rows",
+    ].map((selector) =>
+      element.querySelector(selector)!.getBoundingClientRect(),
+    );
+    return {
+      inViewport: bounds.left >= 0 && bounds.right <= innerWidth,
+      noOverflow: element.scrollWidth === element.clientWidth,
+      padding: [
+        header.left - bounds.left - 1,
+        bounds.right - header.right - 1,
+        header.top - bounds.top - 1,
+        bounds.bottom - behavior.bottom - 1,
+      ],
+      gaps: [appearance.top - header.bottom, behavior.top - appearance.bottom],
+      aligned: [appearance, behavior, picker, rows].every(
+        (box) => box.left === header.left && box.right === header.right,
+      ),
+    };
+  });
+  assert(layout.inViewport && layout.noOverflow);
+  assert(layout.aligned, "headings, controls, and rows share the same edges");
+  assert.deepEqual(layout.padding, [24, 24, 24, 24]);
+  assert.deepEqual(layout.gaps, [24, 24]);
+}
 async function assertConnectedGraph() {
   await expect(page.locator(".log-row")).toHaveCount(graphRows.length);
   await expect(page.locator(".jj-log")).toHaveCSS("font-size", "12px");
@@ -227,13 +271,24 @@ try {
   const dialog = page.getByRole("dialog", { name: "Settings" });
   const picker = page.getByLabel("Color scheme");
   const hoverSetting = page.getByRole("checkbox", {
-    name: "Show collapsed sidebars on hover",
+    name: "Reveal sidebars on hover",
   });
   const vimSetting = page.getByRole("checkbox", { name: "Vim mode" });
   await expect(dialog).not.toBeVisible();
   await expect(picker).not.toBeVisible();
   await settings.click();
   await expect(dialog).toBeVisible();
+  await assertSettingsLayout(dialog);
+  await expect(
+    dialog.getByRole("region", { name: "Appearance" }),
+  ).toBeVisible();
+  await expect(dialog.getByRole("region", { name: "Behavior" })).toBeVisible();
+  await expect(hoverSetting).toHaveAccessibleDescription(
+    "Peek at Files or Log while collapsed.",
+  );
+  await expect(vimSetting).toHaveAccessibleDescription(
+    "Navigate and select lines with Vim keys.",
+  );
   await expect(
     page.getByRole("button", { name: "Close settings" }),
   ).toBeFocused();
@@ -613,6 +668,14 @@ try {
   await expect(dialog).toBeVisible();
   const dialogBox = await dialog.boundingBox();
   assert(dialogBox && dialogBox.x >= 0 && dialogBox.x + dialogBox.width <= 600);
+  for (const width of [600, 390, 320]) {
+    await page.setViewportSize({ width, height: 800 });
+    await assertSettingsLayout(dialog);
+  }
+  await page.setViewportSize({ width: 600, height: 320 });
+  await vimSetting.focus();
+  await expect(vimSetting).toBeInViewport();
+  await page.setViewportSize({ width: 600, height: 800 });
   await hoverSetting.check();
   await page.keyboard.press("Escape");
   await page.getByRole("button", { name: "Collapse files sidebar" }).click();
@@ -653,7 +716,7 @@ try {
     .click();
   await expect(noStorage.getByLabel("Color scheme")).toHaveValue("dark");
   const noStorageHover = noStorage.getByRole("checkbox", {
-    name: "Show collapsed sidebars on hover",
+    name: "Reveal sidebars on hover",
   });
   const noStorageVim = noStorage.getByRole("checkbox", { name: "Vim mode" });
   await expect(noStorageHover).not.toBeChecked();

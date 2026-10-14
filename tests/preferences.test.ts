@@ -208,7 +208,7 @@ test("settings uses a labeled, initially closed native dialog and a named close 
   assert.match(html, /aria-label="Close settings"/);
   assert.match(html, /<span>Color scheme<\/span>/);
   assert.equal(html.match(/type="checkbox"/g)?.length, 2);
-  const hoverPosition = html.indexOf("Show collapsed sidebars on hover");
+  const hoverPosition = html.indexOf("Reveal sidebars on hover");
   const vimPosition = html.indexOf("Vim mode");
   assert.ok(hoverPosition >= 0);
   assert.ok(vimPosition > hoverPosition);

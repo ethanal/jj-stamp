@@ -116,7 +116,7 @@ export function SettingsDialog({
       <dialog
         ref={dialog}
         id={id}
-        className="settings-dialog"
+        className="settings-dialog preferences-dialog"
         aria-labelledby={`${id}-title`}
         onKeyDown={(event) => {
           event.stopPropagation();
@@ -145,29 +145,59 @@ export function SettingsDialog({
             ×
           </button>
         </div>
-        <ColorSchemePicker
-          value={colorScheme}
-          onChange={onColorSchemeChange}
-          disabled={disabled}
-        />
-        <label className="settings-checkbox">
-          <input
-            type="checkbox"
-            checked={hoverSidebars}
+        <section
+          className="settings-section"
+          aria-labelledby={`${id}-appearance`}
+        >
+          <h3 id={`${id}-appearance`}>Appearance</h3>
+          <ColorSchemePicker
+            value={colorScheme}
+            onChange={onColorSchemeChange}
             disabled={disabled}
-            onChange={(event) => onHoverSidebarsChange(event.target.checked)}
           />
-          <span>Show collapsed sidebars on hover</span>
-        </label>
-        <label className="settings-checkbox">
-          <input
-            type="checkbox"
-            checked={vimMode}
-            disabled={disabled}
-            onChange={(event) => onVimModeChange(event.target.checked)}
-          />
-          <span>Vim mode</span>
-        </label>
+        </section>
+        <section
+          className="settings-section"
+          aria-labelledby={`${id}-behavior`}
+        >
+          <h3 id={`${id}-behavior`}>Behavior</h3>
+          <div className="settings-rows">
+            <label className="settings-checkbox">
+              <span className="settings-copy">
+                <span id={`${id}-hover-label`}>Reveal sidebars on hover</span>
+                <span className="settings-help" id={`${id}-hover-help`}>
+                  Peek at Files or Log while collapsed.
+                </span>
+              </span>
+              <input
+                type="checkbox"
+                aria-labelledby={`${id}-hover-label`}
+                aria-describedby={`${id}-hover-help`}
+                checked={hoverSidebars}
+                disabled={disabled}
+                onChange={(event) =>
+                  onHoverSidebarsChange(event.target.checked)
+                }
+              />
+            </label>
+            <label className="settings-checkbox">
+              <span className="settings-copy">
+                <span id={`${id}-vim-label`}>Vim mode</span>
+                <span className="settings-help" id={`${id}-vim-help`}>
+                  Navigate and select lines with Vim keys.
+                </span>
+              </span>
+              <input
+                type="checkbox"
+                aria-labelledby={`${id}-vim-label`}
+                aria-describedby={`${id}-vim-help`}
+                checked={vimMode}
+                disabled={disabled}
+                onChange={(event) => onVimModeChange(event.target.checked)}
+              />
+            </label>
+          </div>
+        </section>
       </dialog>
     </>
   );
