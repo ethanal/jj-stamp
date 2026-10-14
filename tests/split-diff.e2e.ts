@@ -184,7 +184,7 @@ try {
   await expect
     .poll(() => leftCode.evaluate((el) => el.scrollLeft))
     .toBeGreaterThan(0);
-  await page.setViewportSize({ width: 2400, height: 700 });
+  await page.setViewportSize({ width: 2800, height: 700 });
   await expect.poll(() => leftCode.evaluate((el) => el.scrollLeft)).toBe(0);
   await checkHorizontalGeometry("after widening");
   // The same 100cqi hunk headings are used by stacked diffs.

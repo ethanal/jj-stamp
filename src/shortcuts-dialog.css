@@ -1,6 +1,6 @@
 .settings-dialog.shortcuts-dialog {
   box-sizing: border-box;
-  width: min(860px, calc(100vw - 32px));
+  width: min(72rem, calc(100vw - 32px));
   max-height: calc(100dvh - 32px);
   padding: 20px;
   overflow: hidden;
@@ -27,7 +27,7 @@
 .shortcuts-description,
 .shortcuts-note {
   color: var(--muted);
-  font-size: 11px;
+  font-size: calc(var(--font-size) - 1px);
   line-height: 1.6;
   margin: 0 0 14px;
 }
@@ -45,7 +45,7 @@
 }
 .shortcuts-group h3 {
   color: var(--strong);
-  font-size: 12px;
+  font-size: var(--font-size);
   font-weight: 600;
   margin: 0 0 10px;
   padding-bottom: 7px;
@@ -79,11 +79,11 @@
   border: 1px solid var(--border);
   border-radius: 3px;
   padding: 0 5px;
-  font-size: 11px;
+  font-size: calc(var(--font-size) - 1px);
   white-space: normal;
 }
 .shortcut-entry dd {
-  font-size: 11px;
+  font-size: calc(var(--font-size) - 1px);
   overflow-wrap: anywhere;
 }
 @media (max-width: 600px) {

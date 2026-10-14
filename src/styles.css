@@ -7,8 +7,9 @@
 }
 
 :root {
+  --font-size: 13px;
   font-family: "Source Code Pro", monospace;
-  font-size: 12px;
+  font-size: var(--font-size);
   font-synthesis: none;
   color-scheme: dark;
   color: var(--fg);
@@ -45,8 +46,8 @@
   --diff-separator-bg: #20262e;
   --diff-separator-fg: #a2adba;
   --diffs-font-family: "Source Code Pro", monospace;
-  --diffs-font-size: 12px;
-  --diffs-line-height: 19px;
+  --diffs-font-size: var(--font-size);
+  --diffs-line-height: calc(var(--font-size) + 7px);
   --diffs-header-font-family: "Source Code Pro", monospace;
   --diffs-gap-block: 0px;
   --diffs-bg-selection-override: var(--diff-selection-bg);
@@ -210,7 +211,7 @@ kbd {
 }
 kbd {
   color: var(--fg);
-  font-size: 11px;
+  font-size: calc(var(--font-size) - 1px);
 }
 .app {
   height: 100dvh;
@@ -236,7 +237,7 @@ kbd {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 10px;
+  font-size: calc(var(--font-size) - 2px);
 }
 .revision-info {
   display: flex;
@@ -244,7 +245,7 @@ kbd {
   gap: 13px;
   min-width: 0;
   flex: 1;
-  font-size: 11px;
+  font-size: calc(var(--font-size) - 1px);
 }
 .revision-info code {
   color: var(--accent);
@@ -263,7 +264,7 @@ kbd {
 }
 .commit-id {
   flex-shrink: 0;
-  font-size: 10px;
+  font-size: calc(var(--font-size) - 2px);
 }
 /* Panel-matched fills and softer labels keep outlined actions unobtrusive. */
 .action-button {
@@ -276,8 +277,8 @@ kbd {
   border-radius: 4px;
   background: var(--button-bg);
   color: var(--button-fg);
-  font-size: 12px;
-  line-height: 20px;
+  font-size: var(--font-size);
+  line-height: max(20px, calc(var(--font-size) + 4px));
   white-space: nowrap;
 }
 .action-button:hover:not(:disabled) {
@@ -312,10 +313,10 @@ kbd {
 }
 .commit-totals > span:first-child {
   color: var(--muted);
-  font-size: 10px;
+  font-size: calc(var(--font-size) - 2px);
 }
 .commit-totals .line-counts {
-  font-size: 11px;
+  font-size: calc(var(--font-size) - 1px);
 }
 .workspace {
   --files-width: min(var(--files-preferred-width, 245px), 36vw);
@@ -409,7 +410,7 @@ kbd {
 .sidebar-heading > span,
 .log-status {
   color: var(--muted);
-  font-size: 10px;
+  font-size: calc(var(--font-size) - 2px);
 }
 .log-status {
   margin-left: auto;
@@ -463,7 +464,7 @@ kbd {
 }
 .file-tree {
   --trees-font-family-override: "Source Code Pro", monospace;
-  --trees-font-size-override: 11px;
+  --trees-font-size-override: calc(var(--font-size) - 1px);
   --trees-bg-override: var(--panel);
   --trees-fg-override: var(--fg);
   --trees-fg-muted-override: var(--muted);
@@ -486,7 +487,7 @@ kbd {
   padding: 9px 14px;
   display: flex;
   gap: 8px;
-  font-size: 10px;
+  font-size: calc(var(--font-size) - 2px);
 }
 .sidebar-footer > span {
   color: var(--muted);
@@ -520,7 +521,7 @@ kbd {
 }
 .rail-label {
   writing-mode: vertical-rl;
-  font-size: 10px;
+  font-size: calc(var(--font-size) - 2px);
   color: var(--muted);
   margin: 14px auto;
   user-select: none;
@@ -600,7 +601,7 @@ kbd {
   flex-shrink: 0;
 }
 .diff-search {
-  height: 28px;
+  min-height: 28px;
   display: flex;
   align-items: center;
   gap: 3px;
@@ -620,7 +621,7 @@ kbd {
   outline: 0;
   color: var(--fg);
   background: transparent;
-  font-size: 11px;
+  font-size: calc(var(--font-size) - 1px);
 }
 .diff-search input::placeholder {
   color: var(--muted);
@@ -630,7 +631,7 @@ kbd {
   flex: 0 0 82px;
   overflow: hidden;
   color: var(--muted);
-  font-size: 10px;
+  font-size: calc(var(--font-size) - 2px);
   text-align: right;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -663,7 +664,7 @@ kbd {
   align-items: center;
   gap: 7px;
   white-space: nowrap;
-  font-size: 10px;
+  font-size: calc(var(--font-size) - 2px);
 }
 .added {
   color: var(--added);
@@ -681,8 +682,8 @@ kbd {
 .layout-toggle button {
   min-height: 26px;
   padding: 3px 9px;
-  font-size: 12px;
-  line-height: 20px;
+  font-size: var(--font-size);
+  line-height: max(20px, calc(var(--font-size) + 4px));
   color: var(--button-fg);
   white-space: nowrap;
 }
@@ -719,20 +720,20 @@ kbd {
 }
 .settings-heading h2 {
   margin: 0;
-  font-size: 14px;
+  font-size: calc(var(--font-size) + 2px);
   font-weight: 500;
 }
 .settings-heading button {
   width: 28px;
   height: 28px;
-  font-size: 20px;
+  font-size: calc(var(--font-size) + 8px);
 }
 /* Keep settings spacing independent of the shared keyboard-shortcuts dialog. */
 .preferences-dialog {
   width: min(480px, calc(100vw - 32px));
   max-height: calc(100dvh - 32px);
   padding: 24px;
-  font-size: 15px;
+  font-size: calc(var(--font-size) + 3px);
   line-height: 1.5;
 }
 .preferences-dialog[open] {
@@ -746,7 +747,7 @@ kbd {
 }
 .preferences-dialog .settings-heading h2 {
   color: var(--strong);
-  font-size: 22px;
+  font-size: calc(var(--font-size) + 10px);
   font-weight: 600;
 }
 .preferences-dialog .settings-heading button {
@@ -754,7 +755,7 @@ kbd {
   height: 36px;
   flex-shrink: 0;
   border-radius: 4px;
-  font-size: 26px;
+  font-size: calc(var(--font-size) + 14px);
   line-height: 1;
 }
 .preferences-dialog .settings-heading button:hover {
@@ -767,7 +768,7 @@ kbd {
 .settings-section h3 {
   margin: 0;
   color: var(--muted);
-  font-size: 14px;
+  font-size: calc(var(--font-size) + 2px);
   font-weight: 500;
 }
 .settings-rows {
@@ -794,7 +795,7 @@ kbd {
 }
 .settings-help {
   color: var(--fg);
-  font-size: 14px;
+  font-size: calc(var(--font-size) + 2px);
   font-weight: 400;
 }
 .settings-checkbox input {
@@ -808,13 +809,15 @@ kbd {
   outline: 2px solid var(--focus);
   outline-offset: 3px;
 }
-.color-scheme-picker {
+.color-scheme-picker,
+.font-size-picker {
   display: grid;
   gap: 8px;
   color: var(--strong);
   font-weight: 500;
 }
-.color-scheme-picker select {
+.color-scheme-picker select,
+.font-size-picker select {
   width: 100%;
   min-width: 0;
   min-height: 42px;
@@ -823,7 +826,7 @@ kbd {
   border: 1px solid var(--border);
   border-radius: 4px;
   padding: 8px 12px;
-  font-size: 14px;
+  font-size: calc(var(--font-size) + 2px);
   font-weight: 400;
   cursor: pointer;
 }
@@ -902,7 +905,7 @@ kbd {
   margin: 0;
   min-width: 0;
   overflow-wrap: anywhere;
-  font-size: 12px;
+  font-size: var(--font-size);
   font-weight: 500;
 }
 .file-diff-heading .line-counts {
@@ -948,7 +951,7 @@ kbd {
   padding: 5px 13px;
   border-top: 1px solid var(--border);
   background: var(--chrome);
-  font-size: 10px;
+  font-size: calc(var(--font-size) - 2px);
   color: var(--muted);
 }
 .statusbar > span {
@@ -975,7 +978,7 @@ kbd {
   /* The bundled font includes box-drawing glyphs, keeping spaces and strokes
      on the same grid. Avoid extra leading so vertical connectors meet. */
   line-height: normal;
-  font-size: 12px;
+  font-size: var(--font-size);
   white-space: pre;
   tab-size: 2;
   scrollbar-color: var(--scrollbar) var(--panel);
@@ -1039,7 +1042,7 @@ kbd {
   display: flex;
   align-items: flex-start;
   gap: 15px;
-  font-size: 11px;
+  font-size: calc(var(--font-size) - 1px);
   line-height: 1.6;
   flex-shrink: 0;
 }
@@ -1076,20 +1079,20 @@ kbd {
   cursor: text;
 }
 .error button {
-  font-size: 16px;
+  font-size: calc(var(--font-size) + 4px);
 }
 .error .retry {
   display: block;
   margin-top: 5px;
   text-decoration: underline;
-  font-size: 11px;
+  font-size: calc(var(--font-size) - 1px);
 }
 .unsupported {
   padding: 12px 16px;
 }
 .unsupported p {
   color: var(--modified);
-  font-size: 11px;
+  font-size: calc(var(--font-size) - 1px);
 }
 .unsupported pre {
   color: var(--muted);
@@ -1176,9 +1179,6 @@ kbd {
   }
 }
 @media (max-width: 600px) {
-  :root {
-    --diffs-font-size: 11px;
-  }
   .workspace {
     --log-height: 150px;
   }
@@ -1191,11 +1191,11 @@ kbd {
   .topbar {
     gap: 7px;
     padding-inline: 9px;
-    font-size: 11px;
+    font-size: calc(var(--font-size) - 1px);
   }
   .revision-info {
     gap: 7px;
-    font-size: 10px;
+    font-size: calc(var(--font-size) - 2px);
   }
   .commit-id {
     max-width: 52px;
@@ -1206,7 +1206,7 @@ kbd {
     gap: 6px;
   }
   .commit-totals .line-counts {
-    font-size: 10px;
+    font-size: calc(var(--font-size) - 2px);
     gap: 4px;
   }
   .sidebar-footer {
@@ -1221,7 +1221,7 @@ kbd {
     flex-direction: column;
     gap: 5px;
     padding: 5px 10px;
-    font-size: 11px;
+    font-size: calc(var(--font-size) - 1px);
   }
   .file-bar-tools {
     margin-left: 0;

@@ -114,11 +114,14 @@ function Fixture() {
       >
         editable
       </span>
-      <output id="range">{JSON.stringify(range)}</output>
-      <output id="selection">{JSON.stringify(selections)}</output>
-      <output id="dragging">{String(dragging)}</output>
-      <output id="error">{error}</output>
-      <output id="file-loads">{fileLoads}</output>
+      {/* Test state must not reflow the pointer target between down and up. */}
+      <div hidden>
+        <output id="range">{JSON.stringify(range)}</output>
+        <output id="selection">{JSON.stringify(selections)}</output>
+        <output id="dragging">{String(dragging)}</output>
+        <output id="error">{error}</output>
+        <output id="file-loads">{fileLoads}</output>
+      </div>
       <div style={{ height: 420, display: "flex", marginTop: 20 }}>
         <SplitDiffLayout active={style === "split"} disabled={dragging}>
           <div className="viewer-scroll">

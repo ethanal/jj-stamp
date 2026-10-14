@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useLayoutEffect, useState } from "react";
 
 export const colorSchemes = {
   dark: { label: "Dark", theme: "github-dark", themeType: "dark" },
@@ -16,6 +16,16 @@ export const colorSchemes = {
   },
 } as const;
 export type ColorScheme = keyof typeof colorSchemes;
+export const fontSizeLimits = { min: 10, max: 24, initial: 13 } as const;
+export function parseFontSize(value: string | null): number {
+  const size = value?.trim() ? Number(value) : NaN;
+  return Number.isFinite(size)
+    ? Math.round(
+        Math.min(fontSizeLimits.max, Math.max(fontSizeLimits.min, size)),
+      )
+    : fontSizeLimits.initial;
+}
+
 export type FileView = "single" | "all";
 export function parseFileView(value: string | null): FileView {
   return value === "all" ? "all" : "single";
@@ -86,6 +96,10 @@ function usePreference<T extends string | number | boolean>(
   return [value, setValue] as const;
 }
 export function useAppearancePreferences() {
+  const [fontSize, setFontSize] = usePreference("font-size", parseFontSize);
+  useLayoutEffect(() => {
+    document.documentElement.style.setProperty("--font-size", `${fontSize}px`);
+  }, [fontSize]);
   const [vimMode, setVimMode] = usePreference("vim-mode", parseVimMode);
   const [hoverSidebars, setHoverSidebars] = usePreference(
     "hover-sidebars",
@@ -114,6 +128,8 @@ export function useAppearancePreferences() {
     document.documentElement.dataset.colorScheme = colorScheme;
   }, [colorScheme]);
   return {
+    fontSize,
+    setFontSize,
     vimMode,
     setVimMode,
     hoverSidebars,

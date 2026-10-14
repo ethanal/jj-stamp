@@ -116,15 +116,18 @@ async function assertPeekAnimation(
 async function assertSettingsLayout(dialog: Locator) {
   await expect(dialog).toHaveCSS("padding", "24px");
   await expect(dialog).toHaveCSS("gap", "24px");
-  await expect(dialog.locator("h2")).toHaveCSS("font-size", "22px");
-  await expect(dialog.locator("select")).toHaveCSS("font-size", "14px");
-  await expect(dialog.locator(".settings-copy").first()).toHaveCSS(
+  await expect(dialog.locator("h2")).toHaveCSS("font-size", "23px");
+  await expect(dialog.getByLabel("Color scheme")).toHaveCSS(
     "font-size",
     "15px",
   );
+  await expect(dialog.locator(".settings-copy").first()).toHaveCSS(
+    "font-size",
+    "16px",
+  );
   await expect(dialog.locator(".settings-help").first()).toHaveCSS(
     "font-size",
-    "14px",
+    "15px",
   );
   const layout = await dialog.evaluate((element) => {
     const bounds = element.getBoundingClientRect();
@@ -159,7 +162,7 @@ async function assertSettingsLayout(dialog: Locator) {
 }
 async function assertConnectedGraph() {
   await expect(page.locator(".log-row")).toHaveCount(graphRows.length);
-  await expect(page.locator(".jj-log")).toHaveCSS("font-size", "12px");
+  await expect(page.locator(".jj-log")).toHaveCSS("font-size", "13px");
   await expect(page.locator(".jj-log")).toHaveCSS(
     "font-family",
     '"Source Code Pro", monospace',
@@ -270,6 +273,7 @@ try {
   const settings = page.getByRole("button", { name: "Settings", exact: true });
   const dialog = page.getByRole("dialog", { name: "Settings" });
   const picker = page.getByLabel("Color scheme");
+  const fontSize = page.getByLabel("Font size", { exact: true });
   const hoverSetting = page.getByRole("checkbox", {
     name: "Reveal sidebars on hover",
   });
@@ -294,6 +298,9 @@ try {
   ).toBeFocused();
   await page.keyboard.press("Tab");
   await expect(picker).toBeFocused();
+  await page.keyboard.press("Tab");
+  await expect(fontSize).toBeFocused();
+  await expect(fontSize).toHaveValue("13");
   await page.keyboard.press("Tab");
   await expect(hoverSetting).toBeFocused();
   await expect(hoverSetting).not.toBeChecked();
@@ -348,6 +355,19 @@ try {
   await page.keyboard.press("ArrowLeft");
   await expect(log).toHaveAttribute("aria-valuenow", "400");
   await settings.click();
+  await fontSize.selectOption("18");
+  await expect(page.locator("html")).toHaveCSS("font-size", "18px");
+  await expect(page.locator(".action-button").first()).toHaveCSS(
+    "font-size",
+    "18px",
+  );
+  await expect(page.locator(".jj-log")).toHaveCSS("font-size", "18px");
+  await expect(
+    page.locator('.file-tree [data-item-section="content"]').first(),
+  ).toHaveCSS("font-size", "17px");
+  await expect
+    .poll(() => page.evaluate(() => localStorage.getItem("jj-stamp.font-size")))
+    .toBe("18");
   await picker.selectOption("light");
   await vimSetting.check();
   await expect(vimSetting).toBeChecked();
@@ -372,6 +392,9 @@ try {
   await expect(dialog).not.toBeVisible();
   await settings.click();
   await expect(picker).toHaveValue("light");
+  await expect(fontSize).toHaveValue("18");
+  await expect(page.locator("html")).toHaveCSS("font-size", "18px");
+  await fontSize.selectOption("13");
   await expect(vimSetting).toBeChecked();
   await vimSetting.uncheck();
   await expect
@@ -715,6 +738,11 @@ try {
     .getByRole("button", { name: "Settings", exact: true })
     .click();
   await expect(noStorage.getByLabel("Color scheme")).toHaveValue("dark");
+  await expect(noStorage.getByLabel("Font size", { exact: true })).toHaveValue(
+    "13",
+  );
+  await noStorage.getByLabel("Font size", { exact: true }).selectOption("16");
+  await expect(noStorage.locator("html")).toHaveCSS("font-size", "16px");
   const noStorageHover = noStorage.getByRole("checkbox", {
     name: "Reveal sidebars on hover",
   });

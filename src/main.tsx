@@ -24,6 +24,7 @@ import { RevisionNavigation } from "./revision-navigation";
 import { FilesystemRefresh, parseRepositoryChange } from "./filesystem-refresh";
 import { SquashQueue } from "./squash-queue";
 import { api, errorMessage, errorDetails, type ErrorDetail } from "./api";
+import { DiffFontSizeContext } from "./DiffRuntime";
 import { useAppearancePreferences } from "./preferences";
 import {
   FilesSidebar,
@@ -58,6 +59,8 @@ function retainActivePath(files: RepoState["files"], current: string): string {
 
 function App() {
   const {
+    fontSize,
+    setFontSize,
     vimMode,
     setVimMode,
     hoverSidebars,
@@ -905,6 +908,8 @@ function App() {
             Refresh
           </button>
           <SettingsDialog
+            fontSize={fontSize}
+            onFontSizeChange={setFontSize}
             colorScheme={colorScheme}
             onColorSchemeChange={setColorScheme}
             hoverSidebars={hoverSidebars}
@@ -949,48 +954,50 @@ function App() {
           }}
           onSelect={selectFile}
         />
-        <ReviewViewer
-          state={state}
-          source={source}
-          file={file}
-          renderVersion={state?.version ?? ""}
-          contentIdentity={JSON.stringify([
-            state?.repo.path,
-            state?.source.commitId,
-          ])}
-          fileView={fileView}
-          style={style}
-          colorScheme={colorScheme}
-          vimMode={vimMode}
-          vimSelection={vimSelection}
-          selections={selections}
-          range={range}
-          busy={busy}
-          working={working}
-          dragging={dragging}
-          pending={queued.pending}
-          recovering={queued.recovering}
-          halted={queued.halted}
-          error={error}
-          diagnostics={diagnostics}
-          idleActionDisabled={idleActionDisabled}
-          squashDisabled={squashDisabled}
-          onSquashFile={squash}
-          scrollRef={scroll}
-          fileSections={fileSections}
-          onFileViewChange={setFileView}
-          onStyleChange={setStyle}
-          onSelection={select}
-          onDragging={onDragging}
-          onError={setError}
-          onRefresh={() => void refresh()}
-          onDismissError={() => {
-            setError("");
-            queue.clearError();
-          }}
-          onUndo={() => void undo()}
-          loadFile={loadFile}
-        />
+        <DiffFontSizeContext.Provider value={fontSize}>
+          <ReviewViewer
+            state={state}
+            source={source}
+            file={file}
+            renderVersion={state?.version ?? ""}
+            contentIdentity={JSON.stringify([
+              state?.repo.path,
+              state?.source.commitId,
+            ])}
+            fileView={fileView}
+            style={style}
+            colorScheme={colorScheme}
+            vimMode={vimMode}
+            vimSelection={vimSelection}
+            selections={selections}
+            range={range}
+            busy={busy}
+            working={working}
+            dragging={dragging}
+            pending={queued.pending}
+            recovering={queued.recovering}
+            halted={queued.halted}
+            error={error}
+            diagnostics={diagnostics}
+            idleActionDisabled={idleActionDisabled}
+            squashDisabled={squashDisabled}
+            onSquashFile={squash}
+            scrollRef={scroll}
+            fileSections={fileSections}
+            onFileViewChange={setFileView}
+            onStyleChange={setStyle}
+            onSelection={select}
+            onDragging={onDragging}
+            onError={setError}
+            onRefresh={() => void refresh()}
+            onDismissError={() => {
+              setError("");
+              queue.clearError();
+            }}
+            onUndo={() => void undo()}
+            loadFile={loadFile}
+          />
+        </DiffFontSizeContext.Provider>
         <RevisionGraph
           focusRequest={logFocusRequest}
           vimMode={vimMode}

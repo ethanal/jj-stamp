@@ -1,4 +1,5 @@
 import {
+  createContext,
   forwardRef,
   useCallback,
   useEffect,
@@ -16,13 +17,17 @@ import {
   type WorkerInitializationRenderOptions,
   type WorkerPoolOptions,
 } from "@pierre/diffs/react";
-import { colorSchemes, type ColorScheme } from "./preferences";
+import { colorSchemes, fontSizeLimits, type ColorScheme } from "./preferences";
 import DiffHighlightWorker from "./diff-highlight.worker";
 
-/** Match styles.css and CodeDiff's 25px custom separator, not Pierre's defaults. */
+export const DiffFontSizeContext = createContext<number>(
+  fontSizeLimits.initial,
+);
+
+/** Match styles.css and CodeDiff's custom separator, not Pierre's defaults. */
 export const diffVirtualMetrics: VirtualFileMetrics = {
   hunkLineCount: 40,
-  lineHeight: 19,
+  lineHeight: fontSizeLimits.initial + 7,
   diffHeaderHeight: 44,
   hunkSeparatorHeight: 25,
   spacing: 0,

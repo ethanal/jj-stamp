@@ -48,7 +48,7 @@ export function ChangedFilesTree(props: Props) {
       /* Compacted directory segments are labels, not individual links. */
       [data-item-flattened-subitem] { text-decoration: none; }
       [data-item-section="content"] { flex: 1 1 0; }
-      [data-item-section="decoration"] { flex: 0 0 auto; font-size: 10px; }
+      [data-item-section="decoration"] { flex: 0 0 auto; font-size: calc(var(--font-size) - 2px); }
       [data-item-section="decoration"] > span { display: inline-flex; gap: 4px; }
     `,
     onSelectionChange(paths) {

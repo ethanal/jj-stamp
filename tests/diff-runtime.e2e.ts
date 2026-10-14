@@ -171,6 +171,118 @@ for (const failure of ["unsupported", "constructor", "runtime"] as const) {
   assert.deepEqual(fallbackErrors, [], `${failure} has no unhandled errors`);
   await fallback.close();
 }
+
+// CodeDiff updates Pierre's metrics in place when the app's font context
+// changes, retaining renderer-owned selection, expansion and cursor state.
+const fontPage = await browser.newPage({
+  viewport: { width: 1200, height: 750 },
+});
+const fontErrors: string[] = [];
+fontPage.on("pageerror", (error) => fontErrors.push(error.message));
+await fontPage.goto(`${url}?font`);
+const fontViewport = fontPage.locator(".viewer-scroll");
+const additionLine = (line: number) =>
+  fontPage
+    .locator(`[data-line="${line}"]:not([data-line-type="change-deletion"])`)
+    .last();
+await expect(fontPage.locator("[data-line]").first()).toBeVisible();
+await fontPage.getByRole("button", { name: "Top" }).click();
+await expect(additionLine(10)).toBeVisible();
+await expect(additionLine(10)).toHaveCSS("font-size", "13px");
+await expect(additionLine(10)).toHaveCSS("line-height", "20px");
+const fontSeparator = fontPage
+  .locator('[data-separator="line-info-basic"]')
+  .first();
+await expect(fontSeparator).toHaveCSS("height", "25px");
+await expect(fontSeparator.locator("[data-separator-content]")).toHaveCSS(
+  "font-size",
+  "12px",
+);
+assert(
+  (await fontPage.locator("[data-line]").count()) < 480,
+  "font fixture starts virtualized",
+);
+await additionLine(10).click();
+const selected = await fontPage.locator("#font-selection").textContent();
+assert(selected && selected !== "{}");
+await expect(additionLine(10)).toHaveAttribute("data-fold-vim-cursor", "");
+await expect(fontPage.locator(".vim-line-cursor")).toHaveCSS("height", "20px");
+await fontPage.locator("[data-expand-button]").first().click();
+await expect(additionLine(4)).toBeVisible();
+await fontViewport.evaluate((node) => {
+  node.scrollTop = 5000;
+});
+await expect
+  .poll(async () =>
+    fontPage
+      .locator("[data-line]")
+      .evaluateAll((rows) =>
+        Math.max(...rows.map((row) => Number(row.getAttribute("data-line")))),
+      ),
+  )
+  .toBeGreaterThan(500);
+const beforeHeight = await fontPage
+  .locator("diffs-container")
+  .evaluate((node) => node.getBoundingClientRect().height);
+await fontPage.getByRole("button", { name: "Font size" }).click();
+await expect(fontPage.locator("[data-line]").first()).toHaveCSS(
+  "font-size",
+  "24px",
+);
+await expect(fontPage.locator("[data-line]").first()).toHaveCSS(
+  "line-height",
+  "31px",
+);
+await expect(fontSeparator).toHaveCSS("height", "31px");
+await expect(fontSeparator.locator("[data-separator-content]")).toHaveCSS(
+  "font-size",
+  "23px",
+);
+const multiExpandButtons = fontPage
+  .locator("[data-separator-wrapper][data-separator-multi-button]")
+  .first()
+  .locator("[data-expand-button]:visible");
+await expect(multiExpandButtons).toHaveCount(2);
+await expect(multiExpandButtons.first()).toHaveCSS("width", "72px");
+const [firstExpandBox, secondExpandBox] = await Promise.all([
+  multiExpandButtons.nth(0).boundingBox(),
+  multiExpandButtons.nth(1).boundingBox(),
+]);
+assert(firstExpandBox && secondExpandBox);
+assert(
+  firstExpandBox.x + firstExpandBox.width <= secondExpandBox.x,
+  "large-font separator buttons must not overlap",
+);
+await expect(fontPage.locator("#font-selection")).toHaveText(selected);
+await expect
+  .poll(() =>
+    fontPage
+      .locator("diffs-container")
+      .evaluate((node) => node.getBoundingClientRect().height),
+  )
+  .toBeGreaterThan(beforeHeight);
+assert(
+  (await fontPage.locator("[data-line]").count()) < 490,
+  "font resize retains bounded virtual DOM",
+);
+await fontPage.getByRole("button", { name: "Top" }).click();
+await expect(additionLine(4)).toBeVisible();
+await expect(additionLine(10)).toHaveAttribute("data-fold-selected", "");
+await expect(additionLine(10)).toHaveAttribute("data-fold-vim-cursor", "");
+await expect(fontPage.locator(".vim-line-cursor")).toHaveCSS("height", "31px");
+await fontPage.getByRole("button", { name: "Bottom" }).click();
+await expect
+  .poll(async () =>
+    fontPage
+      .locator("[data-line]")
+      .evaluateAll((rows) =>
+        Math.max(...rows.map((row) => Number(row.getAttribute("data-line")))),
+      ),
+  )
+  .toBeGreaterThan(1150);
+assert.deepEqual(fontErrors, []);
+await fontPage.close();
+
 console.log(
-  "Production diff worker, virtualization, scrolling, theme/layout, expansion and fallback passed.",
+  "Production diff worker, virtualization, scrolling, theme/layout, expansion, fallback and live font metrics passed.",
 );

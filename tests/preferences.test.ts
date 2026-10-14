@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import {
+  parseFontSize,
   clampSidebarWidth,
   clampSplitRatio,
   parseSplitRatio,
@@ -48,6 +49,16 @@ test("appearance preferences validate stored values and preserve known schemes",
   assert.equal(parseSidebarWidth("log", "410"), 410);
   assert.equal(parseSidebarWidth("files", "-20"), 120);
   assert.equal(parseSidebarWidth("log", "999999"), 640);
+});
+
+test("shared font size defaults slightly larger and bounds stored values", () => {
+  for (const value of [null, "", "  ", "bad", "NaN", "Infinity"])
+    assert.equal(parseFontSize(value), 13);
+  assert.equal(parseFontSize("12"), 12);
+  assert.equal(parseFontSize("18"), 18);
+  assert.equal(parseFontSize("14.7"), 15);
+  assert.equal(parseFontSize("-10"), 10);
+  assert.equal(parseFontSize("999"), 24);
 });
 
 test("file view defaults to one file and validates its stored preference", () => {
@@ -192,6 +203,8 @@ test("theme control exposes all supported palettes and current preference", () =
 test("settings uses a labeled, initially closed native dialog and a named close control", () => {
   const html = renderToStaticMarkup(
     createElement(SettingsDialog, {
+      fontSize: 13,
+      onFontSizeChange() {},
       colorScheme: "dark",
       disabled: false,
       onColorSchemeChange() {},
@@ -207,6 +220,9 @@ test("settings uses a labeled, initially closed native dialog and a named close 
   assert.match(html, /<h2[^>]*>Settings<\/h2>/);
   assert.match(html, /aria-label="Close settings"/);
   assert.match(html, /<span>Color scheme<\/span>/);
+  assert.match(html, /aria-label="Font size"/);
+  assert.match(html, /value="13" selected=""/);
+  assert.match(html, /Applies to the UI and diffs/);
   assert.equal(html.match(/type="checkbox"/g)?.length, 2);
   const hoverPosition = html.indexOf("Reveal sidebars on hover");
   const vimPosition = html.indexOf("Vim mode");

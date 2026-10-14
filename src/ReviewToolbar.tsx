@@ -2,6 +2,8 @@ import { useId, useRef, type ReactNode } from "react";
 import type { Revision } from "./types";
 import {
   colorSchemes,
+  fontSizeLimits,
+  parseFontSize,
   parseColorScheme,
   type ColorScheme,
 } from "./preferences";
@@ -84,6 +86,8 @@ export function ColorSchemePicker({
 }
 
 export function SettingsDialog({
+  fontSize,
+  onFontSizeChange,
   colorScheme,
   onColorSchemeChange,
   hoverSidebars,
@@ -92,6 +96,8 @@ export function SettingsDialog({
   onVimModeChange,
   disabled,
 }: {
+  fontSize: number;
+  onFontSizeChange: (size: number) => void;
   colorScheme: ColorScheme;
   onColorSchemeChange: (scheme: ColorScheme) => void;
   vimMode: boolean;
@@ -155,6 +161,30 @@ export function SettingsDialog({
             onChange={onColorSchemeChange}
             disabled={disabled}
           />
+          <label className="font-size-picker">
+            <span>Font size</span>
+            <select
+              aria-label="Font size"
+              aria-describedby={`${id}-font-help`}
+              value={fontSize}
+              disabled={disabled}
+              onChange={(event) =>
+                onFontSizeChange(parseFontSize(event.target.value))
+              }
+            >
+              {Array.from(
+                { length: fontSizeLimits.max - fontSizeLimits.min + 1 },
+                (_, index) => fontSizeLimits.min + index,
+              ).map((size) => (
+                <option key={size} value={size}>
+                  {size}px{size === fontSizeLimits.initial ? " (default)" : ""}
+                </option>
+              ))}
+            </select>
+            <span className="settings-help" id={`${id}-font-help`}>
+              Applies to the UI and diffs.
+            </span>
+          </label>
         </section>
         <section
           className="settings-section"

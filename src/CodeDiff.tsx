@@ -1,6 +1,7 @@
 import {
   Component,
   useCallback,
+  useContext,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -15,8 +16,9 @@ import {
   type FileDiff as DiffInstance,
   type FileDiffLoadedFiles,
   type SelectedLineRange,
+  type VirtualFileMetrics,
 } from "@pierre/diffs";
-import { diffVirtualMetrics } from "./DiffRuntime";
+import { DiffFontSizeContext, diffVirtualMetrics } from "./DiffRuntime";
 import type { DiffSearchMatch } from "./diff-search";
 import type { DiffFile, Selections } from "./types";
 import { selectHunkBreadcrumb, type ScopePosition } from "./hunk-breadcrumb";
@@ -151,18 +153,18 @@ const separatorCSS = `
 }
 [data-column-number][data-fold-selected] { color: var(--diff-selection-fg, #e3f3ff); font-weight: 500; }
 [data-line][data-fold-in-range] { box-shadow: inset 0 1px var(--selection-top), inset 0 -1px var(--selection-bottom), inset -1px 0 var(--diff-selection-border, #386990); }
-[data-separator="line-info-basic"] { height: 25px; background: var(--diff-separator-bg, #20262e); }
-[data-separator-wrapper] { font-size: 11px; }
+[data-separator="line-info-basic"] { height: max(25px, var(--diffs-line-height)); background: var(--diff-separator-bg, #20262e); }
+[data-separator-wrapper] { --fold-expand-width: max(48px, calc(var(--diffs-font-size) * 3)); font-size: calc(var(--diffs-font-size) - 1px); }
 [data-gutter] [data-separator-wrapper] { display: flex !important; flex-direction: row; width: 100cqi; align-items: center; background: var(--diff-separator-bg, #20262e); }
 [data-gutter] [data-separator-content] { display: flex !important; align-items: center; height: 100%; padding: 0 8px; white-space: nowrap; }
-[data-separator-wrapper][data-separator-multi-button] { grid-template-rows: 100%; grid-template-columns: 48px 48px auto; }
-[data-expand-button] { border: none !important; min-width: 48px; width: 48px; flex-shrink: 0; font-size: 11px; }
+[data-separator-wrapper][data-separator-multi-button] { grid-template-rows: 100%; grid-template-columns: var(--fold-expand-width) var(--fold-expand-width) auto; }
+[data-expand-button] { border: none !important; min-width: var(--fold-expand-width); width: var(--fold-expand-width); flex-shrink: 0; font-size: calc(var(--diffs-font-size) - 1px); }
 [data-expand-button] svg { display: none; }
 [data-expand-down]::before { content: '↑ 10'; }
 [data-expand-up]::before { content: '↓ 10'; }
 [data-expand-both]::before { content: '↕ 10'; }
 [data-expand-all-button] { display: none !important; }
-[data-separator-content] { font-size: 11px; color: var(--diff-separator-fg, #7e8895); gap: 10px; min-width: 0; }
+[data-separator-content] { font-size: calc(var(--diffs-font-size) - 1px); color: var(--diff-separator-fg, #7e8895); gap: 10px; min-width: 0; }
 [data-separator-content][data-fold-has-hunk-context] [data-unmodified-lines],
 [data-separator-content][data-fold-hide-placeholder] [data-unmodified-lines] { display: none; }
 [data-fold-hunk-context] { color: var(--diff-hunk-context-fg, #b8c1cc); display: block; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -316,6 +318,16 @@ export function CodeDiff({
 }) {
   const root = useRef<HTMLDivElement>(null);
   const vimOverlay = useRef<HTMLDivElement>(null);
+  const diffFontSize = useContext(DiffFontSizeContext);
+  const virtualMetrics = useMemo<VirtualFileMetrics>(() => {
+    const lineHeight = diffFontSize + 7;
+    return {
+      ...diffVirtualMetrics,
+      lineHeight,
+      hunkSeparatorHeight: Math.max(25, lineHeight),
+    };
+  }, [diffFontSize]);
+  const appliedVirtualMetrics = useRef(virtualMetrics);
   const fileLoadKey = `${contentIdentity}\u0000${file.path}`;
   const contextLoadKey = `${fileLoadKey}\u0000${file.patch}`;
   const [hydratedHunkContexts, setHydratedHunkContexts] = useState<{
@@ -762,6 +774,20 @@ export function CodeDiff({
     frame = requestAnimationFrame(scroll);
     return () => cancelAnimationFrame(frame);
   }, [scrollToSearchMatch, search?.current, search?.request]);
+  useLayoutEffect(() => {
+    if (appliedVirtualMetrics.current === virtualMetrics) return;
+    appliedVirtualMetrics.current = virtualMetrics;
+    const rendered = instance.current as
+      | (DiffInstance & {
+          setMetrics?: (metrics: Partial<VirtualFileMetrics>) => void;
+          rerender?: () => void;
+        })
+      | null;
+    if (!rendered?.setMetrics) return;
+    // Pierre only reads this React prop when constructing its instance.
+    rendered.setMetrics(virtualMetrics);
+    rendered.rerender?.();
+  }, [virtualMetrics]);
   useEffect(() => () => stop.current?.(), []);
   useEffect(() => {
     if (!root.current) return;
@@ -915,7 +941,7 @@ export function CodeDiff({
     if (!viewport) return false;
     const box = viewport.getBoundingClientRect();
     let top: number | undefined;
-    let height = diffVirtualMetrics.lineHeight;
+    let height = virtualMetrics.lineHeight;
     if (row) {
       const rect = row.getBoundingClientRect();
       top = viewport.scrollTop + rect.top - box.top;
@@ -953,7 +979,7 @@ export function CodeDiff({
     else if (top + height > viewport.scrollTop + viewport.clientHeight)
       viewport.scrollTop = top + height - viewport.clientHeight;
     return true;
-  }, []);
+  }, [virtualMetrics.lineHeight]);
   useLayoutEffect(() => {
     if (!restoreVimCursor.current) return;
     restoreVimCursor.current = false;
@@ -1351,7 +1377,7 @@ export function CodeDiff({
             key={file.patch}
             fileDiff={fileDiff}
             options={options}
-            metrics={diffVirtualMetrics}
+            metrics={virtualMetrics}
             selectedLines={null}
           />
         )}
