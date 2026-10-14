@@ -890,7 +890,6 @@ function App() {
         </span>
         <RevisionHeading source={source}>
           <span className="commit-totals">
-            <span>change</span>
             <LineCounts
               additions={additions}
               deletions={deletions}

@@ -322,7 +322,19 @@ function DiffSearchControls({
         disabled={disabled}
         onClick={onOpen}
       >
-        Search
+        <svg
+          viewBox="0 0 16 16"
+          width="16"
+          height="16"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.4"
+          strokeLinecap="round"
+          aria-hidden="true"
+        >
+          <circle cx="6.5" cy="6.5" r="4" />
+          <path d="m9.5 9.5 4 4" />
+        </svg>
       </button>
     );
   return (

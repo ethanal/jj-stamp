@@ -167,6 +167,17 @@ try {
   await page.goto(url);
   await expect(added).toBeVisible();
   await expect(refresh).toBeEnabled();
+  await expect(page.locator(".topbar .commit-totals")).toHaveText("+1−1");
+  const findButton = page.getByRole("button", { name: "Find in diff" });
+  await expect(findButton).toHaveText("");
+  await expect(findButton.locator('svg[aria-hidden="true"]')).toBeVisible();
+  await findButton.click();
+  await expect(
+    page.getByRole("searchbox", { name: "Search diff" }),
+  ).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(findButton).toBeFocused();
+  await page.mouse.move(0, 0);
   await expect(
     page.getByRole("button", { name: "shortcuts", exact: true }),
   ).toHaveCount(0);

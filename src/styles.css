@@ -600,6 +600,10 @@ kbd {
   gap: 14px;
   flex-shrink: 0;
 }
+.diff-search-open {
+  min-width: 28px;
+  padding: 3px 5px;
+}
 .diff-search {
   min-height: 28px;
   display: flex;
