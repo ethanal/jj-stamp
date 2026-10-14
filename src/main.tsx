@@ -760,8 +760,15 @@ function App() {
       )
         return;
       setOpenRevisionId(open ? changeId : null);
-      // Arrow/j/k navigation already selected this revision. Enter only needs
-      // to dismiss the graph once that selection has been acknowledged.
+      if (open) {
+        // Closing the graph must not wait for the live selection or diff load.
+        // Keep focus outside the hidden graph while that work continues.
+        logReveal.dismiss();
+        setShowLog(false);
+        scroll.current?.focus({ preventScroll: true });
+      }
+      // Arrow/j/k navigation may have already selected this revision. Enter
+      // doesn't need another request once that selection is acknowledged.
       if (
         open &&
         !lock.current &&
@@ -770,27 +777,23 @@ function App() {
         return;
       navigation.request(changeId, logVersion.current);
     },
-    [queue, dragging, navigation],
+    [queue, dragging, navigation, logReveal.dismiss],
   );
   useLayoutEffect(() => {
     if (!openRevisionId || busy) return;
     setOpenRevisionId(null);
-    if (queued.confirmed?.source.changeId !== openRevisionId) return;
-    logReveal.dismiss();
-    setShowLog(false);
-    // Wait for the confirmed revision's DOM, not the outgoing/cached diff.
-    // Empty and unsupported revisions still need focus outside the hidden log.
+    if (
+      queued.confirmed?.source.changeId !== openRevisionId ||
+      document.activeElement !== scroll.current
+    )
+      return;
+    // Move into the confirmed diff once ready, unless the user moved focus
+    // elsewhere while loading. Empty/unsupported revisions keep viewer focus.
     const surface = fileSections.current
       .get(file?.path ?? "")
       ?.querySelector<HTMLElement>(".code-surface");
     (surface ?? scroll.current)?.focus({ preventScroll: true });
-  }, [
-    openRevisionId,
-    busy,
-    queued.confirmed?.source.changeId,
-    file?.path,
-    logReveal.dismiss,
-  ]);
+  }, [openRevisionId, busy, queued.confirmed?.source.changeId, file?.path]);
   useEffect(() => {
     const key = (event: KeyboardEvent) => {
       if (

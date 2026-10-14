@@ -205,8 +205,8 @@ try {
   assert.equal(requests.length, beforeIgnored + 1);
   await page.keyboard.press("Escape");
 
-  // Enter opens a keyboard-focused commit, closes the log only on success,
-  // and gives even an empty revision a usable focus target outside the log.
+  // Enter closes the log immediately, even before a keyboard-focused commit
+  // loads, and gives even an empty revision a focus target outside the log.
   const expandLog = page.getByRole("button", { name: "Expand log sidebar" });
   const collapseLog = page.getByRole("button", {
     name: "Collapse log sidebar",
@@ -214,7 +214,14 @@ try {
   await page.keyboard.press("l");
   await row("middle").focus(); // Tab-style navigation hasn't selected it yet.
   const beforeOpen = requests.length;
+  holdNext = true;
   await page.keyboard.press("Enter");
+  await expect.poll(() => release !== undefined).toBe(true);
+  await expect(expandLog).toBeVisible();
+  await expect(page.getByLabel("jj log output")).toBeHidden();
+  await expect(page.locator(".viewer-scroll")).toBeFocused();
+  release!();
+  release = undefined;
   await selected("middle");
   await expect(expandLog).toBeVisible();
   await expect(page.locator(".viewer-scroll")).toBeFocused();
@@ -243,7 +250,9 @@ try {
   await page.keyboard.press("ArrowUp");
   await expect(row("top")).toBeFocused();
   await page.keyboard.press("Enter");
-  await expect(collapseLog).toBeVisible();
+  await expect(expandLog).toBeVisible();
+  await expect(page.getByLabel("jj log output")).toBeHidden();
+  await expect(page.locator(".viewer-scroll")).toBeFocused();
   release!();
   release = undefined;
   await selected("top");
@@ -277,14 +286,15 @@ try {
   await page.keyboard.press("ArrowDown");
   await expect.poll(() => release !== undefined).toBe(true);
   await page.keyboard.press("Enter");
+  await expect(expandLog).toBeVisible();
+  await expect(page.locator(".viewer-scroll")).toBeFocused();
   release!();
   release = undefined;
   await expect(page.locator(".error")).toContainText("Selection is stale");
   await selected("top");
-  await expect(collapseLog).toBeVisible();
-  await expect(row("middle")).toBeFocused();
+  await expect(expandLog).toBeVisible();
+  await expect(page.locator(".viewer-scroll")).toBeFocused();
   await page.keyboard.press("Escape");
-  await page.keyboard.press("l");
   // Restore the absent-from-log selection used by the Vim navigation checks.
   await page.keyboard.press("Shift+Digit2");
   await selected("working-copy");
@@ -365,6 +375,9 @@ try {
   await page.keyboard.press("k");
   await page.keyboard.press("k");
   await expect(row("top")).toBeFocused();
+  await page.keyboard.press("Enter");
+  await expect(graph).toBeHidden();
+  await expect(page.locator(".viewer-scroll")).toBeFocused();
   release!();
   release = undefined;
   await selected("top");
@@ -372,6 +385,9 @@ try {
     requests.slice(-2).map(({ changeId }) => changeId),
     ["bottom", "top"],
   );
+  await expect(graph).toBeHidden();
+  await expect(page.locator(".viewer-scroll")).toBeFocused();
+  await page.keyboard.press("l");
 
   // Hover previews focus the current revision without selecting anything.
   await settings.click();
@@ -392,9 +408,15 @@ try {
   await page.keyboard.press("j");
   await selected("middle");
   await expect(row("middle")).toBeFocused();
+  holdNext = true;
   await page.keyboard.press("k");
-  await selected("top");
+  await expect.poll(() => release !== undefined).toBe(true);
   await page.keyboard.press("Enter");
+  await expect(graph).toBeHidden();
+  await expect(viewer).toBeFocused();
+  release!();
+  release = undefined;
+  await selected("top");
   await expect(graph).toBeHidden();
   await expect(viewer).toBeFocused();
 
