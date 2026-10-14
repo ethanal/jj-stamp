@@ -1,0 +1,902 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>jj-stamp · Action button design preview</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --bg: #fdf6e3;
+        --panel: #eee8d5;
+        --text: #657b83;
+        --strong: #073642;
+        --border: #d4cbb5;
+        --selected: #e3dcc7;
+        --accent: #268bd2;
+        --green: #527b22;
+        --red: #c45c46;
+        --raised: #faf3df;
+        --shadow: rgba(7, 54, 66, 0.13);
+      }
+      :root[data-theme="dark"] {
+        color-scheme: dark;
+        --bg: #002b36;
+        --panel: #073642;
+        --text: #93a1a1;
+        --strong: #eee8d5;
+        --border: #31535a;
+        --selected: #244951;
+        --accent: #65b6e8;
+        --green: #a2b966;
+        --red: #ee9988;
+        --raised: #16434d;
+        --shadow: rgba(0, 0, 0, 0.3);
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--text);
+        font:
+          14px/1.5 system-ui,
+          sans-serif;
+      }
+      main {
+        max-width: 1280px;
+        padding: 40px 32px 32px;
+        margin: auto;
+      }
+      h1,
+      h2,
+      p {
+        margin: 0;
+      }
+      h1 {
+        font-size: 28px;
+        line-height: 1.25;
+        letter-spacing: -0.8px;
+        color: var(--strong);
+        font-weight: 650;
+      }
+      .eyebrow {
+        font-size: 11px;
+        text-transform: uppercase;
+        letter-spacing: 1.6px;
+        margin-bottom: 10px;
+        color: var(--strong);
+      }
+      .intro {
+        max-width: 720px;
+        margin: 10px 0 22px;
+      }
+      .demo-controls {
+        display: flex;
+        align-items: center;
+        gap: 20px;
+        flex-wrap: wrap;
+        padding: 13px 16px;
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        background: var(--panel);
+        margin-bottom: 28px;
+      }
+      .demo-controls label {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        color: var(--strong);
+        cursor: pointer;
+      }
+      .demo-controls input {
+        accent-color: var(--accent);
+        width: 16px;
+        height: 16px;
+        margin: 0;
+      }
+      .demo-controls .hint {
+        margin-left: auto;
+        font-size: 12px;
+      }
+      .option {
+        margin-bottom: 28px;
+      }
+      .option-heading {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        margin-bottom: 5px;
+      }
+      h2 {
+        font-size: 17px;
+        color: var(--strong);
+        font-weight: 650;
+      }
+      .letter {
+        font:
+          600 12px ui-monospace,
+          monospace;
+        display: grid;
+        place-items: center;
+        width: 25px;
+        height: 25px;
+        border: 1px solid var(--border);
+        border-radius: 4px;
+        color: var(--strong);
+      }
+      .description {
+        font-size: 13px;
+        margin-bottom: 12px;
+      }
+      .app {
+        font:
+          12px/1.5 ui-monospace,
+          SFMono-Regular,
+          Consolas,
+          monospace;
+        border: 1px solid var(--border);
+        border-radius: 7px;
+        overflow: hidden;
+        background: var(--bg);
+        color: var(--text);
+      }
+      .app-header {
+        height: 57px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        padding: 10px 14px;
+        background: var(--panel);
+        border-bottom: 1px solid var(--border);
+      }
+      .revision {
+        white-space: nowrap;
+      }
+      .revision strong {
+        color: var(--strong);
+        font-weight: 600;
+      }
+      .revision small {
+        display: block;
+        font-size: 10px;
+        margin-top: 2px;
+      }
+      .actions {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        position: relative;
+        flex-shrink: 0;
+      }
+      button {
+        font: inherit;
+        color: var(--strong);
+        cursor: pointer;
+        touch-action: manipulation;
+      }
+      button:focus-visible,
+      input:focus-visible {
+        outline: 2px solid var(--accent);
+        outline-offset: 3px;
+        position: relative;
+        z-index: 2;
+      }
+      button:disabled {
+        opacity: 0.4;
+        cursor: not-allowed;
+      }
+      svg {
+        width: 14px;
+        height: 14px;
+        flex-shrink: 0;
+        stroke: currentColor;
+        stroke-width: 1.65;
+        fill: none;
+        stroke-linecap: round;
+        stroke-linejoin: round;
+      }
+      .action {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 6px;
+        min-height: 28px;
+        padding: 3px 9px;
+        white-space: nowrap;
+        border: 1px solid var(--border);
+        border-radius: 4px;
+        background: var(--bg);
+      }
+      .action:not(:disabled):hover {
+        background: var(--selected);
+        border-color: var(--text);
+      }
+      .action:not(:disabled):active {
+        transform: translateY(1px);
+      }
+      .a .action svg {
+        display: none;
+      }
+      .b .action {
+        background: var(--raised);
+        border-color: var(--border);
+        box-shadow:
+          0 1px 2px var(--shadow),
+          inset 0 1px 0 #ffffff15;
+        border-radius: 5px;
+      }
+      .b .primary:not(:disabled) {
+        background: var(--strong);
+        color: var(--bg);
+        border-color: var(--strong);
+      }
+      .b .primary:not(:disabled):hover {
+        opacity: 0.85;
+      }
+      .c .actions {
+        gap: 0;
+      }
+      .c .action {
+        border-radius: 0;
+        background: transparent;
+        margin-left: -1px;
+      }
+      .c .action:first-child {
+        border-radius: 4px 0 0 4px;
+        margin-left: 0;
+      }
+      .c .action:last-of-type {
+        border-radius: 0 4px 4px 0;
+      }
+      .c .action:hover {
+        position: relative;
+        z-index: 1;
+      }
+      .toolbar {
+        min-height: 49px;
+        padding: 9px 14px;
+        display: flex;
+        gap: 20px;
+        align-items: center;
+        border-bottom: 1px solid var(--border);
+      }
+      .control-group {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+      .control-label {
+        font-size: 10px;
+      }
+      .segment {
+        display: flex;
+        border: 1px solid var(--border);
+        border-radius: 4px;
+        overflow: hidden;
+      }
+      .segment button {
+        height: 26px;
+        padding: 2px 9px;
+        background: transparent;
+        border: 0;
+        color: var(--text);
+        white-space: nowrap;
+      }
+      .segment button + button {
+        border-left: 1px solid var(--border);
+      }
+      .segment button[aria-pressed="true"] {
+        background: var(--selected);
+        color: var(--strong);
+      }
+      .segment button:hover {
+        background: var(--panel);
+      }
+      .search {
+        margin-left: auto;
+      }
+      .workspace {
+        display: grid;
+        grid-template-columns: 265px 1fr;
+        min-height: 206px;
+      }
+      .tree {
+        background: var(--panel);
+        border-right: 1px solid var(--border);
+        padding: 12px 9px;
+      }
+      .tree-title {
+        font-size: 10px;
+        letter-spacing: 0.5px;
+        margin: 0 7px 9px;
+        text-transform: uppercase;
+      }
+      .tree button {
+        border: 0;
+        background: transparent;
+        display: flex;
+        align-items: center;
+        gap: 5px;
+        width: 100%;
+        text-align: left;
+        font-size: 11px;
+        min-height: 27px;
+        padding: 3px 7px;
+        border-radius: 3px;
+        text-decoration: none;
+        color: var(--text);
+      }
+      .tree button:hover {
+        background: var(--selected);
+        text-decoration: none;
+      }
+      .tree button[aria-pressed="true"] {
+        color: var(--strong);
+        background: var(--selected);
+      }
+      .tree .folder {
+        padding-left: 19px;
+      }
+      .tree .file {
+        padding-left: 36px;
+      }
+      .tree svg {
+        width: 12px;
+        height: 12px;
+      }
+      .counts {
+        margin-left: auto;
+        font-size: 10px;
+        white-space: nowrap;
+      }
+      .plus {
+        color: var(--green);
+      }
+      .minus {
+        color: var(--red);
+      }
+      .code-panel {
+        min-width: 0;
+        overflow: auto;
+      }
+      .file-title {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 9px 14px;
+        border-bottom: 1px solid var(--border);
+        color: var(--strong);
+        font-size: 11px;
+        white-space: nowrap;
+        gap: 12px;
+      }
+      .file-title span:last-child {
+        color: var(--text);
+        font-size: 10px;
+      }
+      .code {
+        min-width: 490px;
+        padding: 8px 0;
+      }
+      .line {
+        display: flex;
+        align-items: center;
+        border: 0;
+        width: 100%;
+        text-align: left;
+        padding: 0 14px 0 0;
+        min-height: 24px;
+        color: var(--text);
+        background: transparent;
+        font:
+          11px/24px ui-monospace,
+          monospace;
+        white-space: pre;
+      }
+      .line .num {
+        width: 43px;
+        flex-shrink: 0;
+        text-align: right;
+        padding-right: 15px;
+        opacity: 0.65;
+        user-select: none;
+      }
+      .line .mark {
+        width: 20px;
+        flex-shrink: 0;
+      }
+      .line.add {
+        color: var(--green);
+        background: color-mix(in srgb, var(--green) 6%, transparent);
+      }
+      .line.remove {
+        color: var(--red);
+        background: color-mix(in srgb, var(--red) 6%, transparent);
+      }
+      .line[aria-pressed="true"] {
+        background: var(--selected);
+        box-shadow: inset 3px 0 var(--accent);
+      }
+      .line:hover {
+        background: var(--selected);
+      }
+      .app-footer {
+        min-height: 48px;
+        border-top: 1px solid var(--border);
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 9px 14px;
+        gap: 10px;
+      }
+      .selection-state {
+        font-size: 11px;
+        display: flex;
+        align-items: center;
+        gap: 7px;
+      }
+      .dot {
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        background: var(--accent);
+      }
+      .empty .dot {
+        background: var(--text);
+        opacity: 0.4;
+      }
+      .popover {
+        position: absolute;
+        z-index: 5;
+        right: 0;
+        top: 35px;
+        width: 240px;
+        background: var(--bg);
+        border: 1px solid var(--border);
+        box-shadow: 0 5px 20px var(--shadow);
+        padding: 13px;
+        border-radius: 5px;
+        font-size: 11px;
+      }
+      .popover strong {
+        display: block;
+        margin-bottom: 5px;
+        color: var(--strong);
+      }
+      .popover p {
+        margin-bottom: 10px;
+      }
+      .popover[hidden] {
+        display: none;
+      }
+      .search-field {
+        width: 130px;
+        min-height: 28px;
+        border: 1px solid var(--border);
+        border-radius: 4px;
+        background: var(--bg);
+        color: var(--strong);
+        font:
+          11px ui-monospace,
+          monospace;
+        padding: 4px 7px;
+      }
+      .search-field[hidden] {
+        display: none;
+      }
+      .page-note {
+        font-size: 12px;
+        border-top: 1px solid var(--border);
+        padding-top: 17px;
+        display: flex;
+        justify-content: space-between;
+        gap: 16px;
+      }
+      .page-note strong {
+        color: var(--strong);
+        font-weight: 500;
+      }
+      kbd {
+        font:
+          11px ui-monospace,
+          monospace;
+        border: 1px solid var(--border);
+        padding: 1px 5px;
+        border-radius: 3px;
+      }
+      #announce {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        overflow: hidden;
+        clip-path: inset(50%);
+      }
+      @media (min-width: 1000px) {
+        main {
+          padding-top: 40px;
+        }
+        .workspace {
+          min-height: 224px;
+        }
+        .option {
+          margin-bottom: 30px;
+        }
+      }
+      @media (max-width: 760px) {
+        main {
+          padding: 24px 14px;
+        }
+        h1 {
+          font-size: 24px;
+        }
+        .demo-controls {
+          gap: 15px;
+        }
+        .demo-controls .hint {
+          width: 100%;
+          margin: 0;
+        }
+        .workspace {
+          grid-template-columns: 210px 1fr;
+        }
+        .tree button {
+          font-size: 10px;
+        }
+        .tree .file {
+          padding-left: 25px;
+        }
+        .toolbar {
+          gap: 10px;
+          flex-wrap: wrap;
+        }
+        .control-group {
+          gap: 5px;
+        }
+        .control-label {
+          display: none;
+        }
+        .app-header {
+          padding: 9px;
+        }
+        .revision {
+          font-size: 11px;
+        }
+        .app-footer {
+          padding: 9px;
+        }
+        .selection-state {
+          font-size: 10px;
+        }
+        .action {
+          padding: 3px 7px;
+        }
+        .page-note {
+          display: block;
+        }
+        .page-note p + p {
+          margin-top: 8px;
+        }
+      }
+      @media (max-width: 500px) {
+        .workspace {
+          grid-template-columns: 1fr;
+        }
+        .tree {
+          border-right: 0;
+          border-bottom: 1px solid var(--border);
+          padding: 7px 9px;
+        }
+        .tree-title {
+          display: none;
+        }
+        .tree button {
+          min-height: 25px;
+        }
+        .revision small {
+          max-width: 140px;
+          overflow: hidden;
+          text-overflow: ellipsis;
+        }
+        .app-header {
+          gap: 4px;
+        }
+        .app-header .action {
+          font-size: 10px;
+          padding: 3px 6px;
+        }
+        .app-header .action svg {
+          width: 12px;
+        }
+        .app-footer {
+          flex-wrap: wrap;
+        }
+        .app-footer .actions {
+          margin-left: auto;
+        }
+        .search {
+          margin-left: 0;
+        }
+        .file-title {
+          font-size: 10px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <header>
+        <div class="eyebrow">jj-stamp / interaction study</div>
+        <h1>Quiet controls. Clear actions.</h1>
+        <p class="intro">
+          Three compact button treatments for the same workspace. Navigation
+          stays underline-free; header and footer actions share one consistent
+          language.
+        </p>
+      </header>
+      <div class="demo-controls" aria-label="Preview controls">
+        <label
+          ><input id="selection" type="checkbox" checked /> Selection on</label
+        ><label><input id="dark" type="checkbox" /> Dark theme</label
+        ><span class="hint"
+          >Interactive design preview · fictional repository data</span
+        >
+      </div>
+      <div id="options"></div>
+      <footer class="page-note">
+        <p>
+          <strong>Keyboard behavior unchanged.</strong> Shortcut help remains
+          accessible via <kbd>?</kbd>.
+        </p>
+        <p>Preview only — no repository operations are performed.</p>
+      </footer>
+      <div id="announce" role="status" aria-live="polite"></div>
+    </main>
+    <script>
+      const icons = {
+        refresh: '<path d="M12 5a5 5 0 1 0 1 5M12 2v3H9"/>',
+        settings:
+          '<circle cx="7" cy="7" r="2"/><path d="m6 1-1 2-2 0-1 2 1 2-1 2 1 2 2 0 1 2h2l1-2h2l1-2-1-2 1-2-1-2H9L8 1Z"/>',
+        search: '<circle cx="6" cy="6" r="4"/><path d="m9 9 4 4"/>',
+        squash: '<path d="M3 2v4c0 3 8 0 8 3v3M11 2v10m-2-2 2 2 2-2"/>',
+        undo: '<path d="M2 6h6a4 4 0 0 1 0 8M2 6l3-3M2 6l3 3"/>',
+        clear: '<path d="m3 3 8 8M11 3l-8 8"/>',
+        folder: '<path d="M1 4V2h5l2 2h5v8H1Z"/>',
+        file: '<path d="M3 1h5l3 3v9H3ZM8 1v4h3"/>',
+        chevron: '<path d="m2 5 5 4 5-4"/>',
+      };
+      function svg(name) {
+        return `<svg viewBox="0 0 14 16" aria-hidden="true">${icons[name]}</svg>`;
+      }
+      function action(name, label, extra = "") {
+        return `<button type="button" class="action ${extra}" data-action="${name}" title="${label}">${svg(name)}<span>${label}</span></button>`;
+      }
+      const options = [
+        [
+          "a",
+          "Compact outlines",
+          "Text-first buttons with a thin border. The lightest treatment, with familiar, explicit action boundaries.",
+        ],
+        [
+          "b",
+          "Softly raised",
+          "Icons and a subtle surface lift make actions easy to find. Squash gets a restrained filled emphasis.",
+        ],
+        [
+          "c",
+          "Connected controls",
+          "Compact outlined groups share edges, while dividers keep every action a distinct click target.",
+        ],
+      ];
+      for (const [id, title, description] of options) {
+        const section = document.createElement("section");
+        section.className = "option";
+        section.setAttribute("aria-labelledby", `title-${id}`);
+        section.innerHTML = `<div class="option-heading"><span class="letter">${id.toUpperCase()}</span><h2 id="title-${id}">${title}</h2></div><p class="description">${description}</p><div class="app ${id}" aria-label="Option ${id.toUpperCase()} fictional repository preview">
+<div class="app-header"><div class="revision"><strong>qypvkn → mzrtox</strong><small>Refine materialization partitions</small></div><div class="actions">${action("refresh", "Refresh")}${action("settings", "Settings")}<div class="popover" hidden><strong>Design preview settings</strong><p>This workspace is a local mockup. Use the theme switch above to compare light and dark treatments.</p><button type="button" class="action" data-action="close">Close</button></div></div></div>
+<div class="toolbar"><div class="control-group"><span class="control-label">Scope</span><div class="segment" role="group" aria-label="File scope"><button aria-pressed="true">One file</button><button aria-pressed="false">All files</button></div></div><div class="control-group"><span class="control-label">View</span><div class="segment" role="group" aria-label="Diff layout"><button aria-pressed="true">Stacked</button><button aria-pressed="false">Split</button></div></div><div class="actions search"><input class="search-field" aria-label="Search preview code" placeholder="Find in preview" hidden>${action("search", "Search")}</div></div>
+<div class="workspace"><nav class="tree" aria-label="Preview files"><div class="tree-title">Changed files · 2</div><button class="root" aria-expanded="true">${svg("chevron")}<span>betterquery/materialized_views/src</span></button><button class="folder" aria-expanded="true">${svg("folder")}materialization</button><button class="file" data-file="partition.rs" aria-pressed="true">${svg("file")}partition.rs <span class="counts"><span class="plus">+4</span> <span class="minus">−2</span></span></button><button class="file" data-file="resources.rs" aria-pressed="false">${svg("file")}resources.rs <span class="counts"><span class="plus">+2</span> <span class="minus">−1</span></span></button></nav>
+<div class="code-panel"><div class="file-title"><span class="filename">materialization/partition.rs</span><span class="layout-state">Stacked · Rust</span></div><div class="code"><div class="line"><span class="num">42</span><span class="mark"> </span>fn partition_key(&amp;self) -&gt; String {</div><button class="line remove" aria-pressed="false" aria-label="Select removed code line"><span class="num">43</span><span class="mark">−</span>    self.name.clone()</button><button class="line add" aria-pressed="true" aria-label="Select added code line"><span class="num">43</span><span class="mark">+</span>    let key = self.name.trim();</button><button class="line add" aria-pressed="true" aria-label="Select added code line"><span class="num">44</span><span class="mark">+</span>    key.to_owned()</button><div class="line"><span class="num">45</span><span class="mark"> </span>}</div><div class="line"><span class="num">46</span><span class="mark"> </span></div></div></div></div>
+<div class="app-footer"><div class="selection-state"><span class="dot"></span><span class="status-text">2 lines selected · 1 file</span></div><div class="actions">${action("squash", "Squash", "primary")}${action("undo", "Undo")}${action("clear", "Clear")}</div></div></div>`;
+        document.querySelector("#options").append(section);
+      }
+      const apps = [...document.querySelectorAll(".app")];
+      const history = new WeakMap();
+      const selection = document.querySelector("#selection");
+      function announce(text) {
+        document.querySelector("#announce").textContent = text;
+      }
+      function update(app) {
+        const n = app.querySelectorAll(
+          ".code button[aria-pressed=true]",
+        ).length;
+        app.classList.toggle("empty", !n);
+        app.querySelector(".status-text").textContent = n
+          ? `${n} line${n === 1 ? "" : "s"} selected · 1 file`
+          : "No lines selected";
+        for (const name of ["squash", "clear"])
+          app.querySelector(`[data-action=${name}]`).disabled = !n;
+        app.querySelector("[data-action=undo]").disabled = !(
+          history.get(app) || []
+        ).length;
+        const counts = apps.map(
+          (a) =>
+            a.querySelectorAll(".code button[aria-pressed=true]").length > 0,
+        );
+        selection.checked = counts.some(Boolean);
+        selection.indeterminate =
+          counts.some(Boolean) && !counts.every(Boolean);
+      }
+      function save(app) {
+        const stack = history.get(app) || [];
+        stack.push(
+          [...app.querySelectorAll(".code button")].map((b) =>
+            b.getAttribute("aria-pressed"),
+          ),
+        );
+        history.set(app, stack);
+      }
+      function setSelected(app, on) {
+        app
+          .querySelectorAll(".code button")
+          .forEach((b) =>
+            b.setAttribute(
+              "aria-pressed",
+              String(on && b.classList.contains("add")),
+            ),
+          );
+        update(app);
+      }
+      selection.addEventListener("change", () => {
+        const on = selection.checked;
+        apps.forEach((app) => {
+          save(app);
+          setSelected(app, on);
+        });
+        announce("Selection updated in all previews");
+      });
+      document
+        .querySelector("#dark")
+        .addEventListener(
+          "change",
+          (e) =>
+            (document.documentElement.dataset.theme = e.target.checked
+              ? "dark"
+              : "light"),
+        );
+      apps.forEach((app) => {
+        update(app);
+        app
+          .querySelector("[data-action=settings]")
+          .setAttribute("aria-expanded", "false");
+        app
+          .querySelector("[data-action=search]")
+          .setAttribute("aria-expanded", "false");
+        app.addEventListener("click", (e) => {
+          const b = e.target.closest("button");
+          if (!b) return;
+          if (b.closest(".segment")) {
+            b.parentElement
+              .querySelectorAll("button")
+              .forEach((x) => x.setAttribute("aria-pressed", String(x === b)));
+            if (b.parentElement.getAttribute("aria-label") === "Diff layout") {
+              app.querySelector(".layout-state").textContent =
+                b.textContent + " · Rust";
+              app.querySelector(".code").style.display =
+                b.textContent === "Split" ? "grid" : "";
+              app.querySelector(".code").style.gridTemplateColumns = "1fr 1fr";
+            } else {
+              app.querySelector(".tree-title").textContent =
+                b.textContent === "All files"
+                  ? "All changed files · 2"
+                  : "Changed files · 2";
+            }
+            return;
+          }
+          if (b.classList.contains("line")) {
+            save(app);
+            b.setAttribute(
+              "aria-pressed",
+              String(b.getAttribute("aria-pressed") !== "true"),
+            );
+            update(app);
+            return;
+          }
+          if (b.dataset.file) {
+            app
+              .querySelectorAll("[data-file]")
+              .forEach((x) => x.setAttribute("aria-pressed", String(x === b)));
+            app.querySelector(".filename").textContent =
+              "materialization/" + b.dataset.file;
+            return;
+          }
+          if (b.classList.contains("root") || b.classList.contains("folder")) {
+            const open = b.getAttribute("aria-expanded") !== "true";
+            b.setAttribute("aria-expanded", String(open));
+            app
+              .querySelectorAll(
+                b.classList.contains("root") ? ".folder,.file" : ".file",
+              )
+              .forEach((x) => (x.hidden = !open));
+            app.querySelectorAll("[hidden]").forEach((x) => {
+              if (x.matches(".folder,.file")) x.style.display = "none";
+            });
+            if (open)
+              app
+                .querySelectorAll(
+                  b.classList.contains("root") ? ".folder,.file" : ".file",
+                )
+                .forEach((x) => (x.style.display = ""));
+            return;
+          }
+          const kind = b.dataset.action;
+          if (kind === "refresh") {
+            b.querySelector("span").textContent = "Refreshed";
+            announce("Preview refreshed. No repository was accessed.");
+            setTimeout(
+              () => (b.querySelector("span").textContent = "Refresh"),
+              1200,
+            );
+          }
+          if (kind === "settings") {
+            const p = app.querySelector(".popover");
+            p.hidden = !p.hidden;
+            b.setAttribute("aria-expanded", String(!p.hidden));
+          }
+          if (kind === "close") {
+            app.querySelector(".popover").hidden = true;
+            app
+              .querySelector("[data-action=settings]")
+              .setAttribute("aria-expanded", "false");
+            app.querySelector("[data-action=settings]").focus();
+          }
+          if (kind === "search") {
+            const input = app.querySelector(".search-field");
+            input.hidden = !input.hidden;
+            b.setAttribute("aria-expanded", String(!input.hidden));
+            if (!input.hidden) input.focus();
+          }
+          if (kind === "clear" || kind === "squash") {
+            save(app);
+            setSelected(app, false);
+            announce(
+              kind === "squash"
+                ? "Simulated squash. Undo restores your preview selection."
+                : "Preview selection cleared.",
+            );
+            if (kind === "squash")
+              app.querySelector(".status-text").textContent =
+                "Squashed · preview only";
+          }
+          if (kind === "undo") {
+            const previous = (history.get(app) || []).pop();
+            if (previous)
+              app
+                .querySelectorAll(".code button")
+                .forEach((x, i) => x.setAttribute("aria-pressed", previous[i]));
+            update(app);
+            announce("Preview selection restored");
+          }
+        });
+        app.querySelector(".search-field").addEventListener("input", (e) => {
+          const q = e.target.value.toLowerCase();
+          app
+            .querySelectorAll(".line")
+            .forEach(
+              (line) =>
+                (line.style.opacity =
+                  q && !line.textContent.toLowerCase().includes(q)
+                    ? ".3"
+                    : "1"),
+            );
+        });
+        app.addEventListener("keydown", (e) => {
+          if (e.key === "Escape" && !app.querySelector(".popover").hidden)
+            app.querySelector("[data-action=close]").click();
+        });
+      });
+    </script>
+  </body>
+</html>
