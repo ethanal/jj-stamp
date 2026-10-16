@@ -349,21 +349,62 @@ try {
     "",
   );
   await expect(addition(secondPath, 110)).toBeInViewport();
+  const highlightedText = (row: Locator, current = false) =>
+    row.locator(
+      `[data-fold-search-text]${current ? "[data-fold-search-current]" : ""}`,
+    );
+  const assertHighlight = async (
+    row: Locator,
+    text: string,
+    current = false,
+  ) => {
+    await expect
+      .poll(async () =>
+        (await highlightedText(row, current).allTextContents()).join(""),
+      )
+      .toBe(text);
+  };
+  await assertHighlight(addition(secondPath, 110), offscreenNeedle, true);
+  await expect(addition(secondPath, 110)).toHaveCSS("outline-style", "none");
+  await expect(
+    page.locator("[data-column-number][data-fold-search-match]"),
+  ).toHaveCount(0);
   await viewport.evaluate((element) => {
     element.scrollTop = 0;
   });
   await search.press("Enter");
   await expect(addition(secondPath, 110)).toBeInViewport();
+  await assertHighlight(addition(secondPath, 110), offscreenNeedle, true);
   await page.getByRole("button", { name: "Split", exact: true }).click();
   await expect(addition(secondPath, 110)).toBeInViewport();
+  await assertHighlight(addition(secondPath, 110), offscreenNeedle, true);
   await page.getByRole("button", { name: "Stacked", exact: true }).click();
   await expect(addition(secondPath, 110)).toBeInViewport();
+  await assertHighlight(addition(secondPath, 110), offscreenNeedle, true);
   const regex = page.getByRole("button", {
     name: "Use regular expression",
     exact: true,
   });
   await regex.click();
   await expect(regex).toHaveAttribute("aria-pressed", "true");
+  // Two distinct matches on one line, including one crossing syntax tokens.
+  await search.fill(
+    `(?<=^updated )tests/long-beta\\.ts(?= line 110$)|(?<=^updated tests/long-beta\\.ts )line(?= 110$)`,
+  );
+  for (const layout of ["Stacked", "Split"]) {
+    await page.getByRole("button", { name: layout, exact: true }).click();
+    await expect(page.locator(".diff-search-count")).toHaveText("1 / 2");
+    await assertHighlight(addition(secondPath, 110), `${secondPath}line`);
+    await assertHighlight(addition(secondPath, 110), secondPath, true);
+    const textBefore = await addition(secondPath, 110).textContent();
+    await search.press("Enter");
+    await expect(page.locator(".diff-search-count")).toHaveText("2 / 2");
+    await assertHighlight(addition(secondPath, 110), "line", true);
+    assert.equal(await addition(secondPath, 110).textContent(), textBefore);
+    await search.press("Shift+Enter");
+    await assertHighlight(addition(secondPath, 110), secondPath, true);
+  }
+  await page.getByRole("button", { name: "Stacked", exact: true }).click();
   await search.fill(`^updated tests/long-beta\\.ts line (100|110)$`);
   await expect(page.locator(".diff-search-count")).toHaveText("1 / 2");
   await expect(addition(secondPath, 100)).toHaveAttribute(
@@ -376,17 +417,31 @@ try {
     "data-fold-search-current",
     "",
   );
+  const matchedRowBackground = await addition(secondPath, 110).evaluate(
+    (row) => getComputedStyle(row).backgroundColor,
+  );
   await search.fill("[");
   await expect(search).toHaveAttribute("aria-invalid", "true");
   await expect(page.locator(".diff-search-count")).toHaveText("Invalid regex");
+  await expect(page.locator("[data-fold-search-text]")).toHaveCount(0);
+  assert.equal(
+    await addition(secondPath, 110).evaluate(
+      (row) => getComputedStyle(row).backgroundColor,
+    ),
+    matchedRowBackground,
+    "Searching must not change the line background",
+  );
   assert.equal(
     await searchControls.evaluate(
       (element) => (element as HTMLElement).offsetWidth,
     ),
     searchWidth,
   );
+  await search.fill(offscreenNeedle);
+  await assertHighlight(addition(secondPath, 110), offscreenNeedle);
   await search.press("Escape");
   await expect(search).toHaveCount(0);
+  await expect(page.locator("[data-fold-search-text]")).toHaveCount(0);
   await expect(allFiles).toBeFocused();
   await viewport.evaluate((element) => {
     element.scrollTop = 0;

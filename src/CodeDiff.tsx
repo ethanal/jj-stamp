@@ -20,6 +20,7 @@ import {
 } from "@pierre/diffs";
 import { DiffFontSizeContext, diffVirtualMetrics } from "./DiffRuntime";
 import type { DiffSearchMatch } from "./diff-search";
+import { paintSearchMatches } from "./search-highlight";
 import type { DiffFile, Selections } from "./types";
 import { selectHunkBreadcrumb, type ScopePosition } from "./hunk-breadcrumb";
 import {
@@ -138,8 +139,8 @@ const separatorCSS = `
 [data-expand-button] { cursor: pointer; }
 [data-line][data-fold-selected], [data-column-number][data-fold-selected] { background: var(--diff-selection-bg, #16466b); }
 [data-line][data-fold-context-selected], [data-column-number][data-fold-context-selected] { background: var(--diff-context-selection-bg, #172f46); }
-[data-line][data-fold-search-match], [data-column-number][data-fold-search-match] { background: color-mix(in srgb, var(--diff-search-color, #e3b341) 24%, transparent); }
-[data-line][data-fold-search-current], [data-column-number][data-fold-search-current] { background: color-mix(in srgb, var(--diff-search-color, #e3b341) 48%, transparent); outline: 1px solid var(--diff-search-color, #e3b341); outline-offset: -1px; }
+[data-fold-search-text] { background: color-mix(in srgb, var(--diff-search-color, #e3b341) 24%, transparent); }
+[data-fold-search-text][data-fold-search-current] { background: color-mix(in srgb, var(--diff-search-color, #e3b341) 48%, transparent); outline: 1px solid var(--diff-search-color, #e3b341); outline-offset: -1px; }
 [data-fold-in-range] {
   --selection-top: transparent;
   --selection-bottom: transparent;
@@ -413,11 +414,14 @@ export function CodeDiff({
       ? focusedSurface === root.current
       : current.current.active;
     const keys = new Set<string>();
-    const searchKeys = new Set(
-      search?.matches
-        .filter((match) => match.path === file.path)
-        .map((match) => `${match.side}:${match.line}`) ?? [],
-    );
+    const searchRows = new Map<string, DiffSearchMatch[]>();
+    for (const match of search?.matches ?? []) {
+      if (match.path !== file.path) continue;
+      const key = `${match.side}:${match.line}`;
+      const matches = searchRows.get(key) ?? [];
+      matches.push(match);
+      searchRows.set(key, matches);
+    }
     for (const hunk of file.hunks) {
       const selected = new Set(selections[hunk.id] ?? []);
       for (const row of hunk.rows)
@@ -492,11 +496,10 @@ export function CodeDiff({
             search?.current?.path === file.path &&
             search.current.line === rowLine &&
             search.current.side === rowSide;
-          row.toggleAttribute(
-            "data-fold-search-match",
-            searchKeys.has(`${rowSide}:${rowLine}`),
-          );
+          const matches = searchRows.get(`${rowSide}:${rowLine}`) ?? [];
+          row.toggleAttribute("data-fold-search-match", matches.length > 0);
           row.toggleAttribute("data-fold-search-current", isCurrent);
+          paintSearchMatches(row, matches, search?.current);
         }
       });
     const cursorRow = shadow.querySelector<HTMLElement>(
@@ -514,22 +517,6 @@ export function CodeDiff({
           (row) => [row.dataset.lineIndex, row],
         ),
       );
-      for (const gutter of gutters.values()) {
-        gutter.removeAttribute("data-fold-search-match");
-        gutter.removeAttribute("data-fold-search-current");
-      }
-      column.querySelectorAll<HTMLElement>("[data-line]").forEach((row) => {
-        const gutter = gutters.get(row.dataset.lineIndex);
-        if (!gutter) return;
-        gutter.toggleAttribute(
-          "data-fold-search-match",
-          row.hasAttribute("data-fold-search-match"),
-        );
-        gutter.toggleAttribute(
-          "data-fold-search-current",
-          row.hasAttribute("data-fold-search-current"),
-        );
-      });
       const mark = (row: HTMLElement, edge: "start" | "end") => {
         row.setAttribute(`data-fold-selection-${edge}`, "");
         gutters
@@ -722,7 +709,7 @@ export function CodeDiff({
     const viewport = root.current?.closest<HTMLElement>(".viewer-scroll");
     if (!match || match.path !== file.path) return true;
     if (!host || !viewport) return false;
-    const token = `${style}:${search.request}:${match.hunkId}:${match.rowIndex}`;
+    const token = `${style}:${search.request}:${match.hunkId}:${match.rowIndex}:${match.start}:${match.end}`;
     if (searchScrollToken.current === token) return true;
     const viewportBox = viewport.getBoundingClientRect();
     const renderedRow = [

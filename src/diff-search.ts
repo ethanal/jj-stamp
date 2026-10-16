@@ -6,6 +6,9 @@ export interface DiffSearchMatch {
   rowIndex: number;
   line: number;
   side: "additions" | "deletions";
+  /** UTF-16 offsets within the row text, excluding the patch marker. */
+  start: number;
+  end: number;
 }
 
 export interface DiffSearchResult {
@@ -20,15 +23,15 @@ export function searchDiffRows(
   regex: boolean,
 ): DiffSearchResult {
   if (!query) return { matches: [], error: "" };
-  let pattern: RegExp | null = null;
-  if (regex) {
-    try {
-      pattern = new RegExp(query, "iu");
-    } catch {
-      return { matches: [], error: "Invalid regex" };
-    }
+  let pattern: RegExp;
+  try {
+    pattern = new RegExp(
+      regex ? query : query.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"),
+      "giu",
+    );
+  } catch {
+    return { matches: [], error: "Invalid regex" };
   }
-  const needle = regex ? "" : query.toLocaleLowerCase();
   const matches: DiffSearchMatch[] = [];
   for (const file of files) {
     if (file.unsupported) continue;
@@ -39,19 +42,20 @@ export function searchDiffRows(
         const line = side === "deletions" ? row.oldLine : row.newLine;
         if (line == null) continue;
         const text = row.raw.slice(1);
-        if (
-          pattern
-            ? !pattern.test(text)
-            : !text.toLocaleLowerCase().includes(needle)
-        )
-          continue;
-        matches.push({
-          path: file.path,
-          hunkId: hunk.id,
-          rowIndex: row.index,
-          line,
-          side,
-        });
+        for (const match of text.matchAll(pattern)) {
+          // Empty matches have no text to highlight. matchAll advances safely,
+          // including over surrogate pairs, even for zero-width expressions.
+          if (!match[0].length) continue;
+          matches.push({
+            path: file.path,
+            hunkId: hunk.id,
+            rowIndex: row.index,
+            line,
+            side,
+            start: match.index,
+            end: match.index + match[0].length,
+          });
+        }
       }
     }
   }
