@@ -140,7 +140,16 @@ const separatorCSS = `
 [data-line][data-fold-selected], [data-column-number][data-fold-selected] { background: var(--diff-selection-bg, #16466b); }
 [data-line][data-fold-context-selected], [data-column-number][data-fold-context-selected] { background: var(--diff-context-selection-bg, #172f46); }
 [data-fold-search-text] { background: color-mix(in srgb, var(--diff-search-color, #e3b341) 24%, transparent); }
-[data-fold-search-text][data-fold-search-current] { background: color-mix(in srgb, var(--diff-search-color, #e3b341) 48%, transparent); outline: 1px solid var(--diff-search-color, #e3b341); outline-offset: -1px; }
+/* A match may cross syntax-token spans. Draw vertical edges only at its
+   endpoints, not around each fragment; inset shadows do not shift the text. */
+[data-fold-search-text][data-fold-search-current] {
+  --search-start: transparent;
+  --search-end: transparent;
+  background: color-mix(in srgb, var(--diff-search-color, #e3b341) 48%, transparent);
+  box-shadow: inset 0 1px var(--diff-search-color, #e3b341), inset 0 -1px var(--diff-search-color, #e3b341), inset 1px 0 var(--search-start), inset -1px 0 var(--search-end);
+}
+[data-fold-search-text][data-fold-search-start] { --search-start: var(--diff-search-color, #e3b341); }
+[data-fold-search-text][data-fold-search-end] { --search-end: var(--diff-search-color, #e3b341); }
 [data-fold-in-range] {
   --selection-top: transparent;
   --selection-bottom: transparent;

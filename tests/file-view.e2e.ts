@@ -364,7 +364,35 @@ try {
       )
       .toBe(text);
   };
+  const assertMatchOutline = async (row: Locator, fragmented = false) => {
+    const fragments = await highlightedText(row, true).evaluateAll((spans) =>
+      spans.map((span) => {
+        const css = getComputedStyle(span);
+        return {
+          start: span.hasAttribute("data-fold-search-start"),
+          end: span.hasAttribute("data-fold-search-end"),
+          outline: css.outlineStyle,
+          left: css.getPropertyValue("--search-start").trim(),
+          right: css.getPropertyValue("--search-end").trim(),
+          shadow: css.boxShadow,
+        };
+      }),
+    );
+    assert(fragments.length > (fragmented ? 1 : 0));
+    fragments.forEach((fragment, index) => {
+      assert.equal(fragment.start, index === 0);
+      assert.equal(fragment.end, index === fragments.length - 1);
+      assert.equal(fragment.outline, "none", "No per-token outline");
+      assert.notEqual(fragment.shadow, "none", "Keep the outer match border");
+      assert.equal(fragment.left === "transparent", index !== 0);
+      assert.equal(
+        fragment.right === "transparent",
+        index !== fragments.length - 1,
+      );
+    });
+  };
   await assertHighlight(addition(secondPath, 110), offscreenNeedle, true);
+  await assertMatchOutline(addition(secondPath, 110), true);
   await expect(addition(secondPath, 110)).toHaveCSS("outline-style", "none");
   await expect(
     page.locator("[data-column-number][data-fold-search-match]"),
@@ -396,10 +424,12 @@ try {
     await expect(page.locator(".diff-search-count")).toHaveText("1 / 2");
     await assertHighlight(addition(secondPath, 110), `${secondPath}line`);
     await assertHighlight(addition(secondPath, 110), secondPath, true);
+    await assertMatchOutline(addition(secondPath, 110), true);
     const textBefore = await addition(secondPath, 110).textContent();
     await search.press("Enter");
     await expect(page.locator(".diff-search-count")).toHaveText("2 / 2");
     await assertHighlight(addition(secondPath, 110), "line", true);
+    await assertMatchOutline(addition(secondPath, 110));
     assert.equal(await addition(secondPath, 110).textContent(), textBefore);
     await search.press("Shift+Enter");
     await assertHighlight(addition(secondPath, 110), secondPath, true);

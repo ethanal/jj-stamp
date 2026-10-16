@@ -51,6 +51,14 @@ export function paintSearchMatches(
           const span = document.createElement("span");
           span.setAttribute("data-fold-search-text", "");
           span.toggleAttribute("data-fold-search-current", match === current);
+          span.toggleAttribute(
+            "data-fold-search-start",
+            offset + start === match.start,
+          );
+          span.toggleAttribute(
+            "data-fold-search-end",
+            offset + stop === match.end,
+          );
           span.textContent = text.slice(start, stop);
           fragment.append(span);
           spans.push(span);
