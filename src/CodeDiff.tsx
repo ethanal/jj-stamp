@@ -148,6 +148,10 @@ const separatorCSS = `
 [data-fold-selection-start] { --selection-top: var(--diff-selection-border, #72b8e6); }
 [data-fold-selection-end] { --selection-bottom: var(--diff-selection-border, #72b8e6); }
 [data-column-number][data-fold-in-range] {
+  /* Replace the renderer's 2px gutter border with equal padding so inset
+     selection strokes reach the code without shifting the line numbers. */
+  border-right: 0;
+  padding-right: calc(1ch + 2px);
   color: var(--diff-selection-number-fg, #b7defb);
   box-shadow: inset 3px 0 var(--diff-selection-border, #79c9ff), inset 0 1px var(--selection-top), inset 0 -1px var(--selection-bottom);
 }

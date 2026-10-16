@@ -73,8 +73,54 @@ try {
     ).toBeVisible();
     await expect(page.locator("#file-loads")).toHaveText("2");
     // A controlled anchor can be extended, replaced, cleared, and reset.
+    const gutterGeometry = () =>
+      page.locator("diffs-container").evaluate((host) =>
+        [...host.shadowRoot!.querySelectorAll("[data-column-number]")].map(
+          (gutter) => {
+            const box = gutter.getBoundingClientRect();
+            const number = gutter
+              .querySelector("[data-line-number-content]")!
+              .getBoundingClientRect();
+            return { left: box.left, right: box.right, number: number.left };
+          },
+        ),
+      );
+    const unselectedGeometry = await gutterGeometry();
     await line(10).click();
     await line(30).click({ modifiers: ["Shift"] });
+    // The renderer's 2px gutter border must not interrupt the selection's
+    // inset top/bottom strokes, or move line numbers when it is replaced.
+    const selectionEdges = await page
+      .locator("diffs-container")
+      .evaluate((host) =>
+        [
+          ...host.shadowRoot!.querySelectorAll<HTMLElement>(
+            "[data-column-number][data-fold-selection-start], [data-column-number][data-fold-selection-end]",
+          ),
+        ].map((gutter) => {
+          const row = [
+            ...gutter
+              .closest("[data-code]")!
+              .querySelectorAll<HTMLElement>("[data-line]"),
+          ].find((row) => row.dataset.lineIndex === gutter.dataset.lineIndex)!;
+          return {
+            border: getComputedStyle(gutter).borderRightWidth,
+            gap:
+              row.getBoundingClientRect().left -
+              gutter.getBoundingClientRect().right,
+          };
+        }),
+      );
+    assert(selectionEdges.length > 0);
+    for (const edge of selectionEdges) {
+      assert.equal(
+        edge.border,
+        "0px",
+        `${layout}: selection outline crosses the gutter`,
+      );
+      assert(Math.abs(edge.gap) < 1, `${layout}: gutter and code must meet`);
+    }
+    assert.deepEqual(await gutterGeometry(), unselectedGeometry);
     await expect(page.locator("#range")).toHaveText(
       JSON.stringify({
         start: 10,
