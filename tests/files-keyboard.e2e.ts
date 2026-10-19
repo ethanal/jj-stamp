@@ -189,6 +189,51 @@ try {
   await page.keyboard.press("f");
   await expect(expand).toBeFocused();
   await expect(body).toBeHidden();
+  // Keyboard focus uses neutral theme colors, not the blue accent. Keep the
+  // existing outline geometry; mouse clicks do not acquire a keyboard ring.
+  for (const [scheme, color] of [
+    ["dark", "rgb(139, 148, 158)"],
+    ["dim", "rgb(160, 173, 186)"],
+    ["light", "rgb(87, 101, 116)"],
+    ["solarized-dark", "rgb(131, 148, 150)"],
+    ["solarized-light", "rgb(101, 123, 131)"],
+  ]) {
+    await page.getByRole("button", { name: "Settings", exact: true }).click();
+    await page.getByLabel("Color scheme").selectOption(scheme);
+    await page.keyboard.press("Escape");
+    for (const toggle of await page.locator(".sidebar-toggle").all()) {
+      await toggle.focus();
+      await expect(toggle).toHaveCSS("outline-style", "solid");
+      await expect(toggle).toHaveCSS("outline-width", "2px");
+      await expect(toggle).toHaveCSS("outline-color", color);
+    }
+    await page.keyboard.press("f");
+    await expect(body).toBeFocused();
+    await expect(body).toHaveCSS("outline-color", color);
+    await page.keyboard.press("f");
+  }
+  await page.getByRole("button", { name: "Refresh", exact: true }).click();
+  await expand.click();
+  await expect(collapse).toBeFocused();
+  await expect(collapse).toHaveCSS("outline-style", "none");
+  await collapse.click();
+
+  // Let the user's high-contrast palette supply the keyboard outline color.
+  await page.emulateMedia({ forcedColors: "active" });
+  await page.keyboard.press("Tab");
+  await expand.focus();
+  const systemHighlight = await page.evaluate(() => {
+    const probe = document.createElement("span");
+    probe.style.outline = "2px solid Highlight";
+    document.body.append(probe);
+    const color = getComputedStyle(probe).outlineColor;
+    probe.remove();
+    return color;
+  });
+  await expect(expand).toHaveCSS("outline-style", "solid");
+  await expect(expand).toHaveCSS("outline-width", "2px");
+  await expect(expand).toHaveCSS("outline-color", systemHighlight);
+  await page.emulateMedia({ forcedColors: "none" });
   assert.deepEqual(errors, []);
   console.log(
     "Files keyboard checks passed: toggle/focus, tree navigation, Vim isolation, guards, virtualized/collapsed rows, and empty revisions.",

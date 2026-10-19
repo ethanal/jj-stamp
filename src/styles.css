@@ -504,6 +504,17 @@ kbd {
   color: var(--muted);
   margin-left: auto;
 }
+/* Sidebar focus stays visible without introducing an accent-colored box. */
+.sidebar-toggle:focus-visible,
+.sidebar-body:focus-visible {
+  outline-color: var(--muted);
+}
+@media (forced-colors: active) {
+  .sidebar-toggle:focus-visible,
+  .sidebar-body:focus-visible {
+    outline-color: Highlight;
+  }
+}
 .sidebar-toggle:hover:not(:disabled) {
   background: var(--hover);
   color: var(--strong);
