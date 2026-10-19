@@ -45,6 +45,25 @@ try {
     await expect(page.locator("#file-loads")).toHaveText("1");
     if (layout === "split")
       await page.getByText("Layout", { exact: true }).click();
+    // Expand controls are inside the renderer's shadow root: they must use the
+    // same neutral focus token as app controls, including forced-color mode.
+    const expand = page.locator("[data-expand-button]").first();
+    await page.keyboard.press("Tab");
+    await expand.focus();
+    await expect(expand).toHaveCSS("outline-style", "solid");
+    await expect(expand).toHaveCSS("outline-width", "2px");
+    await expect(expand).toHaveCSS("outline-color", "rgb(139, 148, 158)");
+    await page.emulateMedia({ forcedColors: "active" });
+    const systemHighlight = await expand.evaluate((element) => {
+      const probe = document.createElement("span");
+      probe.style.outline = "2px solid Highlight";
+      element.parentElement!.append(probe);
+      const color = getComputedStyle(probe).outlineColor;
+      probe.remove();
+      return color;
+    });
+    await expect(expand).toHaveCSS("outline-color", systemHighlight);
+    await page.emulateMedia({ forcedColors: "none" });
     const firstScope = page
       .locator("[data-fold-hunk-context]")
       .filter({ hasText: "function fixtureSection10() {" })

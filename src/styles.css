@@ -27,7 +27,8 @@
   --button-border: var(--border);
   --accent: #9ac3e5;
   --bookmark: #f778ba;
-  --focus: #79a9d1;
+  /* One neutral keyboard-focus color for every theme and component. */
+  --focus: var(--muted);
   --added: #72b88a;
   --removed: #d28380;
   --modified: #c7ab70;
@@ -64,7 +65,6 @@
   --border: #444c56;
   --accent: #a3cdf4;
   --bookmark: #f0a6ca;
-  --focus: #85b6ff;
   --added: #8ddb9b;
   --removed: #f0a4a8;
   --modified: #dabc82;
@@ -89,7 +89,6 @@
   --button-fg: var(--muted);
   --accent: #075b9b;
   --bookmark: #a3155b;
-  --focus: #0969da;
   --added: #176b35;
   --removed: #a82c35;
   --modified: #785400;
@@ -121,7 +120,6 @@
   --button-border: #3e5961;
   --accent: #2aa198;
   --bookmark: #e875b2;
-  --focus: #268bd2;
   --added: #859900;
   --removed: #dc322f;
   --modified: #b58900;
@@ -153,7 +151,6 @@
   --button-fg: #586e75;
   --accent: #006d9c;
   --bookmark: #a3155b;
-  --focus: #268bd2;
   --added: #657b00;
   --removed: #dc322f;
   --modified: #946e00;
@@ -171,6 +168,11 @@
   --diff-selection-number-fg: #586e75;
   --diff-separator-bg: #eee8d5;
   --diff-separator-fg: #657b83;
+}
+@media (forced-colors: active) {
+  :root {
+    --focus: Highlight;
+  }
 }
 * {
   box-sizing: border-box;
@@ -503,17 +505,6 @@ kbd {
   place-items: center;
   color: var(--muted);
   margin-left: auto;
-}
-/* Sidebar focus stays visible without introducing an accent-colored box. */
-.sidebar-toggle:focus-visible,
-.sidebar-body:focus-visible {
-  outline-color: var(--muted);
-}
-@media (forced-colors: active) {
-  .sidebar-toggle:focus-visible,
-  .sidebar-body:focus-visible {
-    outline-color: Highlight;
-  }
 }
 .sidebar-toggle:hover:not(:disabled) {
   background: var(--hover);
@@ -906,7 +897,7 @@ kbd {
 .split-diff-resize.is-resizing::after {
   left: 3px;
   width: 3px;
-  background: var(--accent);
+  background: var(--focus);
 }
 .split-diff-resize[aria-disabled="true"] {
   pointer-events: none;
@@ -1066,10 +1057,19 @@ kbd {
 }
 .log-row:has(.log-change:focus-visible),
 .jj-log:focus-visible .log-row.is-current {
-  box-shadow: inset 2px 0 var(--muted);
+  box-shadow: inset 2px 0 var(--focus);
 }
 .log-row:has(.log-change:focus-visible):not(.is-current) {
   background: var(--hover);
+}
+/* Forced colors suppress shadows and background-only focus indicators. */
+@media (forced-colors: active) {
+  .log-change:focus-visible,
+  .jj-log:focus-visible,
+  .split-diff-resize:focus-visible {
+    outline: 2px solid var(--focus);
+    outline-offset: -2px;
+  }
 }
 .queue-count {
   color: var(--modified);

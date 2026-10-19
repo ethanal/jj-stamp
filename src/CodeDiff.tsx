@@ -137,6 +137,11 @@ const separatorCSS = `
 [data-column-number] { user-select: none; }
 :host([data-fold-text-selection]) [data-line] { cursor: text; }
 [data-expand-button] { cursor: pointer; }
+/* Shadow-DOM controls share the application's focus color and high-contrast palette. */
+[data-expand-button]:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: -2px;
+}
 [data-line][data-fold-selected], [data-column-number][data-fold-selected] { background: var(--diff-selection-bg, #16466b); }
 [data-line][data-fold-context-selected], [data-column-number][data-fold-context-selected] { background: var(--diff-context-selection-bg, #172f46); }
 [data-fold-search-text] { background: color-mix(in srgb, var(--diff-search-color, #e3b341) 24%, transparent); }

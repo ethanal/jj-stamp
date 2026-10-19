@@ -163,6 +163,78 @@ async function assertOutlinedActions() {
   await page.mouse.move(0, 0);
 }
 
+async function assertFocusColor(color: string, forcedColors = false) {
+  await settings.click();
+  await page.keyboard.press("Tab");
+  for (const control of [
+    page.getByLabel("Color scheme"),
+    page.getByRole("slider", { name: "Font size", exact: true }),
+    page.getByRole("checkbox", { name: "Vim mode", exact: true }),
+    page.getByRole("button", { name: "Close settings", exact: true }),
+  ]) {
+    await control.focus();
+    await expect(control).toHaveCSS("outline-style", "solid");
+    await expect(control).toHaveCSS("outline-width", "2px");
+    await expect(control).toHaveCSS("outline-color", color);
+  }
+  await page.keyboard.press("Escape");
+  for (const control of [
+    refresh,
+    settings,
+    page.getByRole("button", { name: "Find in diff" }),
+    ...(await page.locator(".sidebar-toggle, .sidebar-resize").all()),
+  ]) {
+    await control.focus();
+    await expect(control).toHaveCSS("outline-style", "solid");
+    await expect(control).toHaveCSS("outline-color", color);
+  }
+  // The tree and the code renderer use shadow DOM, not the global selectors.
+  const treeRow = page.getByRole("treeitem", { name: file.path, exact: true });
+  await treeRow.focus();
+  await expect
+    .poll(() =>
+      treeRow.evaluate((el) => getComputedStyle(el, "::before").outlineColor),
+    )
+    .toBe(color);
+  await refresh.focus();
+  await page.keyboard.press("Control+f");
+  await expect(page.locator(".diff-search")).toHaveCSS("border-color", color);
+  await page.keyboard.press("Escape");
+  await expect(refresh).toBeFocused();
+  await page.getByRole("button", { name: "Split", exact: true }).click();
+  await page.keyboard.press("Tab");
+  const divider = page.getByRole("separator", { name: "Resize split diff" });
+  await divider.focus();
+  if (forcedColors) {
+    await expect(divider).toHaveCSS("outline-style", "solid");
+    await expect(divider).toHaveCSS("outline-color", color);
+  } else {
+    await expect
+      .poll(() =>
+        divider.evaluate(
+          (el) => getComputedStyle(el, "::after").backgroundColor,
+        ),
+      )
+      .toBe(color);
+  }
+  await page.getByRole("button", { name: "Stacked", exact: true }).click();
+  await page.keyboard.press("Tab");
+  const logChange = page.getByRole("button", {
+    name: `Review change ${source.changeId}`,
+    exact: true,
+  });
+  await logChange.focus();
+  if (forcedColors) {
+    await expect(logChange).toHaveCSS("outline-style", "solid");
+    await expect(logChange).toHaveCSS("outline-color", color);
+  } else {
+    await expect(logChange.locator("..")).toHaveCSS(
+      "box-shadow",
+      `${color} 2px 0px 0px 0px inset`,
+    );
+  }
+}
+
 try {
   await page.goto(url);
   await expect(added).toBeVisible();
@@ -431,6 +503,14 @@ try {
     await page.keyboard.press("Escape");
     await page.mouse.move(0, 0);
     await assertOutlinedActions();
+    const focusColors: Record<string, string> = {
+      dark: "rgb(139, 148, 158)",
+      dim: "rgb(160, 173, 186)",
+      light: "rgb(87, 101, 116)",
+      "solarized-dark": "rgb(131, 148, 150)",
+      "solarized-light": "rgb(101, 123, 131)",
+    };
+    await assertFocusColor(focusColors[scheme]);
     await refresh.focus();
     await page.keyboard.press("?");
     await expect(dialog).toHaveCSS(
@@ -438,8 +518,22 @@ try {
       expectedColors.background,
     );
     await expect(dialog).toHaveCSS("color", expectedColors.foreground);
+    await expect(close).toHaveCSS("outline-color", focusColors[scheme]);
+    await content.focus();
+    await expect(content).toHaveCSS("outline-color", focusColors[scheme]);
     await page.keyboard.press("Escape");
   }
+  await page.emulateMedia({ forcedColors: "active" });
+  const systemHighlight = await page.evaluate(() => {
+    const probe = document.createElement("span");
+    probe.style.outline = "2px solid Highlight";
+    document.body.append(probe);
+    const color = getComputedStyle(probe).outlineColor;
+    probe.remove();
+    return color;
+  });
+  await assertFocusColor(systemHighlight, true);
+  await page.emulateMedia({ forcedColors: "none" });
   await page.setViewportSize({ width: 360, height: 480 });
   for (const action of await actions.all()) {
     const box = await action.boundingBox();
