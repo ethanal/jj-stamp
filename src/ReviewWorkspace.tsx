@@ -123,18 +123,25 @@ export function FilesSidebar({
   onSelect: (path: string) => void;
 }) {
   const visible = expanded || peeking;
-  const body = useRef<HTMLDivElement>(null);
+  const sidebar = useRef<HTMLElement>(null);
   const lastFocusRequest = useRef(0);
   useLayoutEffect(() => {
     if (!visible || focusRequest === lastFocusRequest.current) return;
     lastFocusRequest.current = focusRequest;
-    // A stable target for empty/loading revisions; the tree then focuses the
-    // active row once its virtualized renderer has revealed it.
-    if (!body.current?.contains(document.activeElement))
-      body.current?.focus({ preventScroll: true });
+    // Focus a real control for empty/loading revisions, not the whole panel.
+    // The tree takes focus once its active row is mounted.
+    if (
+      !sidebar.current
+        ?.querySelector(".changed-files")
+        ?.contains(document.activeElement)
+    )
+      sidebar.current
+        ?.querySelector<HTMLButtonElement>(".sidebar-toggle")
+        ?.focus({ preventScroll: true });
   }, [focusRequest, visible]);
   return (
     <aside
+      ref={sidebar}
       {...hoverHandlers}
       onKeyDown={(event) => {
         if (
@@ -182,8 +189,6 @@ export function FilesSidebar({
         </span>
       )}
       <div
-        ref={body}
-        tabIndex={-1}
         className="sidebar-body"
         id="files-sidebar-content"
         hidden={!visible}

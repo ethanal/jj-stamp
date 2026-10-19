@@ -179,7 +179,9 @@ export function ChangedFilesTree(props: Props) {
     // the actual row to mount rather than guessing how many frames it needs.
     const observer = new MutationObserver(() => {
       if (
-        root.current?.closest(".sidebar-body")?.contains(document.activeElement)
+        root.current?.contains(document.activeElement) ||
+        root.current?.closest(".sidebar")?.querySelector(".sidebar-toggle") ===
+          document.activeElement
       )
         focusRow();
       else observer.disconnect();

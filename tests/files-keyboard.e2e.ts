@@ -175,7 +175,7 @@ try {
   await page.keyboard.press("f");
   await expect(row("zz/079.txt")).toBeFocused();
 
-  // Match the user's Files 0 case: focus stays on Files, never the empty diff.
+  // With Files 0, focus the toggle rather than an enormous empty panel.
   state = { ...state, version: "v2", files: [] };
   await page.reload();
   await expect(page.locator(".empty")).toContainText(
@@ -184,7 +184,12 @@ try {
   await page.keyboard.press("f");
   await expect(body).toBeHidden();
   await page.keyboard.press("f");
-  await expect(body).toBeFocused();
+  await expect(collapse).toBeFocused();
+  await expect(body).not.toHaveAttribute("tabindex");
+  await body.evaluate((element) => (element as HTMLElement).focus());
+  await expect(collapse).toBeFocused();
+  await expect(body).not.toBeFocused();
+  await expect(body).toHaveCSS("outline-style", "none");
   await expect(page.locator(".file-bar")).toHaveCSS("box-shadow", "none");
   await page.keyboard.press("f");
   await expect(expand).toBeFocused();
@@ -208,8 +213,9 @@ try {
       await expect(toggle).toHaveCSS("outline-color", color);
     }
     await page.keyboard.press("f");
-    await expect(body).toBeFocused();
-    await expect(body).toHaveCSS("outline-color", color);
+    await expect(collapse).toBeFocused();
+    await expect(collapse).toHaveCSS("outline-color", color);
+    await expect(body).toHaveCSS("outline-style", "none");
     await page.keyboard.press("f");
   }
   await page.getByRole("button", { name: "Refresh", exact: true }).click();
