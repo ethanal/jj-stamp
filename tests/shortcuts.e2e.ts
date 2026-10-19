@@ -339,6 +339,9 @@ try {
   await search.fill("");
   await page.keyboard.press("?");
   await expect(search).toHaveValue("?");
+  await page.keyboard.press("f");
+  await expect(search).toHaveValue("?f");
+  await expect(search).toBeFocused();
   await expect(dialog).not.toBeVisible();
   await page.keyboard.press("Escape");
 
@@ -383,6 +386,8 @@ try {
     }, html);
     await page.keyboard.press("?");
     await expect(dialog).not.toBeVisible();
+    await page.keyboard.press("f");
+    await expect(page.getByLabel("Typing guard")).toBeFocused();
     await page.evaluate(() =>
       document.querySelector("#typing-guard-fixture")!.remove(),
     );

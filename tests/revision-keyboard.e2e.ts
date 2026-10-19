@@ -86,6 +86,9 @@ async function selected(name: string) {
 try {
   await page.goto(url);
   await selected("middle");
+  await row("middle").focus();
+  await page.keyboard.press("f");
+  await expect(page.locator(".viewer-scroll")).toBeFocused();
   await page.getByRole("button", { name: "Collapse log sidebar" }).click();
   await page.keyboard.press("l");
   await expect(row("middle")).toBeFocused();

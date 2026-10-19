@@ -465,6 +465,7 @@ function FileDiffSection({
       className={`file-diff-section ${allFiles ? "all-files-section" : ""}${expanded ? "" : " is-collapsed"}`}
       aria-label={`Diff for ${file.path}`}
       data-file-path={file.path}
+      tabIndex={-1}
       ref={sectionRef}
     >
       {allFiles && (
@@ -604,6 +605,27 @@ export function ReviewViewer({
     },
     [],
   );
+  const [focusRequest, setFocusRequest] = useState<{ path: string } | null>(
+    null,
+  );
+  useLayoutEffect(() => {
+    if (!focusRequest) return;
+    setFocusRequest(null);
+    // Expansion and this request render together, so the diff is mounted before
+    // focusing. Unsupported files have no code surface; focus their section.
+    const section = fileSections.current.get(focusRequest.path);
+    const target = section?.querySelector<HTMLElement>(".code-surface");
+    (target ?? section ?? scrollRef.current)?.focus({ preventScroll: true });
+    const viewport = scrollRef.current;
+    if (!section || !viewport) return;
+    const sectionBox = section.getBoundingClientRect();
+    const viewportBox = viewport.getBoundingClientRect();
+    if (
+      sectionBox.bottom <= viewportBox.top ||
+      sectionBox.top >= viewportBox.bottom
+    )
+      viewport.scrollTop += sectionBox.top - viewportBox.top;
+  }, [focusRequest, fileSections, scrollRef]);
   const searchScope = `${contentIdentity}\u0000${renderVersion}\u0000${fileView}\u0000${fileView === "single" ? (file?.path ?? "") : ""}`;
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
@@ -702,6 +724,29 @@ export function ReviewViewer({
   useEffect(() => {
     const key = (event: KeyboardEvent) => {
       if (
+        event.key.toLowerCase() === "f" &&
+        !event.defaultPrevented &&
+        !event.repeat &&
+        !event.ctrlKey &&
+        !event.metaKey &&
+        !event.altKey &&
+        !event.isComposing &&
+        !document.querySelector("dialog[open]") &&
+        !event
+          .composedPath()
+          .some(
+            (node) =>
+              node instanceof HTMLElement &&
+              (node.closest("input, textarea, select, dialog") ||
+                node.isContentEditable),
+          )
+      ) {
+        event.preventDefault();
+        if (file) onFileCollapsedChange(file.path, false);
+        setFocusRequest({ path: file?.path ?? "" });
+        return;
+      }
+      if (
         !event.defaultPrevented &&
         !event.altKey &&
         (event.ctrlKey || event.metaKey) &&
@@ -723,7 +768,14 @@ export function ReviewViewer({
     };
     document.addEventListener("keydown", key);
     return () => document.removeEventListener("keydown", key);
-  }, [closeSearch, file, moveSearch, openSearch, searchOpen]);
+  }, [
+    closeSearch,
+    file,
+    moveSearch,
+    onFileCollapsedChange,
+    openSearch,
+    searchOpen,
+  ]);
   return (
     <main className="viewer">
       <div className="file-bar">

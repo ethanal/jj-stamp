@@ -201,6 +201,13 @@ try {
   await expect(page.locator(".file-diff-section")).toHaveCount(1);
   await expect(section(firstPath)).toBeVisible();
   await expect(page.locator(".file-diff-heading")).toHaveCount(0);
+  // The focus shortcut works from either sidebar, not just toolbar buttons.
+  await treeRow(firstPath).click();
+  await page.keyboard.press("f");
+  await expect(section(firstPath).locator(".code-surface")).toBeFocused();
+  await page.getByLabel("jj log output").focus();
+  await page.keyboard.press("f");
+  await expect(section(firstPath).locator(".code-surface")).toBeFocused();
   await expect(page.getByLabel("jj log output")).toHaveCSS(
     "padding-left",
     "20px",
@@ -259,6 +266,25 @@ try {
     0,
   );
 
+  // Focusing an offscreen active file reveals it; focusing an already visible
+  // diff preserves the current reading position instead of centering the panel.
+  await page.locator(".viewer-scroll").evaluate((element) => {
+    element.scrollTop = element.scrollHeight;
+  });
+  await page.getByLabel("jj log output").focus();
+  await page.keyboard.press("f");
+  await expect(section(firstPath).locator(".code-surface")).toBeFocused();
+  await expect(section(firstPath)).toBeInViewport();
+  await page.locator(".viewer-scroll").evaluate((element) => {
+    element.scrollTop = 300;
+  });
+  await page.getByLabel("jj log output").focus();
+  await page.keyboard.press("f");
+  await expect(section(firstPath).locator(".code-surface")).toBeFocused();
+  await expect
+    .poll(() => page.locator(".viewer-scroll").evaluate((el) => el.scrollTop))
+    .toBe(300);
+
   // Each file collapses independently, including unsupported files. Hidden
   // selections are cleared so the squash shortcut cannot act on unseen lines.
   const collapse = (path: string) =>
@@ -299,6 +325,20 @@ try {
     const box = await section(path).boundingBox();
     assert(box && box.height < 70, "Collapsed files only occupy a heading");
   }
+
+  // f must reveal a collapsed active diff before trying to focus it.
+  await treeRow(firstPath).click();
+  await page.keyboard.press("f");
+  await expect(section(firstPath).locator(".code-surface")).toBeFocused();
+  await expect(collapse(firstPath)).toHaveAttribute("aria-expanded", "true");
+  await expect(expand(secondPath)).toHaveAttribute("aria-expanded", "false");
+  await collapse(firstPath).click();
+  await treeRow(unsupportedPath).click();
+  await page.keyboard.press("f");
+  await expect(section(unsupportedPath)).toBeFocused();
+  await expect(section(unsupportedPath).locator(".unsupported")).toBeVisible();
+  await collapse(unsupportedPath).click();
+  await treeRow(firstPath).click();
 
   // One-file mode always shows the diff without discarding the all-files state.
   await oneFile.click();
