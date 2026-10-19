@@ -4,6 +4,8 @@ import type { GitStatusEntry } from "@pierre/trees";
 import type { DiffFile } from "./types";
 
 interface Props {
+  focusRequest?: number;
+  vimMode: boolean;
   files: DiffFile[];
   activePath?: string;
   disabled: boolean;
@@ -29,6 +31,8 @@ export function ChangedFilesTree(props: Props) {
     new Map(props.files.map((file) => [file.path, file])),
   );
   const syncing = useRef(false);
+  const root = useRef<HTMLElement>(null);
+  const lastFocusRequest = useRef(0);
   const { model } = useFileTree({
     paths: props.files.map((file) => file.path),
     initialExpansion: "closed",
@@ -148,12 +152,76 @@ export function ChangedFilesTree(props: Props) {
     }
   }, [model, props.activePath]);
 
+  useLayoutEffect(() => {
+    if (!props.focusRequest || props.focusRequest === lastFocusRequest.current)
+      return;
+    lastFocusRequest.current = props.focusRequest;
+    if (current.current.disabled) return;
+    const path = current.current.activePath ?? current.current.files[0]?.path;
+    if (!path) return;
+    const file = filesByPath.current.get(path);
+    if (!file) return;
+    for (const directory of directoryPaths([file])) {
+      const item = model.getItem(directory);
+      if (item && "expand" in item) item.expand();
+    }
+    const shadow = model.getFileTreeContainer()?.shadowRoot;
+    if (!shadow) return;
+    const focusRow = () => {
+      const row = shadow.querySelector<HTMLElement>(
+        `[role="treeitem"][data-item-path="${CSS.escape(path)}"]:not([data-item-parked="true"])`,
+      );
+      if (!row?.getClientRects().length) return;
+      row.focus({ preventScroll: true });
+      observer.disconnect();
+    };
+    // Revealing the sidebar remeasures the virtual tree asynchronously. Wait for
+    // the actual row to mount rather than guessing how many frames it needs.
+    const observer = new MutationObserver(() => {
+      if (
+        root.current?.closest(".sidebar-body")?.contains(document.activeElement)
+      )
+        focusRow();
+      else observer.disconnect();
+    });
+    observer.observe(shadow, {
+      childList: true,
+      subtree: true,
+      attributes: true,
+      attributeFilter: ["data-item-parked"],
+    });
+    model.scrollToPath(path, { focus: false });
+    focusRow();
+    return () => observer.disconnect();
+  }, [model, props.focusRequest]);
+
   return (
     <nav
+      ref={root}
       className="changed-files"
       aria-label="Changed files"
       inert={props.disabled}
       aria-disabled={props.disabled}
+      onKeyDown={(event) => {
+        if (
+          !props.vimMode ||
+          props.disabled ||
+          (event.key !== "j" && event.key !== "k") ||
+          event.defaultPrevented ||
+          event.ctrlKey ||
+          event.metaKey ||
+          event.altKey ||
+          event.shiftKey ||
+          event.nativeEvent.isComposing
+        )
+          return;
+        // Own Vim navigation here instead of letting CodeDiff's global handler
+        // move its line cursor while keyboard focus is in the file tree.
+        event.preventDefault();
+        event.stopPropagation();
+        if (event.key === "j") model.focusNextItem();
+        else model.focusPreviousItem();
+      }}
     >
       <FileTree model={model} className="file-tree" />
     </nav>

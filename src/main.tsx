@@ -206,6 +206,7 @@ function App() {
   const [showFiles, setShowFiles] = useState(() => readExpanded("files"));
   const [showLog, setShowLog] = useState(() => readExpanded("log"));
   const [logFocusRequest, setLogFocusRequest] = useState(0);
+  const [filesFocusRequest, setFilesFocusRequest] = useState(0);
   const [openRevisionId, setOpenRevisionId] = useState<string | null>(null);
   const filesReveal = useSidebarReveal(showFiles, hoverSidebars && !dragging);
   const logReveal = useSidebarReveal(showLog, hoverSidebars && !dragging);
@@ -918,10 +919,9 @@ function App() {
           break;
         case "f":
           event.preventDefault();
-          fileSections.current
-            .get(file?.path ?? "")
-            ?.querySelector<HTMLElement>(".code-surface")
-            ?.focus();
+          setOpenRevisionId(null);
+          if (!showFiles) setFilesFocusRequest((value) => value + 1);
+          setShowFiles((value) => !value);
           break;
         case "escape":
           if (!lock.current && !dragging) {
@@ -941,7 +941,7 @@ function App() {
     queue,
     clear,
     dragging,
-    file?.path,
+    showFiles,
     showLog,
     selectRevision,
   ]);
@@ -1037,6 +1037,8 @@ function App() {
         }
       >
         <FilesSidebar
+          focusRequest={filesFocusRequest}
+          vimMode={vimMode}
           files={state?.files}
           activePath={file?.path}
           source={source}

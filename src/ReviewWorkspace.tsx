@@ -90,6 +90,8 @@ function SidebarToggle({
 }
 
 export function FilesSidebar({
+  focusRequest = 0,
+  vimMode,
   files,
   activePath,
   source,
@@ -104,6 +106,8 @@ export function FilesSidebar({
   onToggle,
   onSelect,
 }: {
+  focusRequest?: number;
+  vimMode: boolean;
   files?: DiffFile[];
   activePath?: string;
   source?: Revision;
@@ -119,9 +123,34 @@ export function FilesSidebar({
   onSelect: (path: string) => void;
 }) {
   const visible = expanded || peeking;
+  const body = useRef<HTMLDivElement>(null);
+  const lastFocusRequest = useRef(0);
+  useLayoutEffect(() => {
+    if (!visible || focusRequest === lastFocusRequest.current) return;
+    lastFocusRequest.current = focusRequest;
+    // A stable target for empty/loading revisions; the tree then focuses the
+    // active row once its virtualized renderer has revealed it.
+    if (!body.current?.contains(document.activeElement))
+      body.current?.focus({ preventScroll: true });
+  }, [focusRequest, visible]);
   return (
     <aside
       {...hoverHandlers}
+      onKeyDown={(event) => {
+        if (
+          expanded &&
+          event.key.toLowerCase() === "f" &&
+          !event.defaultPrevented &&
+          !event.repeat &&
+          !event.ctrlKey &&
+          !event.metaKey &&
+          !event.altKey &&
+          !event.nativeEvent.isComposing
+        )
+          event.currentTarget
+            .querySelector<HTMLButtonElement>(".sidebar-toggle")
+            ?.focus({ preventScroll: true });
+      }}
       className={`sidebar ${visible ? "" : "is-collapsed"} ${peeking ? "is-peeking" : ""}`}
       aria-label="Files sidebar"
     >
@@ -153,6 +182,8 @@ export function FilesSidebar({
         </span>
       )}
       <div
+        ref={body}
+        tabIndex={-1}
         className="sidebar-body"
         id="files-sidebar-content"
         hidden={!visible}
@@ -160,6 +191,8 @@ export function FilesSidebar({
         <div className="sidebar-content">
           {files && (
             <ChangedFilesTree
+              focusRequest={visible ? focusRequest : 0}
+              vimMode={vimMode}
               files={files}
               activePath={activePath}
               disabled={navigationDisabled}

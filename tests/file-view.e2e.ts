@@ -612,9 +612,7 @@ try {
   await expect(selectedRows(secondPath)).toHaveCount(1);
   await expect(treeRow(secondPath)).toHaveAttribute("aria-selected", "true");
 
-  await page.locator(".file-bar").click();
-  await page.keyboard.press("f");
-  await expect(section(secondPath).locator(".code-surface")).toBeFocused();
+  await section(secondPath).locator(".code-surface").focus();
 
   const originalFirstPatch = initialState.files[0].patch;
   const squashResponse = page.waitForResponse((response) =>
