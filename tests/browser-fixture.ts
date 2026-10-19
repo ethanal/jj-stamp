@@ -18,9 +18,12 @@ export async function createBrowserFixture({
   captureConsoleErrors = false,
 }: BrowserFixtureOptions = {}) {
   await using setup = new AsyncDisposableStack();
+  const server = createServer(app);
   const vite = await createVite({
-    // Tests do not need HMR; in particular, never compete for its shared port.
-    server: { middlewareMode: true, hmr: false },
+    // Vite's client connects even with hmr:false. Share this fixture's ephemeral
+    // HTTP server instead of competing for port 24678 (or another server's token).
+    // No file watching/reloads are needed while a test runs.
+    server: { middlewareMode: true, hmr: { server }, watch: null },
     appType: entry ? "custom" : "spa",
   });
   setup.defer(() => vite.close());
@@ -35,7 +38,6 @@ export async function createBrowserFixture({
     );
   }
   app.use(vite.middlewares);
-  const server = createServer(app);
   setup.defer(async () => {
     if (server.listening)
       await new Promise<void>((resolve, reject) =>
