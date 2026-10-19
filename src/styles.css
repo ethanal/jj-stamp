@@ -1281,3 +1281,19 @@ kbd {
 .squash-file:hover:not(:disabled) {
   background: var(--hover);
 }
+
+.navigation-notice {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--muted);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.navigation-notice .action-button {
+  flex-shrink: 0;
+}

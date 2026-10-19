@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { RevisionNavigation } from "../src/revision-navigation.ts";
+import {
+  RevisionNavigation,
+  type RevisionNavigationOptions,
+} from "../src/revision-navigation.ts";
 import type { RepoState } from "../src/types.ts";
 
 function deferred<T>() {
@@ -27,7 +30,7 @@ function state(changeId: string, version: string): RepoState {
   };
 }
 
-function setup() {
+function setup(hooks: Partial<Omit<RevisionNavigationOptions, "select">> = {}) {
   const posts: {
     version: string;
     changeId: string;
@@ -48,18 +51,22 @@ function setup() {
     onState(value) {
       states.push(value);
       events.push(["state", value]);
+      hooks.onState?.(value);
     },
     onBusy(value) {
       busy.push(value);
       events.push(["busy", value]);
+      hooks.onBusy?.(value);
     },
     onError(error) {
       errors.push(error);
       events.push(["error", error]);
+      hooks.onError?.(error);
     },
     onIntent(changeId) {
       intents.push(changeId);
       events.push(["intent", changeId]);
+      hooks.onIntent?.(changeId);
     },
   });
   return { navigation, posts, states, busy, errors, intents, events };
@@ -275,7 +282,7 @@ test("dispose before a request is a complete no-op", () => {
   navigation.dispose();
   navigation.request("A", "v0");
   assert.deepEqual(events, []);
-  assert.deepEqual(posts, []);
+  assert.equal(posts.length, 0);
 });
 
 test("a caller's intent token guards a late cached preview independently of POST serialization", async () => {
@@ -348,3 +355,233 @@ test("a request from final publication stays serialized and uses the acknowledge
   );
   assert.deepEqual(busy, [true, false]);
 });
+
+test("deferred A,B,C synchronously report intents and busy, but only C dispatches on resume", async () => {
+  const { navigation, posts, states, busy, intents } = setup();
+  for (const changeId of ["A", "B", "C", "C"])
+    navigation.request(changeId, null);
+  assert.deepEqual(intents, ["A", "B", "C", "C"]);
+  assert.deepEqual(busy, [true]);
+  assert.equal(posts.length, 0);
+  await tick();
+  assert.equal(posts.length, 0, "deferred work must not dispatch on its own");
+  navigation.resume("fresh-version");
+  navigation.resume("ignored-version");
+  assert.deepEqual(
+    posts.map(({ version, changeId }) => [version, changeId]),
+    [["fresh-version", "C"]],
+  );
+  const c = state("C", "v1");
+  posts[0].result.resolve({ state: c });
+  await tick();
+  navigation.resume("idle-version");
+  assert.equal(posts.length, 1);
+  assert.deepEqual(states, [c]);
+  assert.deepEqual(busy, [true, false]);
+});
+
+test("a non-null request replaces deferred work and resumes with its supplied version", async () => {
+  const { navigation, posts, busy, intents } = setup();
+  navigation.request("A", null);
+  navigation.request("B", "fresh-version");
+  navigation.request("C", null);
+  navigation.resume("ignored-version");
+  assert.deepEqual(intents, ["A", "B", "C"]);
+  assert.equal(posts.length, 1);
+  assert.equal(posts[0].changeId, "B");
+  assert.equal(posts[0].version, "fresh-version");
+  posts[0].result.resolve({ state: state("B", "v1") });
+  await tick();
+  assert.equal(posts[1].changeId, "C");
+  assert.equal(posts[1].version, "v1", "null does not pause a running chain");
+  posts[1].result.resolve({ state: state("C", "v2") });
+  await tick();
+  assert.deepEqual(busy, [true, false]);
+});
+
+test("cancelDeferred clears waiting work and permits a new explicit request", async () => {
+  const { navigation, posts, states, busy, errors, intents } = setup();
+  navigation.resume("idle-version");
+  assert.equal(navigation.cancelDeferred(), false);
+  navigation.request("A", null);
+  navigation.request("B", null);
+  assert.equal(navigation.cancelDeferred(), true);
+  assert.deepEqual(busy, [true, false]);
+  assert.equal(navigation.cancelDeferred(), false);
+  navigation.resume("canceled-version");
+  await tick();
+  assert.equal(posts.length, 0);
+  assert.deepEqual(states, []);
+  assert.deepEqual(errors, []);
+  navigation.request("C", "explicit-version");
+  assert.deepEqual(intents, ["A", "B", "C"]);
+  assert.equal(posts.length, 1);
+  assert.equal(posts[0].changeId, "C");
+  assert.equal(posts[0].version, "explicit-version");
+  posts[0].result.resolve({ state: state("C", "v1") });
+  await tick();
+  assert.deepEqual(busy, [true, false, true, false]);
+});
+
+test("cancelDeferred cannot cancel either POST of a running chain", async () => {
+  const { navigation, posts, states, busy } = setup();
+  navigation.request("A", null);
+  navigation.resume("v0");
+  navigation.request("B", null);
+  assert.equal(navigation.cancelDeferred(), false);
+  posts[0].result.resolve({ state: state("A", "v1") });
+  await tick();
+  assert.equal(posts.length, 2);
+  assert.equal(posts[1].changeId, "B");
+  assert.equal(posts[1].version, "v1");
+  assert.equal(navigation.cancelDeferred(), false);
+  navigation.resume("ignored-version");
+  const b = state("B", "v2");
+  posts[1].result.resolve({ state: b });
+  await tick();
+  assert.deepEqual(states, [b]);
+  assert.deepEqual(busy, [true, false]);
+  assert.equal(navigation.cancelDeferred(), false);
+});
+
+for (const callback of ["onIntent", "onBusy"] as const) {
+  test(`reentrant resume and request from ${callback} start only one drain after notifications`, async () => {
+    let reentered = false;
+    const { navigation, posts, busy, intents, events } = setup({
+      [callback]() {
+        if (reentered) return;
+        reentered = true;
+        navigation.resume("fresh-version");
+        navigation.request("B", "stale-b");
+        navigation.resume("stale-resume");
+        assert.equal(posts.length, 0);
+      },
+    });
+    navigation.request("A", "stale-a");
+    assert.deepEqual(intents, ["A", "B"]);
+    assert.deepEqual(busy, [true]);
+    assert.deepEqual(events.at(-1), ["select", "fresh-version", "B"]);
+    assert.equal(posts.length, 1);
+    posts[0].result.resolve({ state: state("B", "v1") });
+    await tick();
+    assert.deepEqual(busy, [true, false]);
+  });
+
+  test(`reentrant cancellation from ${callback} cannot revive old work or resume replacement deferred work`, async () => {
+    let canceled = false;
+    const { navigation, posts, busy, intents } = setup({
+      [callback]() {
+        if (canceled) return;
+        canceled = true;
+        assert.equal(navigation.cancelDeferred(), true);
+        navigation.request("B", null);
+      },
+    });
+    navigation.request("A", "obsolete-version");
+    assert.deepEqual(intents, ["A", "B"]);
+    assert.deepEqual(
+      busy,
+      callback === "onIntent" ? [false, true] : [true, false, true],
+    );
+    assert.equal(posts.length, 0);
+    navigation.resume("fresh-version");
+    assert.equal(posts.length, 1);
+    assert.equal(posts[0].changeId, "B");
+    assert.equal(posts[0].version, "fresh-version");
+    posts[0].result.resolve({ state: state("B", "v1") });
+    await tick();
+    assert.equal(busy.at(-1), false);
+  });
+}
+
+test("cancelDeferred preserves new deferred work requested by its onBusy(false) callback", async () => {
+  let replaced = false;
+  const { navigation, posts, busy } = setup({
+    onBusy(value) {
+      if (!value && !replaced) {
+        replaced = true;
+        navigation.request("B", null);
+      }
+    },
+  });
+  navigation.request("A", null);
+  assert.equal(navigation.cancelDeferred(), true);
+  assert.deepEqual(busy, [true, false, true]);
+  assert.equal(posts.length, 0);
+  navigation.resume("fresh-version");
+  assert.equal(posts[0].changeId, "B");
+  posts[0].result.resolve({ state: state("B", "v1") });
+  await tick();
+  assert.deepEqual(busy, [true, false, true, false]);
+});
+
+test("a running drain stays reserved during final publication and releases before onBusy(false)", async () => {
+  let replaced = false;
+  const { navigation, posts, states, busy } = setup({
+    onState(value) {
+      assert.equal(navigation.cancelDeferred(), false);
+      navigation.resume("ignored-version");
+      if (value.source.changeId === "A") navigation.request("B", null);
+    },
+    onBusy(value) {
+      if (!value && !replaced) {
+        replaced = true;
+        navigation.request("C", null);
+      }
+    },
+  });
+  navigation.request("A", null);
+  navigation.resume("v0");
+  posts[0].result.resolve({ state: state("A", "v1") });
+  await tick();
+  assert.equal(posts[1].changeId, "B");
+  assert.equal(posts[1].version, "v1");
+  posts[1].result.resolve({ state: state("B", "v2") });
+  await tick();
+  assert.deepEqual(busy, [true, false, true]);
+  assert.equal(posts.length, 2);
+  navigation.resume("external-version");
+  assert.equal(posts[2].changeId, "C");
+  assert.equal(posts[2].version, "external-version");
+  posts[2].result.resolve({ state: state("C", "v3") });
+  await tick();
+  assert.deepEqual(
+    states.map((value) => value.source.changeId),
+    ["A", "B", "C"],
+  );
+  assert.deepEqual(busy, [true, false, true, false]);
+});
+
+test("dispose drops deferred work and makes resume, cancellation, and requests no-ops", async () => {
+  const { navigation, posts, events } = setup();
+  navigation.request("A", null);
+  navigation.request("B", null);
+  const before = [...events];
+  navigation.dispose();
+  navigation.dispose();
+  navigation.resume("fresh-version");
+  assert.equal(navigation.cancelDeferred(), false);
+  navigation.request("C", null);
+  navigation.request("D", "v0");
+  await tick();
+  assert.equal(posts.length, 0);
+  assert.deepEqual(events, before);
+});
+
+for (const callback of ["onIntent", "onBusy"] as const) {
+  test(`dispose from ${callback} prevents a reentrantly reserved drain from dispatching`, async () => {
+    const { navigation, posts, events } = setup({
+      [callback]() {
+        navigation.resume("fresh-version");
+        navigation.dispose();
+      },
+    });
+    navigation.request("A", null);
+    const before = [...events];
+    navigation.resume("ignored-version");
+    assert.equal(navigation.cancelDeferred(), false);
+    await tick();
+    assert.equal(posts.length, 0);
+    assert.deepEqual(events, before);
+  });
+}

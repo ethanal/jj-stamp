@@ -90,6 +90,8 @@ function App() {
   const [revisionPreview, setRevisionPreview] = useState<RepoState | null>(
     null,
   );
+  const [navigationTarget, setNavigationTarget] = useState<string | null>(null);
+  const [previewUnavailable, setPreviewUnavailable] = useState(false);
   const state = revisionPreview ?? queued.view;
   const source =
     revisionPreview?.source ?? queued.confirmed?.source ?? state?.source;
@@ -270,7 +272,11 @@ function App() {
     0,
   );
   const working = !!busy || queued.recovering;
-  const error = [queued.error, localError?.message]
+  const error = [
+    queued.error &&
+      `Squash in ${queued.confirmed?.source.changeIdPrefix ?? queued.confirmed?.source.changeId ?? "the original change"}: ${queued.error}`,
+    localError?.message,
+  ]
     .filter(Boolean)
     .join("\n\n");
   const diagnostics = [...queued.errorDetails, ...(localError?.details ?? [])];
@@ -559,7 +565,13 @@ function App() {
   const select = useCallback(
     (path: string, next: SelectedLineRange | null, selected: Selections) => {
       const current = queue.getSnapshot();
-      if (lock.current || current.recovering || !current.view) return;
+      if (
+        lock.current ||
+        revisionPreview ||
+        current.recovering ||
+        !current.view
+      )
+        return;
       try {
         if (next) setActivePath(path);
         setVimSelection(null);
@@ -571,7 +583,7 @@ function App() {
         clear();
       }
     },
-    [queue, clear],
+    [queue, clear, revisionPreview],
   );
   const squash = useCallback(
     (path?: string) => {
@@ -579,6 +591,7 @@ function App() {
       if (
         lock.current ||
         dragging ||
+        revisionPreview ||
         !current.view ||
         current.recovering ||
         current.halted
@@ -634,7 +647,18 @@ function App() {
         setError(error);
       }
     },
-    [queue, picked, count, dragging, clear, vimMode, range, file, style],
+    [
+      queue,
+      picked,
+      count,
+      dragging,
+      clear,
+      vimMode,
+      range,
+      file,
+      style,
+      revisionPreview,
+    ],
   );
   const undo = useCallback(async () => {
     const current = queue.getSnapshot();
@@ -643,6 +667,7 @@ function App() {
       dragging ||
       current.pending ||
       current.recovering ||
+      revisionPreview ||
       !current.confirmed?.canUndo
     )
       return;
@@ -662,7 +687,7 @@ function App() {
       lock.current = false;
       setBusy("");
     }
-  }, [queue, dragging, replace]);
+  }, [queue, dragging, replace, revisionPreview]);
   const navigationIntent = useRef(0);
   const navigationCallbacks = useRef({
     onState: (_next: RepoState) => {},
@@ -673,11 +698,16 @@ function App() {
     onState: (next) => {
       navigationIntent.current++;
       logVersion.current = next.version;
+      setNavigationTarget(null);
+      setPreviewUnavailable(false);
+      // Keep the reading position when a snapshot becomes the live revision.
+      const wasPreviewed =
+        revisionPreview?.source.changeId === next.source.changeId;
       replace(next);
       // Also restart an invalidated graph read when reselecting the same change
       // leaves the confirmed version unchanged.
       setGraphRefresh((value) => value + 1);
-      setRevisionScrollRequest((value) => value + 1);
+      if (!wasPreviewed) setRevisionScrollRequest((value) => value + 1);
     },
     onIntent: (changeId) => {
       refreshGeneration.current++;
@@ -686,6 +716,8 @@ function App() {
       // a click, even when several stateful selections are coalesced.
       logRequest.current++;
       const intent = ++navigationIntent.current;
+      setNavigationTarget(changeId);
+      setPreviewUnavailable(false);
       clear();
       setError("");
       // @ resolves live on the server, so it cannot reuse a graph-row preview.
@@ -694,10 +726,12 @@ function App() {
         (row) => row.revision?.changeId === changeId,
       )?.revision;
       if (!revision || !contentStore) return;
-      // A miss keeps the last useful view while the live selection loads. Never
-      // fetch a speculative preview ahead of the user's actual selection POST.
+      // During a squash this is a user-requested immutable read, not a live
+      // source switch. Demand reads bypass paused speculation and can miss cache.
+      // Ordinary navigation still uses cached-only previews beside its live POST.
+      const deferred = queue.getSnapshot().pending > 0;
       void contentStore
-        .getCommit(revision.commitId, false)
+        .getCommit(revision.commitId, deferred)
         .then((cached) => {
           if (
             !cached ||
@@ -707,7 +741,10 @@ function App() {
             return;
           const confirmed = queue.getSnapshot().confirmed;
           if (!confirmed) return;
-          void contentStore.getCommit(revision.commitId).catch(() => {}); // demand promotion
+          // Cached-only probes need promotion. A deferred demand read already
+          // did this; repeating it would refetch a snapshot too large to cache.
+          if (!deferred)
+            void contentStore.getCommit(revision.commitId).catch(() => {});
           setRevisionPreview({
             ...confirmed,
             source: revision,
@@ -725,12 +762,17 @@ function App() {
           setRevisionScrollRequest((value) => value + 1);
         })
         .catch(() => {
-          /* A cache miss cannot fail revision selection. */
+          // A missing/unsupported snapshot cannot cancel queued work or trigger
+          // an early stateful selection. Still open the live change after drain.
+          if (deferred && navigationIntent.current === intent)
+            setPreviewUnavailable(true);
         });
     },
     onError: (error) => {
       setOpenRevisionId(null);
       navigationIntent.current++;
+      setNavigationTarget(null);
+      setPreviewUnavailable(false);
       setRevisionPreview(null);
       setError(error);
       setGraphRefresh((value) => value + 1);
@@ -751,13 +793,37 @@ function App() {
       }),
   );
   useEffect(() => () => navigation.dispose(), [navigation]);
+  useLayoutEffect(() => {
+    const settle = () => {
+      const current = queue.getSnapshot();
+      // Hold the navigation lock across the whole drain and live handoff. React
+      // may not have rendered the final acknowledgement yet: use its fresh token
+      // synchronously, before another click or background refresh can intervene.
+      if (current.halted || current.recovering) {
+        // A failed/warned queue must never be cleared by an automatic replace().
+        if (navigation.cancelDeferred()) {
+          navigationIntent.current++;
+          setNavigationTarget(null);
+          setPreviewUnavailable(false);
+          setRevisionPreview(null);
+          setOpenRevisionId(null);
+          clear();
+          setNotice("Navigation canceled because squashing stopped.");
+        }
+      } else if (!current.pending && current.confirmed) {
+        navigation.resume(current.confirmed.version);
+      }
+    };
+    const unsubscribe = queue.subscribe(settle);
+    settle();
+    return unsubscribe;
+  }, [navigation, queue, clear]);
   const selectRevision = useCallback(
     (changeId: string, open = false) => {
       const current = queue.getSnapshot();
       if (
         (lock.current && busyRef.current !== "switching change") ||
         dragging ||
-        current.pending ||
         current.recovering ||
         !logVersion.current
       )
@@ -770,6 +836,18 @@ function App() {
         setShowLog(false);
         scroll.current?.focus({ preventScroll: true });
       }
+      if (current.pending && changeId === current.confirmed?.source.changeId) {
+        // Returning to the source cancels only an unsent handoff, never a squash.
+        navigation.cancelDeferred();
+        navigationIntent.current++;
+        setNavigationTarget(null);
+        setPreviewUnavailable(false);
+        setRevisionPreview(null);
+        clear();
+        setActivePath((path) => retainActivePath(current.view!.files, path));
+        setRevisionScrollRequest((value) => value + 1);
+        return;
+      }
       // Arrow/j/k navigation may have already selected this revision. Enter
       // doesn't need another request once that selection is acknowledged.
       if (
@@ -778,9 +856,9 @@ function App() {
         current.confirmed?.source.changeId === changeId
       )
         return;
-      navigation.request(changeId, logVersion.current);
+      navigation.request(changeId, current.pending ? null : logVersion.current);
     },
-    [queue, dragging, navigation, logReveal.dismiss],
+    [queue, dragging, navigation, logReveal.dismiss, clear],
   );
   useLayoutEffect(() => {
     if (!openRevisionId || busy) return;
@@ -874,10 +952,37 @@ function App() {
   const idleActionDisabled = working || queued.pending > 0;
   const squashDisabled =
     working ||
+    !!revisionPreview ||
     dragging ||
     queued.halted ||
     !state?.parent ||
     !!state.squashUnavailable;
+  const squashSourceLabel =
+    queued.confirmed?.source.changeIdPrefix ??
+    queued.confirmed?.source.changeId;
+  const destinationLabel =
+    navigationTarget === "@"
+      ? "the working copy"
+      : (log.find((row) => row.revision?.changeId === navigationTarget)
+          ?.revision?.changeIdPrefix ?? navigationTarget);
+  const navigationNotice =
+    navigationTarget && (queued.pending || revisionPreview)
+      ? [
+          revisionPreview
+            ? `Read-only snapshot of ${source?.changeIdPrefix ?? source?.changeId}.`
+            : "Read-only while navigation is pending.",
+          queued.pending
+            ? `Finishing squashes in ${squashSourceLabel}; then opening ${destinationLabel}.`
+            : `Validating the live revision of ${destinationLabel}.`,
+          previewUnavailable
+            ? "Snapshot unavailable; waiting for the live revision."
+            : revisionPreview
+              ? "The diff may change before squashing is enabled."
+              : "",
+        ]
+          .filter(Boolean)
+          .join(" ")
+      : "";
   return (
     <div className="app">
       <header className="topbar">
@@ -971,7 +1076,14 @@ function App() {
             selections={selections}
             range={range}
             busy={busy}
-            working={working}
+            working={working || !!revisionPreview}
+            readOnlyPreview={!!revisionPreview}
+            navigationNotice={navigationNotice}
+            onReturnToSource={
+              queued.pending && navigationTarget && queued.confirmed
+                ? () => selectRevision(queued.confirmed!.source.changeId)
+                : undefined
+            }
             dragging={dragging}
             pending={queued.pending}
             recovering={queued.recovering}
@@ -1010,9 +1122,7 @@ function App() {
           loading={busy === "switching change" ? false : logLoading}
           switching={busy === "switching change"}
           dragging={dragging}
-          idleActionDisabled={
-            busy === "switching change" ? false : idleActionDisabled
-          }
+          idleActionDisabled={busy === "switching change" ? false : working}
           hasVersion={!!logVersion.current}
           onResize={logReveal.peeking ? setLogPeekWidth : setLogWidth}
           onToggle={() => {

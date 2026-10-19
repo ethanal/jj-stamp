@@ -527,6 +527,9 @@ export function ReviewViewer({
   diagnostics,
   idleActionDisabled,
   squashDisabled,
+  readOnlyPreview = false,
+  navigationNotice = "",
+  onReturnToSource,
   onSquashFile,
   scrollRef,
   fileSections,
@@ -562,6 +565,9 @@ export function ReviewViewer({
   diagnostics: ErrorDetail[];
   idleActionDisabled: boolean;
   squashDisabled: boolean;
+  readOnlyPreview?: boolean;
+  navigationNotice?: string;
+  onReturnToSource?: () => void;
   onSquashFile: (path: string) => void;
   scrollRef: RefObject<HTMLDivElement | null>;
   fileSections: RefObject<Map<string, HTMLElement>>;
@@ -800,6 +806,16 @@ export function ReviewViewer({
           />
         </div>
       </div>
+      {navigationNotice && (
+        <div className="navigation-notice" role="status">
+          <span>{navigationNotice}</span>
+          {onReturnToSource && (
+            <button className="action-button" onClick={onReturnToSource}>
+              Return to squashing change
+            </button>
+          )}
+        </div>
+      )}
       <ErrorBanner
         error={error}
         diagnostics={diagnostics}
@@ -819,7 +835,7 @@ export function ReviewViewer({
               </div>
             ) : !file ? (
               <div className="empty">
-                {pending
+                {pending && !readOnlyPreview
                   ? "All changes queued."
                   : "No changes in this revision."}
                 {state.canUndo && !pending && (
@@ -840,7 +856,7 @@ export function ReviewViewer({
                   allFiles={fileView === "all"}
                   collapsed={collapsedFiles.has(entry.path)}
                   onCollapsedChange={onFileCollapsedChange}
-                  disabled={working || halted || dragging}
+                  disabled={(!readOnlyPreview && working) || halted || dragging}
                   revealRequest={
                     searchOpen && currentSearchMatch?.path === entry.path
                       ? `search:${searchRequest}:${currentSearchIndex}`
@@ -900,8 +916,11 @@ export function ReviewViewer({
                             }
                           : undefined
                       }
-                      disabled={working || halted}
-                      contextDisabled={pending > 0 || recovering}
+                      disabled={(!readOnlyPreview && working) || halted}
+                      readOnly={readOnlyPreview}
+                      contextDisabled={
+                        !readOnlyPreview && (pending > 0 || recovering)
+                      }
                       onSelection={(next, selected) =>
                         onSelection(entry.path, next, selected)
                       }

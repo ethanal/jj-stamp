@@ -297,6 +297,7 @@ export function CodeDiff({
   range,
   search,
   disabled,
+  readOnly = false,
   onSelection,
   onDragging,
   onError,
@@ -322,6 +323,8 @@ export function CodeDiff({
     request: number;
   };
   disabled: boolean;
+  /** Pinned browsing: allow cursor motion, never selection or editor actions. */
+  readOnly?: boolean;
   onSelection: (
     range: SelectedLineRange | null,
     selections: Selections,
@@ -378,6 +381,7 @@ export function CodeDiff({
     file,
     range,
     disabled,
+    readOnly,
     onSelection,
     onDragging,
     selections,
@@ -393,6 +397,7 @@ export function CodeDiff({
     file,
     range,
     disabled,
+    readOnly,
     onSelection,
     onDragging,
     selections,
@@ -829,8 +834,8 @@ export function CodeDiff({
     setEditorError("");
   }, [file.path, file.patch]);
   useEffect(() => {
-    if (disabled) stop.current?.();
-  }, [disabled]);
+    if (disabled || readOnly) stop.current?.();
+  }, [disabled, readOnly]);
   useEffect(() => {
     const track = (event: PointerEvent) => {
       mouse.current = { x: event.clientX, y: event.clientY };
@@ -871,6 +876,7 @@ export function CodeDiff({
       if (
         event.key !== "e" ||
         current.current.disabled ||
+        current.current.readOnly ||
         editorPending.current ||
         !mouse.current
       )
@@ -910,7 +916,12 @@ export function CodeDiff({
   }, [paint]);
 
   const select = useCallback((anchor: Point, end: Point) => {
-    if (!instance.current) return;
+    if (
+      !instance.current ||
+      current.current.disabled ||
+      current.current.readOnly
+    )
+      return;
     const next: SelectedLineRange = {
       start: anchor.line,
       side: anchor.side,
@@ -1000,6 +1011,7 @@ export function CodeDiff({
   useLayoutEffect(() => {
     if (
       !vimMode ||
+      readOnly ||
       !vimSelection ||
       appliedVimSelection.current === vimSelection.request
     )
@@ -1023,7 +1035,7 @@ export function CodeDiff({
     };
     frame = requestAnimationFrame(scroll);
     return () => cancelAnimationFrame(frame);
-  }, [vimMode, vimSelection, paint, scrollToVimCursor]);
+  }, [vimMode, readOnly, vimSelection, paint, scrollToVimCursor]);
   useEffect(() => {
     const key = (event: KeyboardEvent) => {
       const state = current.current;
@@ -1042,7 +1054,8 @@ export function CodeDiff({
       const visual = event.key === "V" && event.shiftKey;
       const motion =
         !event.shiftKey && (event.key === "j" || event.key === "k");
-      if ((!visual && !motion) || (visual && event.repeat)) return;
+      if ((!visual && !motion) || (visual && (event.repeat || state.readOnly)))
+        return;
       if (
         event
           .composedPath()
@@ -1110,7 +1123,9 @@ export function CodeDiff({
       event.preventDefault();
       root.current?.focus({ preventScroll: true });
       vimCursor.current = next;
-      if (visual) {
+      if (state.readOnly) {
+        visualAnchor.current = null;
+      } else if (visual) {
         if (visualAnchor.current) {
           visualAnchor.current = null;
           state.onSelection(null, {});
@@ -1137,7 +1152,8 @@ export function CodeDiff({
         event.ctrlKey ||
         event.metaKey ||
         event.button !== 0 ||
-        current.current.disabled
+        current.current.disabled ||
+        current.current.readOnly
       )
         return;
       const path = event.nativeEvent.composedPath();
@@ -1331,10 +1347,16 @@ export function CodeDiff({
       tabIndex={0}
       aria-description={
         vimMode
-          ? "Vim mode: j/k move between lines; l toggles the log; Shift+V selects lines; Escape clears selection."
+          ? readOnly
+            ? "Vim mode: j/k move between lines; l toggles the log. This snapshot is read-only."
+            : "Vim mode: j/k move between lines; l toggles the log; Shift+V selects lines; Escape clears selection."
           : undefined
       }
-      aria-label={`Diff for ${file.path}. Drag code to select lines; Shift-click to extend; Alt-drag to select text; press s to squash or e to open the hovered line in Neovim.`}
+      aria-label={
+        readOnly
+          ? `Read-only diff for ${file.path}. Alt-drag to select text.`
+          : `Diff for ${file.path}. Drag code to select lines; Shift-click to extend; Alt-drag to select text; press s to squash or e to open the hovered line in Neovim.`
+      }
       onPointerDown={pointerDown}
       onClickCapture={(event) => {
         if (
