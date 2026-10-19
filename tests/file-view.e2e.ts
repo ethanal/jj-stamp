@@ -259,6 +259,76 @@ try {
     0,
   );
 
+  const viewport = page.locator(".viewer-scroll");
+  const scrollIntoFile = (path: string, offset = 150) =>
+    viewport.evaluate(
+      (element, { path, offset }) => {
+        const target = element.querySelector<HTMLElement>(
+          `[data-file-path="${path}"]`,
+        )!;
+        element.scrollTop +=
+          target.getBoundingClientRect().top -
+          element.getBoundingClientRect().top +
+          offset;
+        return element.scrollTop;
+      },
+      { path, offset },
+    );
+
+  // Passive scrolling follows the sticky file heading without navigating,
+  // stealing focus, or snapping back to the start of the file.
+  await viewport.focus();
+  await scrollIntoFile(secondPath, -150);
+  await expect(
+    section(secondPath).locator(".file-diff-heading"),
+  ).toBeInViewport();
+  await expect(treeRow(firstPath)).toHaveAttribute("aria-selected", "true");
+  const scrolledTop = await scrollIntoFile(secondPath);
+  await expect(treeRow(secondPath)).toHaveAttribute("aria-selected", "true");
+  await expect(treeRow(firstPath)).toHaveAttribute("aria-selected", "false");
+  await expect(viewport).toBeFocused();
+  assert.equal(
+    await viewport.evaluate((element) => element.scrollTop),
+    scrolledTop,
+  );
+  // Clicking the scroll-selected row is still explicit navigation to its top.
+  await treeRow(secondPath).click();
+  await expect
+    .poll(async () => {
+      const view = await viewport.boundingBox();
+      const file = await section(secondPath).boundingBox();
+      assert(view && file);
+      return Math.abs(view.y - file.y);
+    })
+    .toBeLessThanOrEqual(2);
+  await viewport.evaluate((element) => {
+    element.scrollTop = element.scrollHeight;
+  });
+  await expect(treeRow(unsupportedPath)).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  await scrollIntoFile(secondPath);
+  await expect(treeRow(secondPath)).toHaveAttribute("aria-selected", "true");
+  await viewport.evaluate((element) => {
+    element.scrollTop = 0;
+  });
+  await expect(treeRow(firstPath)).toHaveAttribute("aria-selected", "true");
+
+  // Switching to one-file mode opens the file selected by scrolling.
+  await treeRow(firstPath).click();
+  await scrollIntoFile(secondPath);
+  await expect(treeRow(secondPath)).toHaveAttribute("aria-selected", "true");
+  await oneFile.click();
+  await expect(page.locator(".file-diff-section")).toHaveCount(1);
+  await expect(section(secondPath)).toBeVisible();
+  await viewport.evaluate((element) => {
+    element.scrollTop = 300;
+  });
+  await expect(treeRow(secondPath)).toHaveAttribute("aria-selected", "true");
+  await allFiles.click();
+  await treeRow(firstPath).click();
+
   // Each file collapses independently, including unsupported files. Hidden
   // selections are cleared so the squash shortcut cannot act on unseen lines.
   const collapse = (path: string) =>
@@ -318,7 +388,6 @@ try {
   await expect(expand(secondPath)).toHaveAttribute("aria-expanded", "false");
   await allFiles.click();
 
-  const viewport = page.locator(".viewer-scroll");
   // App-level find searches patch data, so virtualized offscreen rows are
   // reachable even though browser find cannot see their DOM yet.
   const offscreenNeedle = `updated ${secondPath} line 110`;
@@ -574,6 +643,16 @@ try {
     element.scrollTop +=
       target.getBoundingClientRect().top - element.getBoundingClientRect().top;
   }, secondPath);
+  await expect(treeRow(secondPath)).toHaveAttribute("aria-selected", "true");
+  await expect(page.getByRole("status")).toContainText(
+    "1 changed line selected",
+  );
+  // Scroll back to verify the original selection still belongs to alpha.
+  await scrollIntoFile(firstPath, 1300);
+  await expect(treeRow(firstPath)).toHaveAttribute("aria-selected", "true");
+  await expect(selectedRows(firstPath)).toHaveCount(1);
+  await scrollIntoFile(secondPath, 0);
+  await expect(treeRow(secondPath)).toHaveAttribute("aria-selected", "true");
   await addition(secondPath, 20).click({ modifiers: ["Shift"] });
   await expect(page.getByRole("status")).toContainText(
     "1 changed line selected",
@@ -695,6 +774,7 @@ try {
   await expect(section(secondPath)).toHaveCount(1);
   await expect(expand(secondPath)).toHaveAttribute("aria-expanded", "false");
   await expand(secondPath).click();
+  await treeRow(firstPath).click();
   await oneFile.click();
   await page
     .locator(".file-bar")

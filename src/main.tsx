@@ -41,6 +41,7 @@ import {
 } from "./ReviewToolbar";
 import { ShortcutsDialog } from "./ShortcutsDialog";
 import { useSidebarReveal } from "./useSidebarReveal";
+import { useScrollActiveFile } from "./useScrollActiveFile";
 import "./styles.css";
 
 function readExpanded(side: "files" | "log"): boolean {
@@ -258,6 +259,13 @@ function App() {
   }, [revisionScrollRequest, fileView, scrollToFile]);
   const file =
     state?.files.find((file) => file.path === activePath) ?? state?.files[0];
+  const { path: pickerPath, reset: resetPickerPath } = useScrollActiveFile(
+    fileView === "all",
+    state?.files,
+    file?.path,
+    scroll,
+    fileSections,
+  );
   const selections = useMemo<Selections>(() => {
     if (!state || !picked.length) return {};
     try {
@@ -556,12 +564,13 @@ function App() {
       )
         return;
       clear();
+      resetPickerPath();
       setActivePath(path);
       // Only explicit navigation resets scroll; squash may remove the active file.
       if (fileView === "all") scrollToFile(path);
       else scroll.current?.scrollTo(0, 0);
     },
-    [clear, queue, fileView, scrollToFile, busy],
+    [clear, queue, fileView, scrollToFile, busy, resetPickerPath],
   );
   const select = useCallback(
     (path: string, next: SelectedLineRange | null, selected: Selections) => {
@@ -574,7 +583,10 @@ function App() {
       )
         return;
       try {
-        if (next) setActivePath(path);
+        if (next) {
+          resetPickerPath();
+          setActivePath(path);
+        }
         setVimSelection(null);
         setPicked(refsFromSelection(current.view, selected));
         setRange(next);
@@ -584,7 +596,7 @@ function App() {
         clear();
       }
     },
-    [queue, clear, revisionPreview],
+    [queue, clear, revisionPreview, resetPickerPath],
   );
   const squash = useCallback(
     (path?: string) => {
@@ -1040,7 +1052,7 @@ function App() {
           focusRequest={filesFocusRequest}
           vimMode={vimMode}
           files={state?.files}
-          activePath={file?.path}
+          activePath={pickerPath}
           source={source}
           parent={state?.parent}
           expanded={showFiles}
@@ -1097,7 +1109,12 @@ function App() {
             onSquashFile={squash}
             scrollRef={scroll}
             fileSections={fileSections}
-            onFileViewChange={setFileView}
+            onFileViewChange={(view) => {
+              // Enter one-file mode on the file shown as selected in the picker.
+              if (view === "single" && pickerPath && pickerPath !== file?.path)
+                selectFile(pickerPath);
+              setFileView(view);
+            }}
             onStyleChange={setStyle}
             onSelection={select}
             onDragging={onDragging}

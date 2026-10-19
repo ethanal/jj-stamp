@@ -204,6 +204,21 @@ export function ChangedFilesTree(props: Props) {
       aria-label="Changed files"
       inert={props.disabled}
       aria-disabled={props.disabled}
+      onClickCapture={(event) => {
+        if (props.disabled) return;
+        const row = event.nativeEvent
+          .composedPath()
+          .find(
+            (node): node is HTMLElement =>
+              node instanceof HTMLElement &&
+              node.getAttribute("role") === "treeitem",
+          );
+        const path = row?.getAttribute("data-item-path");
+        // Scrolling can select a row without navigating to its heading. Trees
+        // emits no selection change when that already-selected row is clicked.
+        if (path && path === props.activePath && filesByPath.current.has(path))
+          props.onSelect(path);
+      }}
       onKeyDown={(event) => {
         if (
           !props.vimMode ||
