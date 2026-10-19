@@ -916,6 +916,13 @@ function App() {
           if (!showLog) setLogFocusRequest((value) => value + 1);
           setShowLog((value) => !value);
           break;
+        case "f":
+          event.preventDefault();
+          fileSections.current
+            .get(file?.path ?? "")
+            ?.querySelector<HTMLElement>(".code-surface")
+            ?.focus();
+          break;
         case "escape":
           if (!lock.current && !dragging) {
             clear();

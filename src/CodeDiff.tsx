@@ -67,28 +67,6 @@ function pointFromElement(element: Element | null): Point | null {
         : "additions",
   };
 }
-function firstVisibleVimPoint(
-  root: HTMLElement | null,
-  rows: HTMLElement[],
-): Point | null {
-  const viewport = root?.closest(".viewer-scroll")?.getBoundingClientRect();
-  const heading = root
-    ?.closest(".file-diff-section")
-    ?.querySelector(".file-diff-heading")
-    ?.getBoundingClientRect();
-  const visibleTop = Math.max(viewport?.top ?? 0, heading?.bottom ?? 0);
-  const first = rows
-    .filter((row) => {
-      const box = row.getBoundingClientRect();
-      return (
-        !viewport || (box.bottom > visibleTop && box.top < viewport.bottom)
-      );
-    })
-    .sort(
-      (a, b) => a.getBoundingClientRect().top - b.getBoundingClientRect().top,
-    )[0];
-  return pointFromElement(first ?? null);
-}
 function deepElementAt(x: number, y: number): Element | null {
   let element = document.elementFromPoint(x, y);
   while (element?.shadowRoot) {
@@ -311,7 +289,6 @@ export function CodeDiff({
   style,
   colorScheme = "dark",
   vimMode = false,
-  focusRequest = 0,
   resetVimCursor = false,
   vimSelection = null,
   active = true,
@@ -333,8 +310,6 @@ export function CodeDiff({
   style: "unified" | "split";
   colorScheme?: ColorScheme;
   vimMode?: boolean;
-  /** Explicit focus must initialize/reveal the cursor, even if already focused. */
-  focusRequest?: number;
   /** A failed mutation must discard its speculative cursor, not remap it. */
   resetVimCursor?: boolean;
   vimSelection?: VimSelectionRequest | null;
@@ -1016,34 +991,6 @@ export function CodeDiff({
       viewport.scrollTop = top + height - viewport.clientHeight;
     return true;
   }, [virtualMetrics.lineHeight]);
-  useEffect(() => {
-    if (!focusRequest || !vimMode) return;
-    // The viewer focuses the surface in its layout effect. Virtual rows may
-    // arrive later, especially after expanding or revealing an offscreen file.
-    let frame = 0;
-    let attempts = 0;
-    const reveal = () => {
-      if (document.activeElement !== root.current) return;
-      if (!vimCursor.current) {
-        const range = current.current.range;
-        vimCursor.current = range
-          ? {
-              line: range.end,
-              side: range.endSide ?? range.side ?? "additions",
-            }
-          : firstVisibleVimPoint(root.current, [
-              ...(container.current?.shadowRoot?.querySelectorAll<HTMLElement>(
-                "[data-line]",
-              ) ?? []),
-            ]);
-      }
-      paint();
-      if (scrollToVimCursor() || attempts++ >= 30) return;
-      frame = requestAnimationFrame(reveal);
-    };
-    frame = requestAnimationFrame(reveal);
-    return () => cancelAnimationFrame(frame);
-  }, [focusRequest, vimMode, paint, scrollToVimCursor]);
   useLayoutEffect(() => {
     if (!restoreVimCursor.current) return;
     restoreVimCursor.current = false;
@@ -1144,7 +1091,27 @@ export function CodeDiff({
         };
       let initialized = false;
       if (!cursor) {
-        cursor = firstVisibleVimPoint(root.current, rows);
+        const viewport = root.current
+          ?.closest(".viewer-scroll")
+          ?.getBoundingClientRect();
+        const heading = root.current
+          ?.closest(".file-diff-section")
+          ?.querySelector(".file-diff-heading")
+          ?.getBoundingClientRect();
+        const visibleTop = Math.max(viewport?.top ?? 0, heading?.bottom ?? 0);
+        const first = rows
+          .filter((row) => {
+            const box = row.getBoundingClientRect();
+            return (
+              !viewport ||
+              (box.bottom > visibleTop && box.top < viewport.bottom)
+            );
+          })
+          .sort(
+            (a, b) =>
+              a.getBoundingClientRect().top - b.getBoundingClientRect().top,
+          )[0];
+        cursor = pointFromElement(first ?? null);
         initialized = true;
       }
       const next = moveVimLine(

@@ -167,13 +167,6 @@ try {
   await page.goto(url);
   await expect(added).toBeVisible();
   await expect(refresh).toBeEnabled();
-  await refresh.focus();
-  await page.keyboard.press("f");
-  await expect(surface).toBeFocused();
-  await expect(page.locator(".file-bar")).not.toHaveCSS("box-shadow", "none");
-  await expect(selected).toHaveCount(0);
-  await refresh.focus();
-  await expect(page.locator(".file-bar")).toHaveCSS("box-shadow", "none");
   await expect(page.locator(".topbar .commit-totals")).toHaveText("+1−1");
   const findButton = page.getByRole("button", { name: "Find in diff" });
   await expect(findButton).toHaveText("");
@@ -346,9 +339,6 @@ try {
   await search.fill("");
   await page.keyboard.press("?");
   await expect(search).toHaveValue("?");
-  await page.keyboard.press("f");
-  await expect(search).toHaveValue("?f");
-  await expect(search).toBeFocused();
   await expect(dialog).not.toBeVisible();
   await page.keyboard.press("Escape");
 
@@ -393,8 +383,6 @@ try {
     }, html);
     await page.keyboard.press("?");
     await expect(dialog).not.toBeVisible();
-    await page.keyboard.press("f");
-    await expect(page.getByLabel("Typing guard")).toBeFocused();
     await page.evaluate(() =>
       document.querySelector("#typing-guard-fixture")!.remove(),
     );

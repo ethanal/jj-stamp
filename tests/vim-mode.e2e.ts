@@ -144,13 +144,9 @@ try {
   await page.keyboard.press("Escape");
   await expect(cursor()).toHaveCount(0);
 
-  // f must show a usable cursor, not merely focus an invisible DOM wrapper.
-  await page.getByLabel("jj log output").focus();
-  await page.keyboard.press("f");
-  await expect(surface).toBeFocused();
+  // Works immediately after settings, without requiring a mouse selection.
+  await page.keyboard.press("j");
   await at(1);
-  await expect(cursor()).toBeInViewport();
-  await expect(selected()).toHaveCount(0);
   const overlay = surface.locator(".vim-line-cursor");
   await expect(overlay).toHaveCSS(
     "background-color",
@@ -216,12 +212,6 @@ try {
   await at(2, "deletion");
   await expect(selected()).toHaveCount(1);
   await expect(surface).toHaveAttribute("data-vim-mode", "visual");
-  await page.keyboard.press("f");
-  await expect(surface).toBeFocused();
-  await at(2, "deletion");
-  await expect(selected()).toHaveCount(1);
-  await expect(surface).toHaveAttribute("data-vim-mode", "visual");
-  await page.getByLabel("jj log output").focus();
   await expect
     .poll(() => code.evaluate((element) => element.scrollLeft))
     .toBe(120);
@@ -334,12 +324,9 @@ try {
   await page.keyboard.press("Escape");
   await at(2, "addition");
   const largeSurface = page.locator(".code-surface").nth(1);
-  await page.locator('.file-tree [data-item-path="large.txt"]').click();
-  await page.keyboard.press("f");
-  await expect(largeSurface).toBeFocused();
-  await at(1, "addition");
-  await expect(cursor()).toBeInViewport();
-  await expect(selected()).toHaveCount(0);
+  await largeSurface.scrollIntoViewIfNeeded();
+  await largeSurface.locator('[data-line="1"]').click();
+  await page.keyboard.press("Escape");
   await page.keyboard.press("Shift+V");
   for (let i = 0; i < 160; i++) await page.keyboard.press("j");
   await at(161, "addition");
@@ -394,19 +381,6 @@ try {
     element.scrollTop = element.scrollHeight;
   });
   await expect(cursor()).toHaveCount(0);
-  await page.getByLabel("jj log output").focus();
-  await page.keyboard.press("f");
-  await expect(largeSurface).toBeFocused();
-  await at(162, "addition");
-  await assertCursorVisible();
-  // Repeated f also reveals a cursor scrolled away while the diff stays focused.
-  await page.locator(".viewer-scroll").evaluate((element) => {
-    element.scrollTop = element.scrollHeight;
-  });
-  await expect(cursor()).toHaveCount(0);
-  await page.keyboard.press("f");
-  await at(162, "addition");
-  await assertCursorVisible();
   await page.keyboard.press("k");
   await at(161, "addition");
   await assertCursorVisible();

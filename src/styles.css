@@ -953,16 +953,6 @@ kbd {
 .code-surface:focus-visible {
   outline: none;
 }
-/* Keep keyboard focus visible even without Vim mode, without outlining an
-   entire (possibly virtualized) file. The toolbar stays in view while reading. */
-.viewer:has(
-    .code-surface:focus-visible,
-    .file-diff-section:focus-visible,
-    .viewer-scroll:focus-visible
-  )
-  .file-bar {
-  box-shadow: inset 2px 0 var(--focus);
-}
 /* One overlay spans both panes, gutters, and split padding rows. */
 .vim-line-cursor {
   position: absolute;
