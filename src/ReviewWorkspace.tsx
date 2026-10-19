@@ -605,12 +605,12 @@ export function ReviewViewer({
     },
     [],
   );
-  const [focusRequest, setFocusRequest] = useState<{ path: string } | null>(
-    null,
-  );
+  const [focusRequest, setFocusRequest] = useState<{
+    path: string;
+    request: number;
+  } | null>(null);
   useLayoutEffect(() => {
     if (!focusRequest) return;
-    setFocusRequest(null);
     // Expansion and this request render together, so the diff is mounted before
     // focusing. Unsupported files have no code surface; focus their section.
     const section = fileSections.current.get(focusRequest.path);
@@ -721,7 +721,7 @@ export function ReviewViewer({
       return;
     viewport.scrollTop += sectionBox.top - viewportBox.top;
   }, [currentSearchMatch, fileSections, scrollRef, searchOpen, searchRequest]);
-  useEffect(() => {
+  useLayoutEffect(() => {
     const key = (event: KeyboardEvent) => {
       if (
         event.key.toLowerCase() === "f" &&
@@ -743,7 +743,10 @@ export function ReviewViewer({
       ) {
         event.preventDefault();
         if (file) onFileCollapsedChange(file.path, false);
-        setFocusRequest({ path: file?.path ?? "" });
+        setFocusRequest((previous) => ({
+          path: file?.path ?? "",
+          request: (previous?.request ?? 0) + 1,
+        }));
         return;
       }
       if (
@@ -952,6 +955,11 @@ export function ReviewViewer({
                       style={style}
                       colorScheme={colorScheme}
                       vimMode={vimMode}
+                      focusRequest={
+                        focusRequest?.path === entry.path
+                          ? focusRequest.request
+                          : 0
+                      }
                       resetVimCursor={halted}
                       vimSelection={
                         vimSelection?.path === entry.path ? vimSelection : null
