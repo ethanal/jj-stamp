@@ -1,4 +1,5 @@
 import { useLayoutEffect, useRef } from "react";
+import { flushSync } from "react-dom";
 import { FileTree, useFileTree } from "@pierre/trees/react";
 import type { GitStatusEntry } from "@pierre/trees";
 import type { DiffFile } from "./types";
@@ -61,7 +62,10 @@ export function ChangedFilesTree(props: Props) {
       // The review has one active file, even after a modifier-click. Folder
       // selection only expands/collapses the tree; it must not clear code picks.
       syncSelection(next);
-      if (next && next !== activePath) onSelect(next);
+      // Trees dispatches from its own renderer, outside React's discrete event
+      // handling. Commit the active file before an immediately following key
+      // (such as f) can run against the previous file's shortcut handlers.
+      if (next && next !== activePath) flushSync(() => onSelect(next));
     },
     renderRowDecoration({ item }) {
       const file = filesByPath.current.get(item.path);

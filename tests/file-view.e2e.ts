@@ -333,8 +333,21 @@ try {
   await expect(collapse(firstPath)).toHaveAttribute("aria-expanded", "true");
   await expect(expand(secondPath)).toHaveAttribute("aria-expanded", "false");
   await collapse(firstPath).click();
-  await treeRow(unsupportedPath).click();
-  await page.keyboard.press("f");
+  // Trees uses its own renderer: exercise the next shortcut before React gets
+  // another task to commit the newly selected path (no Playwright wait between).
+  await treeRow(unsupportedPath).evaluate(async (element) => {
+    (element as HTMLElement).click();
+    // Let the tree's own microtask move focus, but not a React scheduler task.
+    await Promise.resolve();
+    element.dispatchEvent(
+      new KeyboardEvent("keydown", {
+        key: "f",
+        bubbles: true,
+        composed: true,
+        cancelable: true,
+      }),
+    );
+  });
   await expect(section(unsupportedPath)).toBeFocused();
   await expect(section(unsupportedPath).locator(".unsupported")).toBeVisible();
   await collapse(unsupportedPath).click();
