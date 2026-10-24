@@ -1,5 +1,6 @@
 import { useId, useRef, type ReactNode } from "react";
 import type { Revision } from "./types";
+import { useDialogBackdropDismiss } from "./useDialogBackdropDismiss";
 import {
   colorSchemes,
   fontSizeLimits,
@@ -107,6 +108,7 @@ export function SettingsDialog({
   disabled: boolean;
 }) {
   const dialog = useRef<HTMLDialogElement>(null);
+  const backdropDismiss = useDialogBackdropDismiss();
   const id = useId();
   return (
     <>
@@ -120,6 +122,7 @@ export function SettingsDialog({
         Settings
       </button>
       <dialog
+        {...backdropDismiss}
         ref={dialog}
         id={id}
         className="settings-dialog preferences-dialog"

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useId, useRef } from "react";
+import { useDialogBackdropDismiss } from "./useDialogBackdropDismiss";
 import "./shortcuts-dialog.css";
 
 const groups = [
@@ -58,6 +59,7 @@ const groups = [
 
 export function ShortcutsDialog({ disabled }: { disabled: boolean }) {
   const dialog = useRef<HTMLDialogElement>(null);
+  const backdropDismiss = useDialogBackdropDismiss();
   const closeButton = useRef<HTMLButtonElement>(null);
   const previousFocus = useRef<HTMLElement | null>(null);
   const id = useId();
@@ -111,6 +113,7 @@ export function ShortcutsDialog({ disabled }: { disabled: boolean }) {
 
   return (
     <dialog
+      {...backdropDismiss}
       ref={dialog}
       id={id}
       className="settings-dialog shortcuts-dialog"

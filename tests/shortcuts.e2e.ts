@@ -276,6 +276,54 @@ try {
   await expect(selected).toHaveCount(0);
   await expect(clearSelection).toBeDisabled();
 
+  // Backdrop dismissal is shared by both native modals. Padding/content and
+  // gestures crossing the dialog boundary must not count as backdrop clicks.
+  for (const modal of [settingsDialog, dialog]) {
+    if (modal === settingsDialog) await settings.click();
+    else {
+      await refresh.focus();
+      await page.keyboard.press("?");
+    }
+    await expect(modal).toBeVisible();
+    const box = await modal.boundingBox();
+    const background = await refresh.boundingBox();
+    assert(box && background);
+    const inside = { x: box.x + 5, y: box.y + 5 };
+    const outside = {
+      x: background.x + background.width / 2,
+      y: background.y + background.height / 2,
+    };
+    assert(
+      outside.x < box.x ||
+        outside.x >= box.x + box.width ||
+        outside.y < box.y ||
+        outside.y >= box.y + box.height,
+    );
+    await page.mouse.click(inside.x, inside.y); // dialog padding
+    await expect(modal).toBeVisible();
+    await modal.getByRole("heading", { level: 2 }).click();
+    await expect(modal).toBeVisible();
+    for (const [start, end] of [
+      [inside, outside],
+      [outside, inside],
+    ]) {
+      await page.mouse.move(start.x, start.y);
+      await page.mouse.down();
+      await page.mouse.move(end.x, end.y);
+      await page.mouse.up();
+      await expect(modal).toBeVisible();
+    }
+    const reads = stateReads;
+    await page.mouse.click(outside.x, outside.y);
+    await expect(modal).not.toBeVisible();
+    await expect(modal === settingsDialog ? settings : refresh).toBeFocused();
+    assert.equal(
+      stateReads,
+      reads,
+      "backdrop dismissal must not click Refresh underneath",
+    );
+  }
+
   await refresh.focus();
   await page.keyboard.press("?");
   await expect(dialog).toBeVisible();
