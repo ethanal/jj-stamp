@@ -221,7 +221,9 @@ async function expectCursor(
   await expect(cursor()).toHaveAttribute("data-line", String(line));
   if (side)
     await expect(cursor()).toHaveAttribute("data-line-type", `change-${side}`);
-  await expect(surface(path)).toHaveAttribute("data-vim-mode", "visual");
+  await expect(surface(path)).toHaveAttribute("data-vim-mode", "normal");
+  await expect(selected()).toHaveCount(0);
+  await expect(contextSelected()).toHaveCount(0);
   await expect(surface(path)).toBeFocused();
 }
 
@@ -257,7 +259,7 @@ try {
   await expect(page.locator(".code-surface")).toBeVisible();
 
   // A contracted seven-row range advances past rows removed or contextualized
-  // by projection and leaves exactly the next displayed changed row selected.
+  // by projection, leaving the cursor on the next displayed row in nav mode.
   const contraction = state("contraction", [
     newFile("contraction.txt", 14, "contract"),
   ]);
@@ -270,7 +272,6 @@ try {
   await page.keyboard.press("s");
   assert.equal((await contractionResponse).status(), 200);
   await expectCursor("contraction.txt", 10, "addition");
-  await expect(selected()).toHaveCount(1);
   await expect(contextSelected()).toHaveCount(0);
   assert.deepEqual(requests[0].selections, [
     {
@@ -280,8 +281,7 @@ try {
   ]);
   assert.equal(serverState.files[0].additions, 7);
 
-  // Context is a valid next visual row, but remains a context marker rather
-  // than being misreported as a selected changed line.
+  // Context is a valid next cursor position, without selecting context or changes.
   const contextFile = file("context-next.txt", "@@ -1,2 +1,2 @@", [
     { index: 1, raw: "-old value", oldLine: 1 },
     { index: 2, raw: "+new value", newLine: 1 },
@@ -294,7 +294,7 @@ try {
   assert.equal((await contextResponse).status(), 200);
   await expectCursor("context-next.txt", 2);
   await expect(selected()).toHaveCount(0);
-  await expect(contextSelected()).toHaveCount(1);
+  await expect(contextSelected()).toHaveCount(0);
   await page.keyboard.press("Escape");
   await expect(selected()).toHaveCount(0);
   await expect(contextSelected()).toHaveCount(0);
@@ -305,16 +305,15 @@ try {
   );
 
   // Deleted-side source coordinates shift after projection. The next original
-  // row ("deleted 3") is now old line 2 and must be the single Vim selection.
+  // row ("deleted 3") is now old line 2 and must be the navigation cursor.
   await openState(state("deletion", [deletedFile("deletion.txt", 5)]));
   await enterVisual(changed("deletion.txt", 2, "deletion"));
   const deletionResponse = page.waitForResponse("**/api/squash-lines");
   await page.keyboard.press("s");
   assert.equal((await deletionResponse).status(), 200);
   await expectCursor("deletion.txt", 2, "deletion");
-  await expect(selected()).toHaveCount(1);
   await expect(changedText("deletion.txt", "deleted 3")).toHaveAttribute(
-    "data-fold-selected",
+    "data-fold-vim-cursor",
     "",
   );
   assert.deepEqual(requests[0].selections, [
@@ -387,24 +386,28 @@ try {
   await page.keyboard.press("s");
   await expect.poll(() => requests.length).toBe(1);
   await expectCursor("long.txt", squashLine + 1, "addition");
-  await expect(selected()).toHaveCount(1);
   await expect(page.getByLabel("Change line counts")).toHaveText("+199−0");
   await expectOverlayGeometry("long.txt");
 
   // A real user motion replaces the one-shot projected request before its ACK.
-  // The stable request token must not reapply the old single-row selection.
+  // The stable request token must not move the cursor back or restore selection.
   await page.keyboard.press("j");
   await expectCursor("long.txt", squashLine + 2, "addition");
-  await expect(selected()).toHaveCount(2);
   firstAck.release();
   await expect(page.locator(".queue-count")).toHaveCount(0);
   await expectCursor("long.txt", squashLine + 2, "addition");
-  await expect(selected()).toHaveCount(2);
 
-  // Squash that moved range, then queue one more squash behind its held ACK.
+  // Re-enter visual mode to select a range, then squash behind its held ACK.
+  await page.keyboard.press("Shift+V");
+  await page.keyboard.press("k");
+  await expect(selected()).toHaveCount(2);
   await page.keyboard.press("s");
   await expect.poll(() => requests.length).toBe(2);
   await expectCursor("long.txt", squashLine + 3, "addition");
+  await page.keyboard.press("s"); // no selection: do not squash again
+  await expectCursor("long.txt", squashLine + 3, "addition");
+  await expect(page.getByLabel("Change line counts")).toHaveText("+197−0");
+  await page.keyboard.press("Shift+V");
   await page.keyboard.press("s");
   await expectCursor("long.txt", squashLine + 4, "addition");
   await expect(page.getByLabel("Change line counts")).toHaveText("+196−0");
@@ -416,7 +419,6 @@ try {
     serverState.source.commitId.slice(0, 12),
   );
   await expectCursor("long.txt", squashLine + 4, "addition");
-  await expect(selected()).toHaveCount(1);
   await expectOverlayGeometry("long.txt");
   assert.deepEqual(
     requests.map((request) => request.selections),
@@ -436,12 +438,10 @@ try {
   assert.equal(serverState.files[0].additions, 196);
   await page.keyboard.press("j");
   await expectCursor("long.txt", squashLine + 5, "addition");
-  await expect(selected()).toHaveCount(2);
   await page.keyboard.press("k");
   await expectCursor("long.txt", squashLine + 4, "addition");
-  await expect(selected()).toHaveCount(1);
 
-  // Unequal replacement blocks in split mode select both available sides.
+  // Unequal replacement blocks advance to a navigation cursor in split mode.
   // On a deletion-only visual row the root overlay still spans the blank pane,
   // gutters, and center gap before and after resizing the split.
   const splitFile = file("split.txt", "@@ -10,2 +10,1 @@", [
@@ -475,7 +475,7 @@ try {
   const splitResponse = page.waitForResponse("**/api/squash-lines");
   await page.keyboard.press("s");
   assert.equal((await splitResponse).status(), 200);
-  await expect(selected()).toHaveCount(2);
+  await expect(selected()).toHaveCount(0);
   await expectCursor("split.txt", 10, "addition");
   assert.deepEqual(requests[0].selections, [
     { id: "split.txt-hunk", lines: [1] },
@@ -489,9 +489,8 @@ try {
   await page.keyboard.press("s");
   assert.equal((await eofResponse).status(), 200);
   await expectCursor("eof.txt", 2, "addition");
-  await expect(selected()).toHaveCount(1);
   await expect(changedText("eof.txt", "eof 2")).toHaveAttribute(
-    "data-fold-selected",
+    "data-fold-vim-cursor",
     "",
   );
 
@@ -518,7 +517,6 @@ try {
   assert.equal((await fallbackResponse).status(), 200);
   await expect(page.locator(".file-bar-filename")).toHaveText("fallback.txt");
   await expectCursor("fallback.txt", 1, "addition");
-  await expect(selected()).toHaveCount(1);
 
   await openState(state("empty", [newFile("only.txt", 1, "only")]));
   await enterVisual(changed("only.txt", 1, "addition"));
@@ -544,6 +542,24 @@ try {
   await expect(cursor()).toHaveCount(0);
   await expect(selected()).toHaveCount(0);
   await expect(contextSelected()).toHaveCount(0);
+
+  // Clicking the status-bar action also exits visual mode and preserves focus.
+  await openState(state("button", [newFile("button.txt", 4, "button")]));
+  await enterVisual(changed("button.txt", 1, "addition"));
+  const buttonResponse = page.waitForResponse("**/api/squash-lines");
+  const squashButton = page.getByRole("button", {
+    name: "Squash",
+    exact: true,
+  });
+  await squashButton.click();
+  assert.equal((await buttonResponse).status(), 200);
+  await expectCursor("button.txt", 2, "addition");
+  await expect(squashButton).toBeDisabled();
+  await page.keyboard.press("j");
+  await expectCursor("button.txt", 3, "addition");
+  await page.keyboard.press("s");
+  await expectCursor("button.txt", 3, "addition");
+  assert.equal(requests.length, 1);
 
   // A failed mutation rolls the optimistic patch back to the confirmed state,
   // clears Vim visual state/cursor, and never leaves the speculative next row.

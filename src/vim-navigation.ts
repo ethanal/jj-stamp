@@ -1,12 +1,12 @@
-import type { GetLineIndexUtility, SelectedLineRange } from "@pierre/diffs";
+import type { GetLineIndexUtility } from "@pierre/diffs";
 import type { LinePoint } from "./selection";
 import type { Hunk } from "./types";
 
-/** A fresh, projected selection applied once after a successful enqueue. */
-export interface VimSelectionRequest {
+/** A fresh, projected navigation cursor applied once after enqueueing. */
+export interface VimCursorRequest {
   request: number;
   path: string;
-  range: SelectedLineRange;
+  point: LinePoint;
 }
 
 export interface VimLine extends LinePoint {

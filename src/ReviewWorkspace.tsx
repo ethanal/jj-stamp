@@ -13,7 +13,7 @@ import {
 import type { FileDiffLoadedFiles, SelectedLineRange } from "@pierre/diffs";
 import type { ErrorDetail } from "./api";
 import { ChangedFilesTree } from "./ChangedFilesTree";
-import type { VimSelectionRequest } from "./vim-navigation";
+import type { VimCursorRequest } from "./vim-navigation";
 import { CodeDiff } from "./CodeDiff";
 import { DiffRuntime, DiffViewport } from "./DiffRuntime";
 import { searchDiffRows } from "./diff-search";
@@ -552,7 +552,7 @@ export function ReviewViewer({
   style,
   colorScheme,
   vimMode,
-  vimSelection,
+  vimCursorRequest,
   selections,
   range,
   busy,
@@ -590,7 +590,7 @@ export function ReviewViewer({
   style: DiffStyle;
   colorScheme: ColorScheme;
   vimMode: boolean;
-  vimSelection: VimSelectionRequest | null;
+  vimCursorRequest: VimCursorRequest | null;
   selections: Selections;
   range: SelectedLineRange | null;
   busy: string;
@@ -904,8 +904,8 @@ export function ReviewViewer({
                       : vimEntry?.scope === vimScope &&
                           vimEntry.path === entry.path
                         ? `entry:${vimEntry.request}`
-                        : vimSelection?.path === entry.path
-                          ? `vim:${vimSelection.request}`
+                        : vimCursorRequest?.path === entry.path
+                          ? `vim:${vimCursorRequest.request}`
                           : null
                   }
                   sectionRef={(element) => {
@@ -992,8 +992,10 @@ export function ReviewViewer({
                         }
                         return false;
                       }}
-                      vimSelection={
-                        vimSelection?.path === entry.path ? vimSelection : null
+                      vimCursorRequest={
+                        vimCursorRequest?.path === entry.path
+                          ? vimCursorRequest
+                          : null
                       }
                       active={entry.path === file.path}
                       selections={entry.path === file.path ? selections : {}}

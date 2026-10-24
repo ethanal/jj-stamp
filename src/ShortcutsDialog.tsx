@@ -6,7 +6,7 @@ const groups = [
   {
     title: "Review & navigation",
     shortcuts: [
-      ["s", "Squash selected lines; Vim keeps the next line selected"],
+      ["s", "Squash selected lines; Vim returns to navigation mode"],
       ["u", "Undo the last squash"],
       ["r", "Refresh repository state"],
       ["f", "Toggle the Files sidebar; opening focuses the active file"],

@@ -42,11 +42,7 @@ import {
   readRenderedRightHandLines,
 } from "./copy-selection";
 import { colorSchemes, type ColorScheme } from "./preferences";
-import {
-  moveVimLine,
-  vimLines,
-  type VimSelectionRequest,
-} from "./vim-navigation";
+import { moveVimLine, vimLines, type VimCursorRequest } from "./vim-navigation";
 import { SplitDiffResize } from "./SplitDiffLayout";
 import { remapVimCursor } from "./vim-refresh";
 
@@ -295,7 +291,7 @@ export function CodeDiff({
   colorScheme = "dark",
   vimMode = false,
   resetVimCursor = false,
-  vimSelection = null,
+  vimCursorRequest = null,
   vimEntry = null,
   onVimBoundary,
   onVimEntryApplied,
@@ -320,7 +316,7 @@ export function CodeDiff({
   vimMode?: boolean;
   /** A failed mutation must discard its speculative cursor, not remap it. */
   resetVimCursor?: boolean;
-  vimSelection?: VimSelectionRequest | null;
+  vimCursorRequest?: VimCursorRequest | null;
   vimEntry?: {
     request: number;
     edge: "first" | "last";
@@ -392,7 +388,7 @@ export function CodeDiff({
   const previousVimFile = useRef(file);
   const restoreVimCursor = useRef(false);
   const visualAnchor = useRef<Point | null>(null);
-  const appliedVimSelection = useRef(0);
+  const appliedVimCursorRequest = useRef(0);
   const appliedVimEntry = useRef(0);
   const current = useRef({
     file,
@@ -628,8 +624,8 @@ export function CodeDiff({
       );
       restoreVimCursor.current = vimCursor.current !== null;
     }
-    // Repository refreshes still clear actionable selections: only the browse
-    // position survives. An explicit squash request below restores visual mode.
+    // Repository refreshes and squashes clear actionable selections: only
+    // the browse position survives. A squash request below advances the cursor.
     visualAnchor.current = null;
   }, [file.path, file.patch, vimMode, resetVimCursor]);
   useEffect(() => {
@@ -638,7 +634,7 @@ export function CodeDiff({
     return () => document.removeEventListener("focusin", paint);
   }, [paint, vimMode]);
   useLayoutEffect(() => {
-    // External clears end visual mode; a Vim squash supplies a new range.
+    // External clears and squashes end visual mode.
     if (!range) visualAnchor.current = null;
     paint();
   }, [
@@ -1034,18 +1030,13 @@ export function CodeDiff({
     if (
       !vimMode ||
       readOnly ||
-      !vimSelection ||
-      appliedVimSelection.current === vimSelection.request
+      !vimCursorRequest ||
+      appliedVimCursorRequest.current === vimCursorRequest.request
     )
       return;
-    appliedVimSelection.current = vimSelection.request;
-    const point: Point = {
-      line: vimSelection.range.end,
-      side:
-        vimSelection.range.endSide ?? vimSelection.range.side ?? "additions",
-    };
-    vimCursor.current = point;
-    visualAnchor.current = point;
+    appliedVimCursorRequest.current = vimCursorRequest.request;
+    vimCursor.current = vimCursorRequest.point;
+    visualAnchor.current = null;
     root.current?.focus({ preventScroll: true });
     paint();
     let frame = 0;
@@ -1057,7 +1048,7 @@ export function CodeDiff({
     };
     frame = requestAnimationFrame(scroll);
     return () => cancelAnimationFrame(frame);
-  }, [vimMode, readOnly, vimSelection, paint, scrollToVimCursor]);
+  }, [vimMode, readOnly, vimCursorRequest, paint, scrollToVimCursor]);
   useLayoutEffect(() => {
     if (
       !vimMode ||

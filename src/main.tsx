@@ -18,7 +18,7 @@ import {
   type RowRef,
 } from "./optimistic";
 import { advanceVimSelection, firstVimSelection } from "./vim-squash";
-import type { VimSelectionRequest } from "./vim-navigation";
+import type { VimCursorRequest } from "./vim-navigation";
 import { ContentStore } from "./content-store";
 import { RevisionNavigation } from "./revision-navigation";
 import { FilesystemRefresh, parseRepositoryChange } from "./filesystem-refresh";
@@ -137,10 +137,9 @@ function App() {
   // latest selection when its response arrives, including sidebar navigation.
   const rangeRef = useRef(range);
   rangeRef.current = range;
-  const [vimSelection, setVimSelection] = useState<VimSelectionRequest | null>(
-    null,
-  );
-  const vimSelectionRequest = useRef(0);
+  const [vimCursorRequest, setVimCursorRequest] =
+    useState<VimCursorRequest | null>(null);
+  const vimCursorRequestId = useRef(0);
   const [picked, setPicked] = useState<RowRef[]>([]);
   const [dragging, setDragging] = useState(false);
   const [busy, setBusy] = useState("");
@@ -290,7 +289,7 @@ function App() {
     .join("\n\n");
   const diagnostics = [...queued.errorDetails, ...(localError?.details ?? [])];
   const clear = useCallback(() => {
-    setVimSelection(null);
+    setVimCursorRequest(null);
     setRange(null);
     setPicked([]);
     setNotice("");
@@ -590,7 +589,7 @@ function App() {
           resetPickerPath();
           setActivePath(path);
         }
-        setVimSelection(null);
+        setVimCursorRequest(null);
         setPicked(refsFromSelection(current.view, selected));
         setRange(next);
         setNotice("");
@@ -646,13 +645,15 @@ function App() {
             next = nextFile ? firstVimSelection(nextFile, style) : null;
           }
           if (next && nextFile) {
+            clear();
             setActivePath(nextFile.path);
-            setPicked(refsFromSelection(projected, next.selections));
-            setRange(next.range);
-            setVimSelection({
-              request: ++vimSelectionRequest.current,
+            setVimCursorRequest({
+              request: ++vimCursorRequestId.current,
               path: nextFile.path,
-              range: next.range,
+              point: {
+                line: next.range.end,
+                side: next.range.endSide ?? next.range.side ?? "additions",
+              },
             });
             return;
           }
@@ -1089,7 +1090,7 @@ function App() {
             style={style}
             colorScheme={colorScheme}
             vimMode={vimMode}
-            vimSelection={vimSelection}
+            vimCursorRequest={vimCursorRequest}
             selections={selections}
             range={range}
             busy={busy}
