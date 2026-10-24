@@ -34,8 +34,8 @@ const groups = [
       ["Shift + click / drag", "Extend the selection from its anchor"],
       ["Alt + drag", "Select native text instead of whole lines"],
       [
-        "j / k",
-        "Vim: move across lines and files / extend or shrink visual selection",
+        "j / k · gg / G",
+        "Vim: move across lines/files · jump to first/last diff line",
       ],
       [
         "Shift + V / Escape",

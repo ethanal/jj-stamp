@@ -163,3 +163,18 @@ test("initialization and visual selection retain the current line without motion
   assert.deepEqual(moveVimLine(lines, point(11, "deletions"), null), lines[2]);
   assert.deepEqual(moveVimLine(lines, null, null), lines[1]);
 });
+
+test("gg/G jump to diff boundaries, including before cursor initialization", () => {
+  assert.deepEqual(moveVimLine(lines, null, "gg"), lines[1]);
+  assert.deepEqual(moveVimLine(lines, null, "G"), lines[6]);
+  assert.deepEqual(moveVimLine(lines, point(11, "deletions"), "gg"), lines[0]);
+  assert.deepEqual(moveVimLine(lines, point(11, "deletions"), "G"), lines[5]);
+  assert.deepEqual(moveVimLine(lines, point(21, "additions"), "gg"), lines[1]);
+  assert.deepEqual(moveVimLine(lines, point(21, "additions"), "G"), lines[6]);
+  assert.deepEqual(
+    moveVimLine(lines.slice(2, 5), point(11, "deletions"), "G"),
+    lines[4],
+  );
+  assert.equal(moveVimLine([], null, "gg"), null);
+  assert.equal(moveVimLine([], null, "G"), null);
+});

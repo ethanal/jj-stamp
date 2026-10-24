@@ -55,9 +55,19 @@ export function vimLines(
 export function moveVimLine(
   lines: readonly VimLine[],
   cursor: LinePoint | null,
-  key: "j" | "k" | null,
+  key: "j" | "k" | "gg" | "G" | null,
 ): VimLine | null {
   if (!lines.length) return null;
+
+  if (key === "gg" || key === "G") {
+    const index = key === "gg" ? lines[0].index : lines.at(-1)!.index;
+    return (
+      lines.find(
+        (line) =>
+          line.index === index && line.side === (cursor?.side ?? "additions"),
+      ) ?? lines.find((line) => line.index === index)!
+    );
+  }
 
   const current = cursor
     ? lines.find(

@@ -388,6 +388,7 @@ export function CodeDiff({
   const container = useRef<HTMLElement | null>(null);
   const searchScrollToken = useRef("");
   const vimCursor = useRef<Point | null>(null);
+  const vimPendingG = useRef(false);
   const previousVimFile = useRef(file);
   const restoreVimCursor = useRef(false);
   const visualAnchor = useRef<Point | null>(null);
@@ -614,6 +615,7 @@ export function CodeDiff({
   useLayoutEffect(() => {
     const previous = previousVimFile.current;
     previousVimFile.current = file;
+    vimPendingG.current = false;
     restoreVimCursor.current = false;
     if (!vimMode || resetVimCursor || previous.path !== file.path)
       vimCursor.current = null;
@@ -1104,7 +1106,12 @@ export function CodeDiff({
     scrollToVimCursor,
   ]);
   useEffect(() => {
+    const resetPrefix = () => {
+      vimPendingG.current = false;
+    };
     const key = (event: KeyboardEvent) => {
+      const pendingG = vimPendingG.current;
+      resetPrefix();
       const state = current.current;
       if (
         !state.vimMode ||
@@ -1121,7 +1128,13 @@ export function CodeDiff({
       const visual = event.key === "V" && event.shiftKey;
       const motion =
         !event.shiftKey && (event.key === "j" || event.key === "k");
-      if ((!visual && !motion) || (visual && (event.repeat || state.readOnly)))
+      const prefix = event.key === "g" && !event.shiftKey;
+      const jump = event.key === "G" ? "G" : prefix && pendingG ? "gg" : null;
+      if (
+        (!visual && !motion && !prefix && !jump) ||
+        (visual && (event.repeat || state.readOnly)) ||
+        (prefix && event.repeat)
+      )
         return;
       if (
         event
@@ -1137,6 +1150,11 @@ export function CodeDiff({
       // One handler owns a key, even with several virtualized file diffs mounted.
       const focused = document.activeElement?.closest(".code-surface");
       if (focused ? focused !== root.current : !state.active) return;
+      if (prefix && !jump) {
+        event.preventDefault();
+        vimPendingG.current = true;
+        return;
+      }
       const rendered = instance.current;
       const shadow = container.current?.shadowRoot;
       if (!rendered || !shadow) return;
@@ -1184,7 +1202,7 @@ export function CodeDiff({
       const next = moveVimLine(
         lines,
         cursor,
-        visual || initialized ? null : (event.key as "j" | "k"),
+        jump ?? (visual || initialized ? null : (event.key as "j" | "k")),
       );
       if (!next) return;
       event.preventDefault();
@@ -1224,7 +1242,15 @@ export function CodeDiff({
       scrollToVimCursor();
     };
     document.addEventListener("keydown", key);
-    return () => document.removeEventListener("keydown", key);
+    document.addEventListener("pointerdown", resetPrefix);
+    document.addEventListener("focusin", resetPrefix);
+    window.addEventListener("blur", resetPrefix);
+    return () => {
+      document.removeEventListener("keydown", key);
+      document.removeEventListener("pointerdown", resetPrefix);
+      document.removeEventListener("focusin", resetPrefix);
+      window.removeEventListener("blur", resetPrefix);
+    };
   }, [paint, select, scrollToVimCursor]);
   const pointerDown = useCallback(
     (event: ReactPointerEvent<HTMLDivElement>) => {
@@ -1430,8 +1456,8 @@ export function CodeDiff({
       aria-description={
         vimMode
           ? readOnly
-            ? "Vim mode: j/k move between lines; l toggles the log. This snapshot is read-only."
-            : "Vim mode: j/k move between lines; l toggles the log; Shift+V selects lines; Escape clears selection."
+            ? "Vim mode: j/k move between lines; gg/G jump to the first/last diff line; l toggles the log. This snapshot is read-only."
+            : "Vim mode: j/k move between lines; gg/G jump to the first/last diff line; l toggles the log; Shift+V selects lines; Escape clears selection."
           : undefined
       }
       aria-label={

@@ -252,7 +252,7 @@ try {
   await page.keyboard.press("Shift+V");
   await settings.click();
   await page.getByRole("button", { name: "Close settings" }).focus();
-  for (const key of ["j", "k", "h", "l", "Shift+V", "s"])
+  for (const key of ["j", "k", "h", "l", "g", "g", "Shift+G", "Shift+V", "s"])
     await page.keyboard.press(key);
   await page.keyboard.press("Escape");
   await expect(selected()).toHaveCount(1);
@@ -266,8 +266,8 @@ try {
   await page.keyboard.press("Control+f");
   const search = page.getByRole("searchbox", { name: "Search diff" });
   await search.fill("");
-  await page.keyboard.type("hjklV");
-  await expect(search).toHaveValue("hjklV");
+  await page.keyboard.type("hjklVggGG");
+  await expect(search).toHaveValue("hjklVggGG");
   await page.keyboard.press("Escape");
   await at(2, "addition");
   await expect(selected()).toHaveCount(1);
@@ -429,10 +429,75 @@ try {
   await at(161, "addition"); // Diff j/k still operates outside the log.
   await page.getByRole("button", { name: "Expand log sidebar" }).click();
 
+  // gg/G stay within the current file, even when both ends are virtualized.
+  for (const view of ["One file", "All files"]) {
+    await page.getByRole("button", { name: view, exact: true }).click();
+    for (const layout of ["Split", "Stacked"]) {
+      await page.getByRole("button", { name: layout, exact: true }).click();
+      const target = page.locator('[data-file-path="large.txt"] .code-surface');
+      await target.focus();
+      await page.keyboard.press("Shift+G");
+      await at(500, "addition");
+      await assertCursorVisible();
+      await page.keyboard.press("Shift+G"); // GG is idempotent, not a file transition.
+      await at(500, "addition");
+      await page.keyboard.press("g");
+      await at(500, "addition"); // the prefix alone does not move
+      await page.keyboard.press("g");
+      await at(1, "addition");
+      await assertCursorVisible();
+      await expect(selected()).toHaveCount(0);
+      await page.keyboard.press("Shift+V");
+      await page.keyboard.press("Shift+G");
+      await at(500, "addition");
+      await expect(page.locator(".selection-status")).toHaveText(
+        "500 changed lines selected",
+      );
+      await page.keyboard.press("g");
+      await page.keyboard.press("g");
+      await at(1, "addition");
+      await expect(page.locator(".selection-status")).toHaveText(
+        "1 changed line selected",
+      );
+      await page.keyboard.press("Escape");
+
+      // An intervening key or focus/mouse change cancels a pending prefix.
+      await page.keyboard.press("Shift+G");
+      await page.keyboard.press("g");
+      await page.keyboard.press("h");
+      await page.keyboard.press("g");
+      await at(500, "addition");
+      await page.keyboard.press("Escape");
+      await page.keyboard.press("g");
+      await settings.click();
+      await page.keyboard.press("Escape");
+      await target.focus();
+      await page.keyboard.press("g");
+      await at(500, "addition");
+      await page.keyboard.press("Escape");
+      await page.keyboard.press("g");
+      await target.dispatchEvent("keydown", { key: "g", repeat: true });
+      await at(500, "addition"); // holding g must not act like gg
+      await page.keyboard.press("Escape");
+      for (const key of [
+        "Control+g",
+        "Control+Shift+G",
+        "Alt+g",
+        "Meta+Shift+G",
+      ])
+        await page.keyboard.press(key);
+      await at(500, "addition");
+    }
+  }
+
   // Disabling removes Vim behavior without changing the log shortcut.
   await settings.click();
   await vim.uncheck();
   await page.keyboard.press("Escape");
+  await expect(cursor()).toHaveCount(0);
+  await page.keyboard.press("g");
+  await page.keyboard.press("g");
+  await page.keyboard.press("Shift+G");
   await expect(cursor()).toHaveCount(0);
   await page.keyboard.press("l");
   await expect(
