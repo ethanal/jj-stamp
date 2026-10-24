@@ -69,6 +69,41 @@ async function at(path: string, line: number) {
   await expect(cursor).toHaveAttribute("data-line", String(line));
   await expect(cursor).toBeInViewport();
 }
+async function moveWithMinimalScroll(
+  path: string,
+  line: number,
+  key: "j" | "k",
+) {
+  const target = section(path).locator(`[data-line="${line}"]`).last();
+  const expected = await target.evaluate((row) => {
+    const host = (row.getRootNode() as ShadowRoot).host;
+    const viewport = host.closest<HTMLElement>(".viewer-scroll")!;
+    const section = host.closest(".file-diff-section")!;
+    const inset =
+      section?.querySelector(".file-diff-heading")?.getBoundingClientRect()
+        .height ?? 0;
+    const box = viewport.getBoundingClientRect();
+    const rect = row.getBoundingClientRect();
+    const delta =
+      rect.top < box.top + inset
+        ? rect.top - box.top - inset
+        : Math.max(0, rect.bottom - box.top - viewport.clientHeight);
+    return Math.max(
+      0,
+      Math.min(
+        viewport.scrollHeight - viewport.clientHeight,
+        viewport.scrollTop + delta,
+      ),
+    );
+  });
+  await page.keyboard.press(key);
+  await at(path, line);
+  await expect
+    .poll(() =>
+      page.locator(".viewer-scroll").evaluate((element) => element.scrollTop),
+    )
+    .toBeCloseTo(expected, 0);
+}
 try {
   await page.goto(url);
   for (const view of ["single", "all"]) {
@@ -109,17 +144,29 @@ try {
       await expect(page.locator("[data-line][data-fold-selected]")).toHaveCount(
         0,
       );
-      await page.keyboard.press("k");
-      await at("a.txt", 3);
-      await page.keyboard.press("j");
-      await at("z.txt", 1);
+      if (view === "all") await moveWithMinimalScroll("a.txt", 3, "k");
+      else {
+        await page.keyboard.press("k");
+        await at("a.txt", 3);
+      }
+      // Crossing to an already-visible line must not jump to its heading.
+      if (view === "all") await moveWithMinimalScroll("z.txt", 1, "j");
+      else {
+        await page.keyboard.press("j");
+        await at("z.txt", 1);
+      }
       // Start at a virtualized EOF; returning upward must also reveal that EOF.
       for (let i = 1; i < 300; i++) await page.keyboard.press("j");
       await at("z.txt", 300);
-      await page.keyboard.press("j");
-      await at("zz.txt", 1);
-      await page.keyboard.press("k"); // reveal the previous file's virtualized EOF
-      await at("z.txt", 300);
+      if (view === "all") {
+        await moveWithMinimalScroll("zz.txt", 1, "j");
+        await moveWithMinimalScroll("z.txt", 300, "k");
+      } else {
+        await page.keyboard.press("j");
+        await at("zz.txt", 1);
+        await page.keyboard.press("k"); // reveal the previous file's virtualized EOF
+        await at("z.txt", 300);
+      }
       await page.keyboard.press("j");
       await at("zz.txt", 1);
       await page.keyboard.press("j");

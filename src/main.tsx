@@ -553,7 +553,7 @@ function App() {
     return () => window.removeEventListener("beforeunload", warn);
   }, [queued.pending, queued.recovering]);
   const selectFile = useCallback(
-    (path: string) => {
+    (path: string, { preserveScroll = false } = {}) => {
       // A read-only refresh need not interrupt browsing the current files.
       // Squash remains guarded by the operation lock until it completes.
       if (
@@ -566,9 +566,12 @@ function App() {
       clear();
       resetPickerPath();
       setActivePath(path);
-      // Only explicit navigation resets scroll; squash may remove the active file.
-      if (fileView === "all") scrollToFile(path);
-      else scroll.current?.scrollTo(0, 0);
+      // Sidebar navigation reveals the heading. Vim boundary motion instead
+      // lets CodeDiff scroll only as far as needed to reveal its new cursor.
+      if (!preserveScroll) {
+        if (fileView === "all") scrollToFile(path);
+        else scroll.current?.scrollTo(0, 0);
+      }
     },
     [clear, queue, fileView, scrollToFile, busy, resetPickerPath],
   );
@@ -1115,7 +1118,9 @@ function App() {
                 selectFile(pickerPath);
               setFileView(view);
             }}
-            onNavigateFile={selectFile}
+            onNavigateFile={(path) =>
+              selectFile(path, { preserveScroll: true })
+            }
             onStyleChange={setStyle}
             onSelection={select}
             onDragging={onDragging}
