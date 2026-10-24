@@ -33,12 +33,14 @@ app.get("/api/graph", (_request, response) =>
   response.json({
     version: state.version,
     // Deliberately omit @, and include connector rows to skip.
-    rows: revisions
-      .slice(0, 3)
-      .flatMap((revision) => [
-        { graph: "○ ", revision, mutable: true },
-        { graph: "│" },
-      ]),
+    rows: revisions.slice(0, 3).flatMap((revision) => [
+      {
+        graph: revision.changeId === "bottom" ? "○ " : "│ × ",
+        revision,
+        mutable: true,
+      },
+      { graph: "│" },
+    ]),
   }),
 );
 app.post("/api/revision", async (request, response) => {
@@ -86,6 +88,26 @@ async function selected(name: string) {
 try {
   await page.goto(url);
   await selected("middle");
+  // Conflict nodes stay red on both selected and unselected rows, without
+  // coloring connecting edges or changing the graph's whitespace.
+  for (const name of ["top", "middle"]) {
+    const graph = row(name).locator("..").locator('> [aria-hidden="true"]');
+    await expect(graph).toHaveText("│ × ");
+    const colors = await graph.evaluate((element) => {
+      const reference = document.createElement("span");
+      reference.style.color = "var(--removed)";
+      element.append(reference);
+      const red = getComputedStyle(reference).color;
+      reference.remove();
+      return {
+        marker: getComputedStyle(element.querySelector(".log-conflict")!).color,
+        graph: getComputedStyle(element).color,
+        red,
+      };
+    });
+    assert.equal(colors.marker, colors.red);
+    assert.notEqual(colors.marker, colors.graph);
+  }
   await page.getByRole("button", { name: "Collapse log sidebar" }).click();
   await page.keyboard.press("l");
   await expect(row("middle")).toBeFocused();

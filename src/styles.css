@@ -1026,6 +1026,9 @@ kbd {
   color: var(--current-fg);
   background: var(--current-bg);
 }
+.log-conflict {
+  color: var(--removed);
+}
 .log-bookmarks {
   color: var(--bookmark);
 }

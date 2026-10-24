@@ -1274,7 +1274,17 @@ export function RevisionGraph({
                   className={`log-row${current ? " is-current" : ""}`}
                   key={row.revision?.commitId ?? `graph-${index}`}
                 >
-                  <span aria-hidden="true">{row.graph}</span>
+                  <span aria-hidden="true">
+                    {row.graph.split(/(×)/).map((part, index) =>
+                      part === "×" ? (
+                        <span className="log-conflict" key={index}>
+                          {part}
+                        </span>
+                      ) : (
+                        part
+                      ),
+                    )}
+                  </span>
                   {row.revision && (
                     <>
                       <button
