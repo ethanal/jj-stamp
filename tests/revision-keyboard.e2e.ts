@@ -88,26 +88,32 @@ async function selected(name: string) {
 try {
   await page.goto(url);
   await selected("middle");
-  // Conflict nodes stay red on both selected and unselected rows, without
-  // coloring connecting edges or changing the graph's whitespace.
-  for (const name of ["top", "middle"]) {
-    const graph = row(name).locator("..").locator('> [aria-hidden="true"]');
-    await expect(graph).toHaveText("│ × ");
-    const colors = await graph.evaluate((element) => {
-      const reference = document.createElement("span");
-      reference.style.color = "var(--removed)";
-      element.append(reference);
-      const red = getComputedStyle(reference).color;
-      reference.remove();
-      return {
-        marker: getComputedStyle(element.querySelector(".log-conflict")!).color,
-        graph: getComputedStyle(element).color,
-        red,
-      };
-    });
-    assert.equal(colors.marker, colors.red);
-    assert.notEqual(colors.marker, colors.graph);
+  // Use the bundled themes' ANSI red, not the muted deletion/count color.
+  // Selected rows must retain this accent without coloring connecting edges.
+  const themeSettings = page.getByRole("button", {
+    name: "Settings",
+    exact: true,
+  });
+  for (const [scheme, red] of [
+    ["dark", "rgb(234, 74, 90)"],
+    ["dim", "rgb(244, 112, 103)"],
+    ["light", "rgb(215, 58, 73)"],
+    ["solarized-dark", "rgb(220, 50, 47)"],
+    ["solarized-light", "rgb(220, 50, 47)"],
+  ]) {
+    await themeSettings.click();
+    await page.getByLabel("Color scheme").selectOption(scheme);
+    await page.keyboard.press("Escape");
+    for (const name of ["top", "middle"]) {
+      const graph = row(name).locator("..").locator('> [aria-hidden="true"]');
+      await expect(graph).toHaveText("│ × ");
+      await expect(graph.locator(".log-conflict")).toHaveCSS("color", red);
+      await expect(graph).not.toHaveCSS("color", red);
+    }
   }
+  await themeSettings.click();
+  await page.getByLabel("Color scheme").selectOption("dark");
+  await page.keyboard.press("Escape");
   await page.getByRole("button", { name: "Collapse log sidebar" }).click();
   await page.keyboard.press("l");
   await expect(row("middle")).toBeFocused();

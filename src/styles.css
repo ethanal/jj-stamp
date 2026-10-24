@@ -31,6 +31,7 @@
   --focus: var(--muted);
   --added: #72b88a;
   --removed: #d28380;
+  --red: #ea4a5a;
   --modified: #c7ab70;
   --selected-bg: #232a33;
   --scrollbar: #363e49;
@@ -67,6 +68,7 @@
   --bookmark: #f0a6ca;
   --added: #8ddb9b;
   --removed: #f0a4a8;
+  --red: #f47067;
   --modified: #dabc82;
   --selected-bg: #373e47;
   --scrollbar: #596572;
@@ -91,6 +93,7 @@
   --bookmark: #a3155b;
   --added: #176b35;
   --removed: #a82c35;
+  --red: #d73a49;
   --modified: #785400;
   --selected-bg: #dce7f2;
   --scrollbar: #a1acb8;
@@ -122,6 +125,7 @@
   --bookmark: #e875b2;
   --added: #859900;
   --removed: #dc322f;
+  --red: #dc322f;
   --modified: #b58900;
   --selected-bg: #0b414d;
   --scrollbar: #586e75;
@@ -153,6 +157,7 @@
   --bookmark: #a3155b;
   --added: #657b00;
   --removed: #dc322f;
+  --red: #dc322f;
   --modified: #946e00;
   --selected-bg: #e3dcc7;
   --scrollbar: #93a1a1;
@@ -1027,7 +1032,7 @@ kbd {
   background: var(--current-bg);
 }
 .log-conflict {
-  color: var(--removed);
+  color: var(--red);
 }
 .log-bookmarks {
   color: var(--bookmark);
