@@ -33,7 +33,6 @@ export function SidebarResize({
       aria-orientation="vertical"
       aria-controls={`${side}-sidebar-content`}
       aria-valuemin={sidebarLimits[side].min}
-      aria-valuemax={sidebarLimits[side].max}
       aria-valuenow={width}
       aria-valuetext={`${width} pixels`}
       aria-disabled={disabled}
@@ -43,7 +42,7 @@ export function SidebarResize({
         if (disabled || event.button !== 0) return;
         event.preventDefault();
         const element = event.currentTarget;
-        // Start from the rendered width, including any narrow-window clamp.
+        // Start from the rendered width so pointer movement tracks the edge.
         const actualWidth =
           element.parentElement?.getBoundingClientRect().width ?? width;
         drag.current = {

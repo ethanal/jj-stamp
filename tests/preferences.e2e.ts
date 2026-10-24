@@ -369,6 +369,42 @@ try {
   await log.focus();
   await page.keyboard.press("ArrowLeft");
   await expect(log).toHaveAttribute("aria-valuenow", "400");
+  // Neither the old pixel maxima nor viewport-percentage caps constrain
+  // pointer/keyboard resizing. Restore widths for the remaining checks.
+  for (const [side, handle, initial, direction] of [
+    ["files", files, 340, 1],
+    ["log", log, 400, -1],
+  ] as const) {
+    const panel = page.getByLabel(
+      side === "files" ? "Files sidebar" : "Revision graph",
+      { exact: true },
+    );
+    const edge = await handle.boundingBox();
+    assert(edge);
+    const x = edge.x + edge.width / 2;
+    const y = edge.y + 80;
+    await page.mouse.move(x, y);
+    await page.mouse.down();
+    await page.mouse.move(x + direction * 400, y, { steps: 5 });
+    await page.mouse.up();
+    await expect(panel).toHaveCSS("width", `${initial + 400}px`);
+    await handle.press(side === "files" ? "ArrowRight" : "ArrowLeft");
+    await expect(handle).toHaveAttribute(
+      "aria-valuenow",
+      String(initial + 410),
+    );
+    await expect(panel).toHaveCSS("width", `${initial + 410}px`);
+    assert.equal(
+      await page.evaluate(
+        (side) => localStorage.getItem(`jj-stamp.${side}-width`),
+        side,
+      ),
+      String(initial + 410),
+    );
+    for (let step = 0; step < 41; step++)
+      await handle.press(side === "files" ? "ArrowLeft" : "ArrowRight");
+    await expect(panel).toHaveCSS("width", `${initial}px`);
+  }
   await settings.click();
   const sliderBox = await fontSize.boundingBox();
   assert(sliderBox);
@@ -753,7 +789,12 @@ try {
         box.y >= 0 &&
         box.y + box.height <= 800,
     );
-    await page.locator(".viewer").hover();
+    // A wide files preview may cover the viewer's center; leave it through
+    // the uncovered top-right corner rather than its resize handle.
+    assert(mobileViewer);
+    await page.locator(".viewer").hover({
+      position: { x: mobileViewer.width - 10, y: 10 },
+    });
     await expect(body).toBeHidden();
   }
   await page.screenshot({ path: "/tmp/jj-stamp-preferences-mobile.png" });

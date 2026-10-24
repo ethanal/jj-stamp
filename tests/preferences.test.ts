@@ -48,7 +48,7 @@ test("appearance preferences validate stored values and preserve known schemes",
   assert.equal(parseSidebarWidth("files", "298.7"), 299);
   assert.equal(parseSidebarWidth("log", "410"), 410);
   assert.equal(parseSidebarWidth("files", "-20"), 120);
-  assert.equal(parseSidebarWidth("log", "999999"), 640);
+  assert.equal(parseSidebarWidth("log", "999999"), 999999);
 });
 
 test("shared font size defaults slightly larger and bounds stored values", () => {
@@ -86,14 +86,16 @@ test("sidebar keyboard resizing follows the physical edge in either sidebar", ()
   assert.equal(resizeFromKey("log", 350, "ArrowLeft"), 360);
   assert.equal(resizeFromKey("log", 350, "ArrowRight", true), 310);
   assert.equal(resizeFromKey("files", 245, "Home"), 120);
-  assert.equal(resizeFromKey("log", 350, "End"), 640);
-  assert.equal(resizeFromKey("files", 520, "ArrowRight"), 520);
+  assert.equal(resizeFromKey("log", 350, "End"), null);
+  assert.equal(resizeFromKey("files", 520, "ArrowRight"), 530);
   assert.equal(resizeFromKey("log", 160, "ArrowRight"), 160);
   assert.equal(resizeFromKey("files", 245, "s"), null);
   assert.equal(clampSidebarWidth("log", NaN), 350);
+  assert.equal(clampSidebarWidth("files", 10000), 10000);
+  assert.equal(resizeFromKey("log", 10000, "ArrowLeft", true), 10040);
 });
 
-test("resizers expose their purpose, bounds and current width to keyboard and AT", () => {
+test("resizers expose their purpose, minimum and current width without a maximum", () => {
   const html = renderToStaticMarkup(
     createElement(SidebarResize, {
       side: "files",
@@ -106,7 +108,7 @@ test("resizers expose their purpose, bounds and current width to keyboard and AT
   assert.match(html, /aria-orientation="vertical"/);
   assert.match(html, /aria-valuenow="275"/);
   assert.match(html, /aria-valuemin="120"/);
-  assert.match(html, /aria-valuemax="520"/);
+  assert.doesNotMatch(html, /aria-valuemax/);
   assert.match(html, /tabindex="0"/);
 });
 

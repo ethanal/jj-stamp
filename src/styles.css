@@ -321,8 +321,8 @@ kbd {
   font-size: calc(var(--font-size) - 1px);
 }
 .workspace {
-  --files-width: min(var(--files-preferred-width, 245px), 36vw);
-  --log-width: min(var(--log-preferred-width, 350px), 36vw);
+  --files-width: var(--files-preferred-width, 245px);
+  --log-width: var(--log-preferred-width, 350px);
   display: grid;
   flex: 1;
   min-height: 0;
@@ -366,12 +366,12 @@ kbd {
 /* Preview widths are independent of the saved, resizable pinned widths. */
 .sidebar.is-peeking {
   --peek-offset-x: calc(-100% + 30px);
-  width: min(var(--files-peek-width, 245px), 36vw);
+  width: var(--files-peek-width, 245px);
   justify-self: start;
 }
 .log-panel.is-peeking {
   --peek-offset-x: calc(100% - 30px);
-  width: min(var(--log-peek-width, 350px), 36vw);
+  width: var(--log-peek-width, 350px);
   justify-self: end;
 }
 @keyframes sidebar-peek {
@@ -1159,7 +1159,6 @@ kbd {
 }
 @media (max-width: 850px) {
   .workspace {
-    --files-width: min(var(--files-preferred-width, 245px), 35vw);
     --log-height: 175px;
     grid-template-columns: var(--files-width) minmax(0, 1fr);
     grid-template-rows: minmax(0, 1fr) var(--log-height);
@@ -1178,9 +1177,6 @@ kbd {
     grid-row: 2;
     border-left: 0;
     border-top: 1px solid var(--border);
-  }
-  .sidebar.is-peeking {
-    width: min(var(--files-peek-width, 245px), 35vw);
   }
   .log-panel.is-peeking {
     --peek-offset-x: 0px;

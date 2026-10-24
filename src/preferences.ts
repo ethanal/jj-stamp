@@ -38,8 +38,8 @@ export function parseVimMode(value: string | null): boolean {
 }
 export type SidebarSide = "files" | "log";
 export const sidebarLimits = {
-  files: { min: 120, max: 520, initial: 245 },
-  log: { min: 160, max: 640, initial: 350 },
+  files: { min: 120, initial: 245 },
+  log: { min: 160, initial: 350 },
 } as const;
 
 export function parseColorScheme(value: string | null): ColorScheme {
@@ -48,10 +48,8 @@ export function parseColorScheme(value: string | null): ColorScheme {
     : "dark";
 }
 export function clampSidebarWidth(side: SidebarSide, width: number): number {
-  const { min, max, initial } = sidebarLimits[side];
-  return Number.isFinite(width)
-    ? Math.round(Math.min(max, Math.max(min, width)))
-    : initial;
+  const { min, initial } = sidebarLimits[side];
+  return Number.isFinite(width) ? Math.round(Math.max(min, width)) : initial;
 }
 export function parseSidebarWidth(
   side: SidebarSide,
@@ -68,7 +66,6 @@ export function resizeFromKey(
   large = false,
 ): number | null {
   if (key === "Home") return sidebarLimits[side].min;
-  if (key === "End") return sidebarLimits[side].max;
   if (key !== "ArrowLeft" && key !== "ArrowRight") return null;
   const direction =
     (key === "ArrowRight" ? 1 : -1) * (side === "files" ? 1 : -1);
