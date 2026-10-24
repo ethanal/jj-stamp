@@ -1115,6 +1115,7 @@ function App() {
                 selectFile(pickerPath);
               setFileView(view);
             }}
+            onNavigateFile={selectFile}
             onStyleChange={setStyle}
             onSelection={select}
             onDragging={onDragging}

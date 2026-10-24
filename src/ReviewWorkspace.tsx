@@ -572,6 +572,7 @@ export function ReviewViewer({
   scrollRef,
   fileSections,
   onFileViewChange,
+  onNavigateFile,
   onStyleChange,
   onSelection,
   onDragging,
@@ -610,6 +611,7 @@ export function ReviewViewer({
   scrollRef: RefObject<HTMLDivElement | null>;
   fileSections: RefObject<Map<string, HTMLElement>>;
   onFileViewChange: (view: FileView) => void;
+  onNavigateFile: (path: string) => void;
   onStyleChange: (style: DiffStyle) => void;
   onSelection: (
     path: string,
@@ -623,6 +625,18 @@ export function ReviewViewer({
   onUndo: () => void;
   loadFile: (path: string, version: string) => Promise<FileDiffLoadedFiles>;
 }) {
+  const [vimEntry, setVimEntry] = useState<{
+    request: number;
+    scope: string;
+    path: string;
+    edge: "first" | "last";
+    side: "additions" | "deletions";
+  } | null>(null);
+  useEffect(() => {
+    if (vimEntry && vimEntry.path !== file?.path) setVimEntry(null);
+  }, [file?.path, vimEntry]);
+  const vimEntryRequest = useRef(0);
+  const vimScope = `${contentIdentity}\u0000${renderVersion}`;
   const collapseScope = JSON.stringify([state?.repo.path, source?.changeId]);
   const [collapsedScope, setCollapsedScope] = useState(collapseScope);
   const [collapsedFiles, setCollapsedFiles] = useState<Set<string>>(new Set());
@@ -898,9 +912,12 @@ export function ReviewViewer({
                   revealRequest={
                     searchOpen && currentSearchMatch?.path === entry.path
                       ? `search:${searchRequest}:${currentSearchIndex}`
-                      : vimSelection?.path === entry.path
-                        ? `vim:${vimSelection.request}`
-                        : null
+                      : vimEntry?.scope === vimScope &&
+                          vimEntry.path === entry.path
+                        ? `entry:${vimEntry.request}`
+                        : vimSelection?.path === entry.path
+                          ? `vim:${vimSelection.request}`
+                          : null
                   }
                   sectionRef={(element) => {
                     if (element) fileSections.current.set(entry.path, element);
@@ -939,6 +956,53 @@ export function ReviewViewer({
                       colorScheme={colorScheme}
                       vimMode={vimMode}
                       resetVimCursor={halted}
+                      vimEntry={
+                        vimEntry?.scope === vimScope &&
+                        vimEntry.path === entry.path
+                          ? vimEntry
+                          : null
+                      }
+                      onVimEntryApplied={(request) =>
+                        setVimEntry((entry) =>
+                          entry?.request === request ? null : entry,
+                        )
+                      }
+                      onVimBoundary={(key, side) => {
+                        const files = state.files;
+                        const direction = key === "j" ? 1 : -1;
+                        for (
+                          let index =
+                            files.findIndex(
+                              (candidate) => candidate.path === entry.path,
+                            ) + direction;
+                          index >= 0 && index < files.length;
+                          index += direction
+                        ) {
+                          const target = files[index];
+                          if (
+                            target.unsupported ||
+                            !target.hunks.some((hunk) =>
+                              hunk.rows.some(
+                                (row) =>
+                                  " +-".includes(row.raw[0]) &&
+                                  (row.oldLine !== undefined ||
+                                    row.newLine !== undefined),
+                              ),
+                            )
+                          )
+                            continue;
+                          onNavigateFile(target.path);
+                          setVimEntry({
+                            request: ++vimEntryRequest.current,
+                            scope: vimScope,
+                            path: target.path,
+                            edge: key === "j" ? "first" : "last",
+                            side,
+                          });
+                          return true;
+                        }
+                        return false;
+                      }}
                       vimSelection={
                         vimSelection?.path === entry.path ? vimSelection : null
                       }

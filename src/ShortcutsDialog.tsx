@@ -34,7 +34,7 @@ const groups = [
       ["Alt + drag", "Select native text instead of whole lines"],
       [
         "j / k",
-        "Vim: move the line cursor / extend or shrink visual selection",
+        "Vim: move across lines and files / extend or shrink visual selection",
       ],
       [
         "Shift + V / Escape",

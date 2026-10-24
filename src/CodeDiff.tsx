@@ -296,6 +296,9 @@ export function CodeDiff({
   vimMode = false,
   resetVimCursor = false,
   vimSelection = null,
+  vimEntry = null,
+  onVimBoundary,
+  onVimEntryApplied,
   active = true,
   selections,
   contextDisabled,
@@ -318,6 +321,13 @@ export function CodeDiff({
   /** A failed mutation must discard its speculative cursor, not remap it. */
   resetVimCursor?: boolean;
   vimSelection?: VimSelectionRequest | null;
+  vimEntry?: {
+    request: number;
+    edge: "first" | "last";
+    side: Point["side"];
+  } | null;
+  onVimBoundary?: (key: "j" | "k", side: Point["side"]) => boolean;
+  onVimEntryApplied?: (request: number) => void;
   active?: boolean;
   selections: Selections;
   contextDisabled: boolean;
@@ -382,12 +392,15 @@ export function CodeDiff({
   const restoreVimCursor = useRef(false);
   const visualAnchor = useRef<Point | null>(null);
   const appliedVimSelection = useRef(0);
+  const appliedVimEntry = useRef(0);
   const current = useRef({
     file,
     range,
     disabled,
     readOnly,
     onSelection,
+    onVimBoundary,
+    onVimEntryApplied,
     onDragging,
     selections,
     style,
@@ -404,6 +417,8 @@ export function CodeDiff({
     disabled,
     readOnly,
     onSelection,
+    onVimBoundary,
+    onVimEntryApplied,
     onDragging,
     selections,
     style,
@@ -1041,6 +1056,53 @@ export function CodeDiff({
     frame = requestAnimationFrame(scroll);
     return () => cancelAnimationFrame(frame);
   }, [vimMode, readOnly, vimSelection, paint, scrollToVimCursor]);
+  useLayoutEffect(() => {
+    if (
+      !vimMode ||
+      !vimEntry ||
+      !active ||
+      resetVimCursor ||
+      appliedVimEntry.current === vimEntry.request
+    )
+      return;
+    let frame = 0;
+    let attempts = 0;
+    const enter = () => {
+      const rendered = instance.current;
+      const lines = rendered
+        ? vimLines(file.hunks, rendered.getLineIndex, style)
+        : [];
+      const index =
+        vimEntry.edge === "first" ? lines[0]?.index : lines.at(-1)?.index;
+      const point =
+        lines.find(
+          (line) => line.index === index && line.side === vimEntry.side,
+        ) ?? lines.find((line) => line.index === index);
+      if (point) {
+        vimCursor.current = point;
+        visualAnchor.current = null;
+        root.current?.focus({ preventScroll: true });
+        paint();
+        if (scrollToVimCursor()) {
+          appliedVimEntry.current = vimEntry.request;
+          current.current.onVimEntryApplied?.(vimEntry.request);
+          return;
+        }
+      }
+      if (attempts++ < 30) frame = requestAnimationFrame(enter);
+    };
+    frame = requestAnimationFrame(enter);
+    return () => cancelAnimationFrame(frame);
+  }, [
+    vimMode,
+    vimEntry,
+    active,
+    resetVimCursor,
+    file.patch,
+    style,
+    paint,
+    scrollToVimCursor,
+  ]);
   useEffect(() => {
     const key = (event: KeyboardEvent) => {
       const state = current.current;
@@ -1126,6 +1188,21 @@ export function CodeDiff({
       );
       if (!next) return;
       event.preventDefault();
+      // Visual ranges remain file-local; only normal motion crosses files.
+      if (
+        motion &&
+        !initialized &&
+        !visualAnchor.current &&
+        cursor &&
+        next.line === cursor.line &&
+        next.side === cursor.side &&
+        state.onVimBoundary?.(event.key as "j" | "k", next.side)
+      ) {
+        vimCursor.current = null;
+        visualAnchor.current = null;
+        paint();
+        return;
+      }
       root.current?.focus({ preventScroll: true });
       vimCursor.current = next;
       if (state.readOnly) {
