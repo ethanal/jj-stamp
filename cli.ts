@@ -117,9 +117,7 @@ async function main() {
   );
   console.log(`Repository: ${state.repo.path}`);
   console.log(`jj-stamp listening on ${local.url}`);
-  console.log(
-    "Ctrl-C to stop. Do not run concurrent history operations in this repository.",
-  );
+  console.log("Ctrl-C to stop.");
   let stopping = false;
   const stop = () => {
     if (stopping) return;

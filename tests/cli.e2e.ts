@@ -328,6 +328,8 @@ process.exit(result.status ?? 1);
     });
     const url = await cli.url();
     const initial: State = JSON.parse((await request(url, "/api/state")).body);
+    assert.match(cli.stdout, /Ctrl-C to stop\./);
+    assert.doesNotMatch(cli.stdout, /concurrent history operations/);
     const file = initial.files[0];
     const hunk = file.hunks[0];
     const response = await request(url, "/api/squash-lines", {
