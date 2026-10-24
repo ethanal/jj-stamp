@@ -525,9 +525,22 @@ try {
   const emptyResponse = page.waitForResponse("**/api/squash-lines");
   await page.keyboard.press("s");
   assert.equal((await emptyResponse).status(), 200);
-  await expect(page.locator(".viewer-scroll .empty")).toContainText(
+  await expect(page.locator(".viewer-scroll .empty")).toHaveText(
     "No changes in this revision.",
   );
+  await expect(
+    page
+      .locator(".viewer-scroll")
+      .getByRole("button", { name: "Undo", exact: true }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByRole("button", { name: "Undo", exact: true }),
+  ).toHaveCount(1);
+  await expect(
+    page
+      .locator(".statusbar")
+      .getByRole("button", { name: "Undo", exact: true }),
+  ).toBeEnabled();
   await expect(cursor()).toHaveCount(0);
   await expect(selected()).toHaveCount(0);
   await expect(contextSelected()).toHaveCount(0);

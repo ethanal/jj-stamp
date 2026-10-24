@@ -579,7 +579,6 @@ export function ReviewViewer({
   onError,
   onRefresh,
   onDismissError,
-  onUndo,
   loadFile,
 }: {
   state: RepoState | null;
@@ -622,7 +621,6 @@ export function ReviewViewer({
   onError: (error: unknown) => void;
   onRefresh: () => void;
   onDismissError: () => void;
-  onUndo: () => void;
   loadFile: (path: string, version: string) => Promise<FileDiffLoadedFiles>;
 }) {
   const [vimEntry, setVimEntry] = useState<{
@@ -890,15 +888,6 @@ export function ReviewViewer({
                 {pending && !readOnlyPreview
                   ? "All changes queued."
                   : "No changes in this revision."}
-                {state.canUndo && !pending && (
-                  <button
-                    className="action-button"
-                    onClick={onUndo}
-                    disabled={working}
-                  >
-                    Undo
-                  </button>
-                )}
               </div>
             ) : (
               (fileView === "all" ? state.files : [file]).map((entry) => (

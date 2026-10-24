@@ -1130,7 +1130,6 @@ function App() {
               setError("");
               queue.clearError();
             }}
-            onUndo={() => void undo()}
             loadFile={loadFile}
           />
         </DiffFontSizeContext.Provider>
