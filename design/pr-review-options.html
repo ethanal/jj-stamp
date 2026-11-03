@@ -1,0 +1,1051 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>jj-stamp · PR review layout studies</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #0d1117;
+        --panel: #161b22;
+        --hover: #232a33;
+        --fg: #c9d1d9;
+        --strong: #f0f6fc;
+        --muted: #8b949e;
+        --border: #30363d;
+        --accent: #9ac3e5;
+        --green: #72b88a;
+        --amber: #dabc82;
+        --red: #d28380;
+        --addbg: #12271d;
+        --delbg: #302020;
+      }
+      :root[data-theme="light"] {
+        color-scheme: light;
+        --bg: #fff;
+        --panel: #f6f8fa;
+        --hover: #e8eef5;
+        --fg: #24292f;
+        --strong: #111820;
+        --muted: #576574;
+        --border: #c7cfd8;
+        --accent: #075b9b;
+        --green: #176b35;
+        --amber: #785400;
+        --red: #a82c35;
+        --addbg: #e5f4e9;
+        --delbg: #ffebe9;
+      }
+      :root[data-theme="solarized"] {
+        color-scheme: light;
+        --bg: #fdf6e3;
+        --panel: #eee8d5;
+        --hover: #e3dcc7;
+        --fg: #586e75;
+        --strong: #073642;
+        --muted: #657b83;
+        --border: #d4cbb5;
+        --accent: #076b9e;
+        --green: #527600;
+        --amber: #876400;
+        --red: #b34532;
+        --addbg: #e6edcf;
+        --delbg: #f6e1d0;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--fg);
+        font:
+          13px/1.6 ui-monospace,
+          SFMono-Regular,
+          Consolas,
+          monospace;
+      }
+      button,
+      input,
+      textarea,
+      select {
+        font: inherit;
+        color: inherit;
+      }
+      button,
+      select,
+      input,
+      textarea {
+        border: 1px solid var(--border);
+        border-radius: 5px;
+        background: var(--panel);
+      }
+      button {
+        cursor: pointer;
+        padding: 6px 10px;
+      }
+      button:hover {
+        background: var(--hover);
+        color: var(--strong);
+      }
+      button:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+      }
+      button.primary {
+        background: var(--strong);
+        color: var(--bg);
+        border-color: var(--strong);
+      }
+      button.quiet {
+        border-color: transparent;
+        background: transparent;
+      }
+      button.danger {
+        color: var(--red);
+      }
+      :focus-visible {
+        outline: 2px solid var(--accent);
+        outline-offset: 3px;
+      }
+      h1,
+      h2,
+      h3,
+      p {
+        margin: 0;
+      }
+      h1 {
+        font-size: 24px;
+        letter-spacing: -1px;
+        color: var(--strong);
+      }
+      h2 {
+        font-size: 17px;
+        color: var(--strong);
+      }
+      h3 {
+        font-size: 13px;
+        color: var(--strong);
+      }
+      small,
+      .muted {
+        color: var(--muted);
+      }
+      .page {
+        max-width: 1600px;
+        margin: auto;
+        padding: 26px 30px;
+      }
+      .intro {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 20px;
+      }
+      .eyebrow {
+        color: var(--accent);
+        font-size: 11px;
+        letter-spacing: 1.6px;
+        margin-bottom: 7px;
+      }
+      .subtitle {
+        margin-top: 6px;
+        color: var(--muted);
+      }
+      .options {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 12px;
+        margin: 24px 0 18px;
+      }
+      .option {
+        text-align: left;
+        padding: 15px 17px;
+        border-radius: 7px;
+        min-height: 100px;
+      }
+      .option[aria-pressed="true"] {
+        border-color: var(--accent);
+        box-shadow: inset 0 0 0 1px var(--accent);
+        background: var(--hover);
+      }
+      .option strong {
+        display: block;
+        color: var(--strong);
+        margin-bottom: 5px;
+        font-size: 14px;
+      }
+      .option span {
+        color: var(--muted);
+      }
+      .choice-note {
+        display: flex;
+        align-items: baseline;
+        gap: 22px;
+        margin-bottom: 14px;
+      }
+      .choice-note p {
+        color: var(--muted);
+      }
+      .app {
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        overflow: hidden;
+        min-height: 610px;
+        background: var(--bg);
+      }
+      .bar {
+        display: flex;
+        gap: 12px;
+        align-items: center;
+        padding: 10px 14px;
+        border-bottom: 1px solid var(--border);
+        min-height: 51px;
+        background: var(--panel);
+      }
+      .brand {
+        color: var(--strong);
+        font-weight: 600;
+        white-space: nowrap;
+      }
+      .grow {
+        flex: 1;
+      }
+      .pr-title {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .badge {
+        font-size: 11px;
+        padding: 2px 6px;
+        border: 1px solid var(--border);
+        border-radius: 4px;
+        white-space: nowrap;
+      }
+      .green {
+        color: var(--green);
+      }
+      .amber {
+        color: var(--amber);
+      }
+      .update {
+        padding: 8px 15px;
+        display: flex;
+        gap: 12px;
+        align-items: center;
+        border-bottom: 1px solid var(--border);
+        font-size: 12px;
+      }
+      .update span:first-child {
+        color: var(--amber);
+      }
+      .layout {
+        display: grid;
+        grid-template-columns: 180px minmax(0, 1fr) 265px;
+        min-height: 505px;
+      }
+      .layout.inbox {
+        grid-template-columns: 220px 155px minmax(0, 1fr) 215px;
+      }
+      .pane {
+        background: var(--panel);
+        min-width: 0;
+        padding: 15px 12px;
+      }
+      .files {
+        border-right: 1px solid var(--border);
+      }
+      .right {
+        border-left: 1px solid var(--border);
+      }
+      .inbox-pane {
+        border-right: 1px solid var(--border);
+      }
+      .section-title {
+        text-transform: uppercase;
+        letter-spacing: 1px;
+        color: var(--muted);
+        font-size: 10px;
+        margin-bottom: 12px;
+      }
+      .file {
+        padding: 6px 7px;
+        font-size: 12px;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .file.active {
+        background: var(--hover);
+        border-radius: 4px;
+        color: var(--strong);
+      }
+      .file span {
+        color: var(--amber);
+        float: right;
+      }
+      .folder {
+        margin: 13px 0 3px;
+        color: var(--muted);
+        font-size: 11px;
+      }
+      .review-item {
+        display: block;
+        width: 100%;
+        text-align: left;
+        margin-bottom: 7px;
+        padding: 10px;
+        font-size: 12px;
+      }
+      .review-item.current {
+        border-color: var(--accent);
+        background: var(--hover);
+      }
+      .review-item small {
+        display: block;
+        font-size: 10px;
+        margin-top: 4px;
+      }
+      .diff {
+        min-width: 0;
+      }
+      .diff-head {
+        padding: 12px 16px;
+        border-bottom: 1px solid var(--border);
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+      .diff-meta {
+        font-size: 11px;
+        padding: 8px 15px;
+        color: var(--muted);
+        border-bottom: 1px solid var(--border);
+      }
+      .code {
+        padding: 10px 0;
+        overflow: auto;
+      }
+      .line {
+        display: grid;
+        grid-template-columns: 35px 35px 23px minmax(max-content, 1fr);
+        font-size: 12px;
+        line-height: 25px;
+        min-width: 540px;
+      }
+      .line .num {
+        color: var(--muted);
+        text-align: right;
+        padding-right: 8px;
+        user-select: none;
+      }
+      .line code {
+        font: inherit;
+        white-space: pre;
+      }
+      .line.add {
+        background: var(--addbg);
+      }
+      .line.del {
+        background: var(--delbg);
+      }
+      .line.add code {
+        color: var(--green);
+      }
+      .line.del code {
+        color: var(--red);
+      }
+      .line.focus {
+        outline: 1px solid var(--accent);
+        outline-offset: -1px;
+      }
+      .line button {
+        padding: 0;
+        border: 0;
+        background: transparent;
+        color: var(--accent);
+      }
+      .inline {
+        margin: 8px 18px 15px 55px;
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        background: var(--panel);
+        padding: 12px;
+      }
+      .inline-head {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+        margin-bottom: 9px;
+        font-size: 11px;
+      }
+      .inline p {
+        font-size: 12px;
+        margin: 7px 0;
+      }
+      .inline textarea {
+        width: 100%;
+        resize: vertical;
+        min-height: 70px;
+        padding: 8px;
+        background: var(--bg);
+      }
+      .inline-actions {
+        display: flex;
+        justify-content: flex-end;
+        gap: 8px;
+        margin-top: 8px;
+      }
+      .node {
+        display: grid;
+        grid-template-columns: 20px 1fr;
+        gap: 4px;
+        padding: 10px 2px;
+        font-size: 11px;
+      }
+      .node .dot {
+        color: var(--muted);
+      }
+      .node.selected {
+        background: var(--hover);
+        border-radius: 4px;
+      }
+      .node.selected .dot {
+        color: var(--accent);
+      }
+      .node strong {
+        display: block;
+        color: var(--strong);
+        font-weight: 500;
+      }
+      .node small {
+        display: block;
+        font-size: 10px;
+      }
+      .tabs {
+        display: flex;
+        gap: 4px;
+        margin-bottom: 15px;
+      }
+      .tabs button {
+        font-size: 11px;
+        padding: 5px 8px;
+      }
+      .tabs .active {
+        border-color: var(--accent);
+      }
+      .comment-card {
+        padding: 12px 0;
+        border-bottom: 1px solid var(--border);
+        font-size: 12px;
+      }
+      .comment-card:first-of-type {
+        padding-top: 0;
+      }
+      .comment-card strong {
+        font-size: 11px;
+        color: var(--accent);
+      }
+      .comment-card p {
+        margin: 5px 0 8px;
+      }
+      .comment-card small {
+        font-size: 10px;
+      }
+      .comment-card button {
+        font-size: 10px;
+        padding: 3px 6px;
+      }
+      .panel-footer {
+        padding-top: 16px;
+        font-size: 11px;
+        color: var(--muted);
+      }
+      .panel-footer button {
+        width: 100%;
+        margin: 10px 0;
+      }
+      .stack-strip {
+        display: flex;
+        gap: 12px;
+        align-items: center;
+        padding: 9px 15px;
+        border-bottom: 1px solid var(--border);
+        font-size: 11px;
+        overflow: auto;
+        white-space: nowrap;
+      }
+      .stack-strip .selected {
+        color: var(--accent);
+        border-bottom: 1px solid var(--accent);
+      }
+      .footer {
+        display: flex;
+        justify-content: space-between;
+        gap: 12px;
+        border-top: 1px solid var(--border);
+        padding: 9px 14px;
+        font-size: 10px;
+        color: var(--muted);
+        background: var(--panel);
+      }
+      .bottom-tray {
+        border-top: 1px solid var(--border);
+        padding: 12px 16px;
+        display: flex;
+        gap: 14px;
+        align-items: center;
+      }
+      .bottom-tray p {
+        font-size: 11px;
+        color: var(--muted);
+      }
+      .explain {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 24px;
+        margin-top: 22px;
+      }
+      .explain h3 {
+        margin-bottom: 5px;
+      }
+      .explain p {
+        font-size: 12px;
+        color: var(--muted);
+      }
+      .mock-label {
+        color: var(--muted);
+        font-size: 11px;
+        margin-top: 18px;
+      }
+      dialog {
+        background: var(--bg);
+        color: var(--fg);
+        border: 1px solid var(--border);
+        border-radius: 9px;
+        padding: 24px;
+        max-width: 620px;
+        width: calc(100% - 32px);
+      }
+      dialog::backdrop {
+        background: #0009;
+      }
+      dialog h2 {
+        margin-bottom: 8px;
+      }
+      dialog p {
+        margin: 8px 0 15px;
+        font-size: 12px;
+      }
+      dialog input,
+      dialog textarea {
+        width: 100%;
+        padding: 10px;
+        margin: 7px 0 14px;
+      }
+      dialog textarea {
+        min-height: 95px;
+        resize: vertical;
+      }
+      .dialog-actions {
+        display: flex;
+        gap: 8px;
+        justify-content: flex-end;
+        margin-top: 20px;
+      }
+      .radio-group {
+        display: flex;
+        gap: 7px;
+        flex-wrap: wrap;
+        margin: 15px 0;
+      }
+      .radio-group label {
+        border: 1px solid var(--border);
+        padding: 8px;
+        border-radius: 4px;
+      }
+      .radio-group input {
+        width: auto;
+        margin: 0 6px 0 0;
+      }
+      .notice {
+        border: 1px solid var(--border);
+        border-left: 3px solid var(--amber);
+        padding: 10px 12px;
+        margin: 14px 0;
+        font-size: 12px;
+      }
+      .toast {
+        position: fixed;
+        bottom: 20px;
+        left: 50%;
+        transform: translateX(-50%);
+        border: 1px solid var(--accent);
+        padding: 12px 20px;
+        border-radius: 6px;
+        background: var(--panel);
+        z-index: 5;
+        max-width: 90%;
+        box-shadow: 0 5px 30px #0005;
+      }
+      .toast:empty {
+        display: none;
+      }
+      #mock {
+        overflow: auto;
+      }
+      .layout {
+        min-width: 900px;
+      }
+      .layout.inbox {
+        min-width: 1120px;
+      }
+      button kbd {
+        font-size: 10px;
+        color: var(--muted);
+        margin-left: 8px;
+      }
+      @media (max-width: 900px) {
+        .page {
+          padding: 16px;
+        }
+        .options {
+          gap: 7px;
+        }
+        .option {
+          padding: 12px;
+          font-size: 11px;
+        }
+        .choice-note {
+          display: block;
+        }
+        .explain {
+          grid-template-columns: 1fr;
+          gap: 12px;
+        }
+        .intro {
+          align-items: flex-start;
+        }
+        .intro h1 {
+          font-size: 20px;
+        }
+        .bar {
+          min-width: 780px;
+        }
+        .footer {
+          min-width: 780px;
+        }
+      }
+      @media (max-width: 550px) {
+        .options {
+          grid-template-columns: 1fr;
+        }
+        .option {
+          min-height: 0;
+        }
+        .intro {
+          flex-wrap: wrap;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="page">
+      <div class="intro">
+        <div>
+          <div class="eyebrow">JJ-STAMP / DESIGN STUDIES</div>
+          <h1>A place for pull request reviews</h1>
+          <p class="subtitle">
+            Three layouts. Same workflow. Pick a direction, or mix the pieces.
+          </p>
+        </div>
+        <label
+          >Theme
+          <select id="theme">
+            <option value="dark">Dark</option>
+            <option value="light">Light</option>
+            <option value="solarized">Solarized light</option>
+          </select></label
+        >
+      </div>
+      <div class="options" aria-label="Layout options">
+        <button class="option" data-option="a" aria-pressed="true">
+          <strong>A / Quiet extension</strong
+          ><span
+            >Keep the current workspace. Open review tools only when
+            needed.</span
+          >
+        </button>
+        <button class="option" data-option="b" aria-pressed="false">
+          <strong>B / Review inbox</strong
+          ><span
+            >Keep active reviews visible. Optimize for switching between
+            PRs.</span
+          >
+        </button>
+        <button class="option" data-option="c" aria-pressed="false">
+          <strong>C / Review cockpit</strong
+          ><span
+            >Give comments a permanent home. Make each update explicit.</span
+          >
+        </button>
+      </div>
+      <div class="choice-note">
+        <h2 id="option-title"></h2>
+        <p id="option-note"></p>
+      </div>
+      <div id="mock"></div>
+      <div class="explain" id="explain"></div>
+      <p class="mock-label">
+        Interactive mockup · fictional PRs · nothing is saved or sent to GitHub.
+        Try the PR picker, + on line 43, Staged, Refresh, Submit, and Dismiss.
+        Squash semantics are still a design decision.
+      </p>
+    </main>
+    <dialog id="picker">
+      <h2>Start a PR review</h2>
+      <p>Current repository · acme / scheduler</p>
+      <form id="start-form">
+        <label for="pr-input">PR URL or number</label
+        ><input
+          id="pr-input"
+          placeholder="https://github.com/acme/scheduler/pull/284"
+          required
+        /><button class="primary" type="submit">Start review</button>
+      </form>
+      <div class="section-title" style="margin-top: 24px">
+        Your review requested · sample data
+      </div>
+      <button class="review-item" data-action="pick">
+        #284 · Make worker shutdown deterministic<small
+          >mira · updated 12 minutes ago</small
+        ></button
+      ><button class="review-item" data-action="pick">
+        #279 · Add queue saturation metrics<small
+          >jo · updated 2 hours ago</small
+        >
+      </button>
+      <p class="muted">
+        Each review gets its own managed jj workspace. Your original workspace
+        stays in place.
+      </p>
+      <div class="dialog-actions"><button data-close>Cancel</button></div>
+    </dialog>
+    <dialog id="submit">
+      <h2>Submit review</h2>
+      <p>#284 · Make worker shutdown deterministic</p>
+      <div class="notice" id="submit-count"></div>
+      <form id="submit-form">
+        <div class="radio-group">
+          <label
+            ><input
+              type="radio"
+              name="event"
+              value="Comment"
+              checked
+            />Comment</label
+          ><label
+            ><input type="radio" name="event" value="Approve" />Approve</label
+          ><label
+            ><input type="radio" name="event" value="Request changes" />Request
+            changes</label
+          >
+        </div>
+        <label for="overall">Overall message</label
+        ><textarea id="overall" placeholder="Add an overall message…"></textarea
+        ><small
+          >Message requirements will be validated before submission. Submitting
+          does not archive this local review.</small
+        >
+        <div class="dialog-actions">
+          <button type="button" data-close>Cancel</button
+          ><button class="primary" type="submit">Submit review (demo)</button>
+        </div>
+      </form>
+    </dialog>
+    <dialog id="dismiss">
+      <h2>Dismiss local review?</h2>
+      <p>
+        Archive this review and discard its unpublished comments. The managed
+        workspace and review history are retained in this proposed design.
+      </p>
+      <div class="notice">
+        Nothing on GitHub will change. Already-submitted reviews are not
+        dismissed.
+      </div>
+      <div class="dialog-actions">
+        <button data-close>Keep reviewing</button
+        ><button class="danger" data-action="archive">
+          Archive & discard (demo)
+        </button>
+      </div>
+    </dialog>
+    <dialog id="failed">
+      <h2>1 comment needs manual review</h2>
+      <p>
+        This line existed in an earlier update, but has no unambiguous location
+        in the current PR diff.
+      </p>
+      <div class="notice">
+        <strong>src/worker.ts · old line 57</strong>
+        <p>Can we preserve the cancellation reason here?</p>
+        <small
+          >Proposed report includes a real GitHub PR/files link; this sample has
+          no live PR.</small
+        >
+      </div>
+      <p>
+        The comment remains staged locally. It is not silently moved or dropped.
+      </p>
+      <div class="dialog-actions">
+        <button data-close>Keep staged</button
+        ><button data-action="copy">Copy comment</button>
+      </div>
+    </dialog>
+    <div class="toast" id="toast" role="status"></div>
+    <script>
+      const $ = (s) => document.querySelector(s);
+      const state = {
+        option: "a",
+        drawer: false,
+        editor: false,
+        refreshed: false,
+        comments: 2,
+        extra: [],
+        submitted: false,
+      };
+      const designs = {
+        a: {
+          title: "A / Quiet extension",
+          note: "My recommendation: the smallest departure from the existing jj-stamp.",
+          details: [
+            [
+              "Workspace first",
+              "Files, diff, and jj graph retain their places. A PR switcher and slim status bar are the only persistent additions.",
+            ],
+            [
+              "Comments on demand",
+              "Inline composition; Staged toggles the right panel from the graph to a comment queue. Submit opens a focused dialog.",
+            ],
+            [
+              "Trade-off",
+              "Maximum space for code, but the graph and comment queue cannot be visible together.",
+            ],
+          ],
+        },
+        b: {
+          title: "B / Review inbox",
+          note: "Best if you keep several reviews open throughout the day.",
+          details: [
+            [
+              "Always-visible inbox",
+              "A narrow rail keeps active reviews and incoming review requests within reach. Local reviews and requested PRs are distinct.",
+            ],
+            [
+              "Comments below the diff",
+              "Inline comments stay in context. A compact bottom tray summarizes staged comments and exposes submission.",
+            ],
+            [
+              "Trade-off",
+              "Easy PR switching, but four columns compete for horizontal space. The inbox should be collapsible in the real UI.",
+            ],
+          ],
+        },
+        c: {
+          title: "C / Review cockpit",
+          note: "Best if reviewing updates and writing comments are the primary job.",
+          details: [
+            [
+              "Stack as a timeline",
+              "A compact strip names the base, reviewed accumulator, and successive updates. The selected update is explicit.",
+            ],
+            [
+              "Persistent comment queue",
+              "The right rail is dedicated to staged comments and mapping failures. Submission stays visible while reading code.",
+            ],
+            [
+              "Trade-off",
+              "Strong review orientation, but it replaces the full jj graph while in PR mode. A full-graph toggle would be needed.",
+            ],
+          ],
+        },
+      };
+      const esc = (s) =>
+        s.replace(
+          /[&<>"']/g,
+          (c) =>
+            ({
+              "&": "&amp;",
+              "<": "&lt;",
+              ">": "&gt;",
+              '"': "&quot;",
+              "'": "&#39;",
+            })[c],
+        );
+      function graph() {
+        return `<div class="section-title">Review stack · newest first</div>${state.refreshed ? '<div class="node selected"><span class="dot">◆</span><div><strong>Update 3 · just imported</strong><small>new unreviewed interdiff</small></div></div>' : ""}<div class="node ${state.refreshed ? "" : "selected"}"><span class="dot">◆</span><div><strong>Update 2</strong><small>kxpm · unreviewed</small></div></div><div class="node"><span class="dot">│<br>○</span><div><strong>Initial PR · remaining</strong><small>qvtn · unreviewed</small></div></div><div class="node"><span class="dot green">│<br>●</span><div><strong>Reviewed</strong><small>zrmw · your accumulated changes</small></div></div><div class="node"><span class="dot">│<br>◆</span><div><strong>Merge-base</strong><small>c4a21e9 · main</small></div></div><div class="panel-footer">Refresh appends above the remaining review stack. It does not reset your reviewed changes.</div>`;
+      }
+      function comments() {
+        return `<div class="section-title">Staged locally · ${state.comments}</div>${state.submitted ? '<div class="notice">Mapped comments submitted in this demo. The unmapped comment remains staged.</div>' : `<div class="comment-card"><strong>src/worker.ts :43</strong><p>Could we await the in-flight job before marking the worker stopped?</p><small class="green">● Mapped to current PR</small></div>`}<div class="comment-card"><strong>src/worker.ts :57</strong><p>Can we preserve the cancellation reason here?</p><small class="amber">△ Needs manual review</small><div style="margin-top:8px"><button data-action="failed">View failed comment ↗</button></div></div>${state.extra.map((t) => `<div class="comment-card"><strong>src/worker.ts :43</strong><p>${esc(t)}</p><small class="green">● Staged locally</small></div>`).join("")}<div class="panel-footer">Local drafts only. Nothing is published until you submit.<button class="primary" data-action="submit">Submit review…</button><button class="quiet danger" data-action="dismiss">Dismiss local review…</button></div>`;
+      }
+      function files() {
+        return `<aside class="pane files"><div class="section-title">Changed files · 3</div><div class="folder">▾ src</div><div class="file active">worker.ts <span>M</span></div><div class="file">queue.ts <span>M</span></div><div class="folder">▾ tests</div><div class="file">worker.test.ts <span>M</span></div><div class="panel-footer" style="margin-top:140px">Viewing ${state.refreshed ? "update 3" : "update 2"}<br><span class="green">+18</span> / <span style="color:var(--red)">−7</span></div></aside>`;
+      }
+      function line(a, b, kind, text, focus = false) {
+        return `<div class="line ${kind} ${focus ? "focus" : ""}"><span class="num">${a}</span><span class="num">${b}</span>${focus ? '<button data-action="comment" aria-label="Comment on line 43">+</button>' : `<span>${kind === "add" ? "+" : kind === "del" ? "−" : " "}</span>`}<code>${esc(text)}</code></div>`;
+      }
+      function diff() {
+        return `<section class="diff"><div class="diff-head"><strong>src/worker.ts</strong><span class="grow"></span><span class="green">+12</span><span style="color:var(--red)">−4</span></div><div class="diff-meta">@@ −38,8 +38,12 @@ · async stop() · ${state.refreshed ? "update 3" : "update 2"} vs previous tip</div><div class="code">${line(38, 38, "", "  async stop(): Promise<void> {")}${line(39, 39, "", "    this.accepting = false;")}${line(40, "", "del", "    this.controller.abort();")}${line(41, "", "del", '    this.state = "stopped";')}${line("", 40, "add", '    this.state = "draining";')}${line("", 41, "add", "    await this.queue.close();")}${line("", 42, "add", "")}${line("", 43, "add", '    this.state = "stopped";', true)}${line("", 44, "add", "    this.controller.abort();")}${line(42, 45, "", "  }")}</div><div class="inline"><div class="inline-head"><strong>${state.editor ? "New inline comment" : "You"}</strong><span class="badge">${state.editor ? "line 43 · right side" : "staged · local only"}</span><span class="grow"></span><button class="quiet" data-action="comment">${state.editor ? "Close" : "＋ Comment"}</button></div>${state.editor ? '<label for="comment-body" class="muted">Comment on this line</label><textarea id="comment-body" placeholder="Write a review comment…"></textarea><div class="inline-actions"><button data-action="comment">Cancel</button><button class="primary" data-action="stage">Stage comment</button></div>' : "<p>Could we await the in-flight job before marking the worker stopped?</p>"}</div><div class="diff-meta">Continue reviewing lines with the existing selection workflow.</div>${state.option === "b" ? `<div class="bottom-tray"><div><strong>${state.comments} staged comments</strong><p>1 needs manual review · drafts saved locally</p></div><span class="grow"></span><button data-action="drawer">View staged</button><button class="primary" data-action="submit">Submit…</button></div>` : ""}</section>`;
+      }
+      function render() {
+        const d = designs[state.option];
+        $("#option-title").textContent = d.title;
+        $("#option-note").textContent = d.note;
+        document
+          .querySelectorAll("[data-option]")
+          .forEach((b) =>
+            b.setAttribute("aria-pressed", b.dataset.option === state.option),
+          );
+        $("#explain").innerHTML = d.details
+          .map(([h, p]) => `<div><h3>${h}</h3><p>${p}</p></div>`)
+          .join("");
+        $("#mock").innerHTML =
+          `<div class="app"><div class="bar"><span class="brand">jj-stamp</span><span class="muted">/</span><button data-action="picker">acme/scheduler · #284 ▾</button><span class="pr-title">Make worker shutdown deterministic</span><span class="grow"></span>${state.option === "a" ? `<button data-action="drawer">Staged ${state.comments} <span class="amber">△</span></button>` : ""}<button ${state.option === "b" ? "" : 'class="primary"'} data-action="submit">Submit review…</button><button class="quiet" data-action="dismiss" aria-label="Dismiss local review">Dismiss…</button></div><div class="update"><span>${state.refreshed ? "✓ Review is up to date" : "● PR updated · new head detected"}</span><span class="muted">${state.refreshed ? "Update 3 appended · reviewed changes preserved" : "Your local stack is unchanged"}</span><span class="grow"></span><button data-action="refresh" ${state.refreshed ? "disabled" : ""}>Refresh</button></div>${state.option === "c" ? `<div class="stack-strip"><span class="muted">REVIEW STACK</span><span>Merge-base</span><span>→</span><span class="green">Reviewed</span><span>→</span><span>Initial PR · remaining</span><span>→</span><span class="selected">${state.refreshed ? "Update 3" : "Update 2"}</span></div>` : ""}<div class="layout ${state.option === "b" ? "inbox" : ""}">${state.option === "b" ? '<aside class="pane inbox-pane"><div class="section-title">Active reviews</div><button class="review-item current" data-action="current">#284 · Worker shutdown<small>2 staged · update available</small></button><button class="review-item" data-action="other">#271 · Retry backoff<small>Last opened yesterday</small></button><button class="quiet" data-action="picker">＋ Start review</button><div class="section-title" style="margin-top:28px">Your review requested</div><button class="review-item" data-action="picker">#279 · Queue metrics<small>jo · 2 hours ago</small></button><div class="panel-footer">Only acme/scheduler</div></aside>' : ""}${files()}${diff()}<aside class="pane right">${state.option !== "c" ? `<div class="tabs"><button class="${!state.drawer ? "active" : ""}" data-action="graph">Stack</button><button class="${state.drawer ? "active" : ""}" data-action="queue">Staged ${state.comments}</button></div>` : ""}${state.option === "c" || state.drawer ? comments() : graph()}</aside></div><div class="footer"><span>managed workspace: review-284 · original workspace untouched</span><span>gh · local draft mode · demo</span></div></div>`;
+      }
+      function toast(t) {
+        $("#toast").textContent = t;
+        clearTimeout(window.toastTimer);
+        window.toastTimer = setTimeout(
+          () => ($("#toast").textContent = ""),
+          4500,
+        );
+      }
+      function open(id) {
+        $("#" + id).showModal();
+      }
+      document.addEventListener("click", async (e) => {
+        const b = e.target.closest("button");
+        if (!b) return;
+        if (b.hasAttribute("data-close")) {
+          b.closest("dialog").close();
+          return;
+        }
+        if (b.dataset.option) {
+          state.option = b.dataset.option;
+          state.editor = false;
+          render();
+          return;
+        }
+        switch (b.dataset.action) {
+          case "picker":
+            open("picker");
+            break;
+          case "pick":
+            $("#picker").close();
+            toast(
+              "Demo: opened a managed PR review. No workspace was created.",
+            );
+            break;
+          case "drawer":
+            state.drawer = !state.drawer;
+            render();
+            break;
+          case "queue":
+            state.drawer = true;
+            render();
+            break;
+          case "graph":
+            state.drawer = false;
+            render();
+            break;
+          case "comment":
+            state.editor = !state.editor;
+            render();
+            if (state.editor) $("#comment-body").focus();
+            break;
+          case "stage": {
+            const body = $("#comment-body").value.trim();
+            if (!body) {
+              $("#comment-body").focus();
+              return;
+            }
+            state.extra.push(body);
+            state.comments++;
+            state.editor = false;
+            state.drawer = true;
+            render();
+            toast("Comment staged in this demo. Nothing was written to disk.");
+            break;
+          }
+          case "refresh":
+            state.refreshed = true;
+            render();
+            toast("Demo: appended update 3; reviewed changes stay intact.");
+            break;
+          case "submit":
+            $("#submit-count").textContent =
+              `${state.comments - 1} mapped comment(s) will be included. 1 unmapped comment will stay staged. This demo illustrates explicit partial-submission confirmation; policy is not final.`;
+            open("submit");
+            break;
+          case "dismiss":
+            open("dismiss");
+            break;
+          case "archive":
+            $("#dismiss").close();
+            toast(
+              "Demo only: would archive the review and discard unpublished comments.",
+            );
+            break;
+          case "failed":
+            open("failed");
+            break;
+          case "copy":
+            try {
+              await navigator.clipboard.writeText(
+                "src/worker.ts, old line 57: Can we preserve the cancellation reason here?",
+              );
+              toast("Comment copied.");
+            } catch {
+              toast(
+                "Clipboard unavailable here; select and copy the comment text.",
+              );
+            }
+            break;
+          case "other":
+            toast(
+              "Demo: switching would reopen #271’s saved workspace and drafts.",
+            );
+            break;
+          case "current":
+            toast("Already viewing #284.");
+            break;
+        }
+      });
+      $("#theme").addEventListener(
+        "change",
+        (e) => (document.documentElement.dataset.theme = e.target.value),
+      );
+      $("#start-form").addEventListener("submit", (e) => {
+        e.preventDefault();
+        $("#picker").close();
+        toast("Demo: PR input accepted. No GitHub request was made.");
+      });
+      $("#submit-form").addEventListener("submit", (e) => {
+        e.preventDefault();
+        const event = new FormData(e.target).get("event");
+        $("#submit").close();
+        state.submitted = true;
+        state.extra = [];
+        state.comments = 1;
+        state.drawer = true;
+        render();
+        toast(
+          `Demo: ${event} submitted with mapped comments. 1 comment remains staged. Nothing sent to GitHub.`,
+        );
+      });
+      render();
+    </script>
+  </body>
+</html>
