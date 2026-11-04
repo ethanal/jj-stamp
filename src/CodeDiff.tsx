@@ -1616,7 +1616,11 @@ export function CodeDiff({
         fileDiff.type !== "new" &&
         fileDiff.type !== "deleted" && <SplitDiffResize />}
       {editorError && (
-        <div role="alert" className="editor-error">
+        <div
+          role="alert"
+          className="editor-error"
+          style={{ position: "sticky", top: 0 }}
+        >
           {editorError}
         </div>
       )}
