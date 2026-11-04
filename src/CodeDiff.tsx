@@ -1707,7 +1707,7 @@ export function CodeDiff({
           {commentSquashReason}
         </div>
       )}
-      {commentLoadError && (
+      {commentLoadError && hasCommentMarkers && (
         <div className="inline-comment-notice" role="alert">
           Review comments could not be loaded: {commentLoadError}
         </div>

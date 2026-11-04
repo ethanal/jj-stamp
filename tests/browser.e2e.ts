@@ -883,8 +883,10 @@ try {
   await codeLine(queueLines[0].newLine!).click();
   await page.keyboard.press("s");
   await expect(page.getByRole("status")).toContainText("1 queued");
+  // Queued squashes allow read-only graph previews. Deferred handoffs and
+  // coalesced navigation are covered by squash-navigation.e2e.ts.
   for (const button of await page.locator(".log-change").all())
-    await expect(button).toBeDisabled();
+    await expect(button).toBeEnabled();
   await expect(codeLine(queueLines[0].newLine!)).toHaveCount(0);
   await expect(page.getByLabel("Change line counts")).toHaveText("+39−0");
   await expect(treeRow("src/long.ts")).toContainText("+39−0");
