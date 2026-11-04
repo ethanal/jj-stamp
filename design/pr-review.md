@@ -257,6 +257,16 @@ will appear as ordinary entries in the existing jj graph, not a replacement
 timeline. The screenshots deliberately retain the original test history rather
 than pretending that the proposed PR stack has been implemented.
 
+**PR selection is a full-screen modal in every layout**, not a small popover.
+The study opens on this screen. It provides a full-width number/URL entry,
+searchable PR rows, Review requested / Active locally filters, and a spacious
+details pane with description, branch, changed files, and saved local progress.
+The footer offers Start/Resume; Back to workspace or Escape returns to the
+unchanged review UI. List and details scroll independently on desktop; narrow
+screens stack them in a scrollable body while keeping the header and action
+footer visible. The toolbar popover remains only a compact action menu—its
+Open PR entry always opens the full-screen selector.
+
 Existing Refresh remains a local repository refresh. New Refresh PR explicitly
 imports remote changes into the managed review stack. Opening a review switches
 the existing app's data scope to that workspace without replacing its layout.

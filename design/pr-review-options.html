@@ -516,6 +516,322 @@
         max-width: calc(100% - 32px);
         padding: 24px;
       }
+
+      /* The selector is a screen, not a small confirmation dialog. */
+      #start {
+        inset: 0;
+        width: 100vw;
+        max-width: none;
+        height: 100dvh;
+        max-height: none;
+        margin: 0;
+        padding: 0;
+        border: 0;
+        border-radius: 0;
+        background: var(--bg);
+        overflow: hidden;
+      }
+      #start[open] {
+        display: flex;
+        flex-direction: column;
+      }
+      .selector-header {
+        display: flex;
+        align-items: center;
+        gap: 24px;
+        padding: 24px 32px;
+        border-bottom: 1px solid var(--border);
+        flex-shrink: 0;
+      }
+      #start h2 {
+        font-size: 25px;
+        margin: 0;
+        letter-spacing: -0.5px;
+      }
+      .selector-header .kicker {
+        margin-bottom: 6px;
+      }
+      .selector-header p {
+        margin: 4px 0 0;
+        font-size: 12px;
+      }
+      .selector-input {
+        padding: 20px 32px;
+        border-bottom: 1px solid var(--border);
+        flex-shrink: 0;
+        background: var(--panel);
+      }
+      #start-form {
+        display: flex;
+        gap: 12px;
+        align-items: end;
+      }
+      #start-form label {
+        display: block;
+        font-size: 12px;
+        color: var(--muted);
+      }
+      #start-form .input-field {
+        flex: 1;
+        min-width: 0;
+      }
+      #start-form input {
+        margin: 8px 0 0;
+        height: 42px;
+        font-size: 14px;
+      }
+      #start-form button {
+        height: 42px;
+        padding-inline: 20px;
+      }
+      .selector-body {
+        flex: 1;
+        min-height: 0;
+        display: grid;
+        grid-template-columns: minmax(0, 1.2fr) minmax(360px, 0.8fr);
+      }
+      .selector-list-pane {
+        min-height: 0;
+        min-width: 0;
+        display: flex;
+        flex-direction: column;
+        border-right: 1px solid var(--border);
+      }
+      .selector-list-tools {
+        padding: 22px 28px 16px 32px;
+        flex-shrink: 0;
+      }
+      .selector-filters {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-bottom: 16px;
+      }
+      .selector-filters button {
+        padding: 7px 12px;
+        font-size: 12px;
+      }
+      .selector-filters button[aria-pressed="true"] {
+        color: var(--new);
+        border-color: var(--new);
+        background: var(--newbg);
+      }
+      #start #pr-filter {
+        margin: 7px 0 10px;
+        height: 40px;
+      }
+      .selector-list-tools label {
+        font-size: 11px;
+        color: var(--muted);
+      }
+      #result-count {
+        font-size: 11px;
+        color: var(--muted);
+        display: block;
+      }
+      .selector-results {
+        overflow-y: auto;
+        min-height: 0;
+        flex: 1;
+        padding: 0 16px 24px 20px;
+      }
+      .pr-choice {
+        width: 100%;
+        text-align: left;
+        white-space: normal;
+        display: block;
+        padding: 19px 15px;
+        margin: 0 0 8px;
+        border-color: transparent;
+        background: transparent;
+      }
+      .pr-choice[aria-pressed="true"] {
+        border-color: var(--accent);
+        background: var(--panel);
+      }
+      .pr-choice .choice-top {
+        display: flex;
+        align-items: baseline;
+        gap: 14px;
+        margin-bottom: 7px;
+      }
+      .pr-choice strong {
+        color: var(--strong);
+        font-size: 14px;
+        font-weight: 500;
+      }
+      .pr-choice .pr-number {
+        color: var(--accent);
+        font-size: 12px;
+        min-width: 38px;
+      }
+      .pr-choice .choice-meta {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px 16px;
+        color: var(--muted);
+        font-size: 11px;
+        padding-left: 52px;
+      }
+      .pr-choice .local-state {
+        color: var(--new);
+      }
+      .selector-detail {
+        overflow-y: auto;
+        min-height: 0;
+        padding: 30px 32px;
+        background: var(--panel);
+      }
+      #start .selector-detail h3 {
+        font-size: 22px;
+        line-height: 1.45;
+        font-weight: 500;
+        margin: 10px 0 12px;
+      }
+      #start .selector-detail p {
+        font-size: 13px;
+        line-height: 1.8;
+        margin: 12px 0 22px;
+      }
+      .selector-detail .detail-id {
+        color: var(--accent);
+        font-size: 12px;
+      }
+      .detail-facts {
+        display: grid;
+        grid-template-columns: 100px minmax(0, 1fr);
+        gap: 12px;
+        font-size: 12px;
+        margin: 24px 0;
+      }
+      .detail-facts dt {
+        color: var(--muted);
+      }
+      .detail-facts dd {
+        margin: 0;
+        overflow-wrap: anywhere;
+      }
+      .detail-progress {
+        padding: 18px;
+        background: var(--bg);
+        border: 1px solid var(--border);
+        border-radius: 5px;
+        margin: 22px 0;
+      }
+      #start .detail-progress p {
+        font-size: 12px;
+        margin: 9px 0 0;
+      }
+      .detail-files {
+        list-style: none;
+        padding: 0;
+        font-size: 12px;
+        color: var(--muted);
+        line-height: 2.2;
+        overflow-wrap: anywhere;
+      }
+      .selector-footer {
+        flex-shrink: 0;
+        border-top: 1px solid var(--border);
+        display: flex;
+        gap: 20px;
+        align-items: center;
+        padding: 18px 32px;
+        background: var(--panel);
+      }
+      .selector-footer p {
+        margin: 0 !important;
+        font-size: 11px !important;
+      }
+      .selector-footer button {
+        padding: 9px 18px;
+      }
+      .selector-empty {
+        padding: 32px 15px;
+        color: var(--muted);
+      }
+      #start .selector-note {
+        font-size: 10px;
+        color: var(--muted);
+      }
+      @media (max-width: 800px) {
+        .selector-header {
+          padding: 18px 20px;
+          gap: 12px;
+        }
+        #start h2 {
+          font-size: 21px;
+        }
+        .selector-input {
+          padding: 14px 20px;
+        }
+        .selector-body {
+          display: block;
+          overflow-y: auto;
+        }
+        .selector-list-pane {
+          border-right: 0;
+        }
+        .selector-list-tools {
+          padding: 20px 20px 12px;
+        }
+        .selector-results {
+          overflow: visible;
+          padding: 0 10px 12px;
+        }
+        .selector-detail {
+          overflow: visible;
+          border-top: 1px solid var(--border);
+          padding: 24px 20px;
+        }
+        .selector-footer {
+          padding: 12px 20px;
+          gap: 10px;
+        }
+        .selector-footer .selector-note {
+          display: none;
+        }
+        .selector-footer button {
+          padding: 7px 12px;
+        }
+        .selector-header .kicker {
+          font-size: 9px;
+        }
+      }
+      @media (max-width: 480px) {
+        #start-form {
+          flex-wrap: wrap;
+          gap: 9px;
+        }
+        #start-form .input-field {
+          flex-basis: 100%;
+        }
+        #start-form button {
+          height: 34px;
+          padding: 3px 12px;
+        }
+        .selector-header {
+          align-items: flex-start;
+        }
+        .selector-header p {
+          font-size: 10px;
+        }
+        .selector-header button {
+          font-size: 11px;
+          padding: 4px 8px;
+        }
+        .selector-filters {
+          gap: 6px;
+        }
+        .selector-filters button {
+          padding: 5px 8px;
+          font-size: 11px;
+        }
+        .selector-footer p {
+          font-size: 10px !important;
+        }
+      }
+
       dialog::backdrop {
         background: #0009;
       }
@@ -781,32 +1097,77 @@
         </table>
       </section>
     </main>
-    <dialog id="start">
-      <h2>Open a pull request</h2>
-      <p>
-        Proposed entry point: PR menu → Open PR. Scope: current repository only.
-      </p>
-      <form id="start-form">
-        <label for="pr-input">PR number or URL</label
-        ><input
-          type="text"
-          id="pr-input"
-          placeholder="#284 or a GitHub PR URL"
-          required
-        /><button class="primary">Open review (demo)</button>
-      </form>
-      <p style="margin-top: 20px">Your review requested · sample data</p>
-      <button class="review-request" data-action="open-review">
-        #284 · Polish notification delivery<small
-          >orbit / notifications · mira</small
-        >
-      </button>
-      <div class="notice">
-        Switch this jj-stamp window to the managed review workspace. Keep the
-        same file tree / diff / graph layout. Leave the invoking workspace
-        untouched.
+    <dialog
+      id="start"
+      aria-labelledby="selector-title"
+      aria-describedby="selector-scope"
+    >
+      <header class="selector-header">
+        <div>
+          <div class="kicker">JJ-STAMP / PR REVIEWS</div>
+          <h2 id="selector-title">Pull requests</h2>
+          <p id="selector-scope">
+            orbit / notifications · current repository only
+          </p>
+        </div>
+        <span class="grow"></span
+        ><button data-close aria-label="Back to workspace">
+          ← Back to workspace
+        </button>
+      </header>
+      <section class="selector-input" aria-label="Open a PR directly">
+        <form id="start-form">
+          <div class="input-field">
+            <label for="pr-input">Open a PR by number or URL</label
+            ><input
+              type="text"
+              id="pr-input"
+              placeholder="#284 or https://github.com/orbit/notifications/pull/284"
+              required
+            />
+          </div>
+          <button class="primary" type="submit">Open directly</button>
+        </form>
+      </section>
+      <div class="selector-body">
+        <section class="selector-list-pane" aria-label="Pull request list">
+          <div class="selector-list-tools">
+            <div class="selector-filters" aria-label="Filter PRs">
+              <button data-scope="requested" aria-pressed="true">
+                Review requested · 5</button
+              ><button data-scope="active" aria-pressed="false">
+                Active locally · 3</button
+              ><button data-scope="all" aria-pressed="false">
+                All shown · 7
+              </button>
+            </div>
+            <label for="pr-filter">Filter by title, author, or number</label
+            ><input
+              type="text"
+              id="pr-filter"
+              placeholder="Filter pull requests…"
+              autofocus
+            /><output id="result-count" aria-live="polite"></output>
+          </div>
+          <div class="selector-results" id="pr-results"></div>
+        </section>
+        <aside
+          class="selector-detail"
+          id="pr-detail"
+          aria-label="Selected PR details"
+        ></aside>
       </div>
-      <div class="actions"><button data-close>Cancel</button></div>
+      <footer class="selector-footer">
+        <div class="grow">
+          <p id="selection-summary"></p>
+          <p class="selector-note">
+            Demo data · opens the fixed captured workspace · no GitHub requests
+          </p>
+        </div>
+        <button class="primary" id="open-selected" data-action="open-review">
+          Resume selected review
+        </button>
+      </footer>
     </dialog>
     <dialog id="drafts">
       <h2>Staged comments</h2>
@@ -928,7 +1289,7 @@
           [
             [
               "Adds to the existing toolbar",
-              "The PR button sits immediately before the existing Refresh and Settings. Its popover contains Open PR, update status, Refresh PR, Staged, Submit, and Dismiss.",
+              "The PR button sits immediately before the existing Refresh and Settings. Its popover contains a full-screen PR selector, update status, Refresh PR, Staged, Submit, and Dismiss.",
             ],
             [
               "Does not take over the workspace",
@@ -998,8 +1359,163 @@
           5000,
         );
       }
+      const pullRequests = [
+        {
+          number: 284,
+          title: "Polish notification delivery",
+          author: "mira",
+          updated: "12 minutes ago",
+          requested: true,
+          active: true,
+          branch: "mira/delivery-polish",
+          summary:
+            "Normalize notification subjects, improve retry timing, and tighten delivery defaults. Adds regression coverage for subject whitespace and disabled push notifications.",
+          files: [
+            "src/notifications.ts",
+            "src/preferences.ts",
+            "tests/notifications.test.ts",
+          ],
+          additions: 8,
+          deletions: 5,
+          local: "2 staged comments · remote update available",
+        },
+        {
+          number: 281,
+          title: "Handle cancellation during queue shutdown",
+          author: "sam",
+          updated: "38 minutes ago",
+          requested: true,
+          active: false,
+          branch: "sam/drain-on-shutdown",
+          summary:
+            "Wait for in-flight work before shutting down the delivery queue. Preserve cancellation reasons and avoid dropping pending notifications.",
+          files: ["src/queue.ts", "src/worker.ts", "tests/shutdown.test.ts"],
+          additions: 142,
+          deletions: 27,
+        },
+        {
+          number: 279,
+          title: "Add queue saturation metrics",
+          author: "jo",
+          updated: "2 hours ago",
+          requested: true,
+          active: false,
+          branch: "jo/queue-metrics",
+          summary:
+            "Expose queue depth and worker utilization so delivery bottlenecks are visible. Includes counters and metric labels for each channel.",
+          files: ["src/metrics.ts", "src/queue.ts", "tests/metrics.test.ts"],
+          additions: 96,
+          deletions: 12,
+        },
+        {
+          number: 276,
+          title: "Respect recipient timezone for digest scheduling",
+          author: "lea",
+          updated: "3 hours ago",
+          requested: true,
+          active: true,
+          branch: "lea/digest-timezones",
+          summary:
+            "Schedule daily and weekly digests in the recipient’s timezone. Cover daylight-saving transitions and missing timezone preferences.",
+          files: [
+            "src/digest.ts",
+            "src/preferences.ts",
+            "tests/digest.test.ts",
+          ],
+          additions: 187,
+          deletions: 44,
+          local: "Review in progress · 1 staged comment",
+        },
+        {
+          number: 273,
+          title: "Improve delivery error diagnostics",
+          author: "mira",
+          updated: "Yesterday",
+          requested: true,
+          active: false,
+          branch: "mira/error-context",
+          summary:
+            "Include channel and attempt context in delivery failures without exposing notification bodies or recipient details in logs.",
+          files: ["src/errors.ts", "src/notifications.ts"],
+          additions: 64,
+          deletions: 18,
+        },
+        {
+          number: 271,
+          title: "Bound exponential retry backoff",
+          author: "sam",
+          updated: "Yesterday",
+          requested: false,
+          active: true,
+          branch: "sam/retry-backoff",
+          summary:
+            "Cap retry delays and make the backoff policy explicit. Covers transient errors, final-attempt failures, and maximum delays.",
+          files: ["src/retry.ts", "tests/retry.test.ts"],
+          additions: 76,
+          deletions: 23,
+          local: "Saved local review · no staged comments",
+        },
+        {
+          number: 268,
+          title: "Document notification channel configuration",
+          author: "jo",
+          updated: "2 days ago",
+          requested: false,
+          active: false,
+          branch: "jo/channel-docs",
+          summary:
+            "Document per-channel delivery options and provide examples for configuring email, push, and digest preferences.",
+          files: ["docs/channels.md", "README.md"],
+          additions: 112,
+          deletions: 9,
+        },
+      ];
+      const picker = { scope: "requested", query: "", selected: 284 };
+      function renderPicker() {
+        const query = picker.query.toLowerCase().replace(/^#/, "");
+        const matches = pullRequests.filter(
+          (pr) =>
+            (picker.scope === "all" ||
+              (picker.scope === "active" ? pr.active : pr.requested)) &&
+            `${pr.number} ${pr.title} ${pr.author}`
+              .toLowerCase()
+              .includes(query),
+        );
+        if (!matches.some((pr) => pr.number === picker.selected))
+          picker.selected = matches[0]?.number ?? null;
+        document
+          .querySelectorAll("[data-scope]")
+          .forEach((b) =>
+            b.setAttribute(
+              "aria-pressed",
+              String(b.dataset.scope === picker.scope),
+            ),
+          );
+        $("#result-count").textContent =
+          `${matches.length} pull request${matches.length === 1 ? "" : "s"} · sample data`;
+        $("#pr-results").innerHTML = matches.length
+          ? matches
+              .map(
+                (pr) =>
+                  `<button class="pr-choice" data-pr="${pr.number}" aria-pressed="${picker.selected === pr.number}"><span class="choice-top"><span class="pr-number">#${pr.number}</span><strong>${esc(pr.title)}</strong></span><span class="choice-meta"><span>${esc(pr.author)} · ${pr.updated}</span><span>${pr.files.length} files · +${pr.additions} −${pr.deletions}</span>${pr.active ? '<span class="local-state">Local review saved</span>' : ""}</span></button>`,
+              )
+              .join("")
+          : '<p class="selector-empty">No matching pull requests. Try another filter, or open a PR by URL above.</p>';
+        const pr = pullRequests.find((pr) => pr.number === picker.selected);
+        $("#open-selected").disabled = !pr;
+        $("#open-selected").textContent = pr?.active
+          ? "Resume selected review"
+          : "Start selected review";
+        $("#selection-summary").textContent = pr
+          ? `#${pr.number} · ${pr.active ? "Resume managed workspace" : "Create managed workspace"}`
+          : "No PR selected";
+        $("#pr-detail").innerHTML = pr
+          ? `<div class="detail-id">orbit/notifications #${pr.number}</div><h3>${esc(pr.title)}</h3><p>${esc(pr.summary)}</p><dl class="detail-facts"><dt>Author</dt><dd>${esc(pr.author)}</dd><dt>Updated</dt><dd>${pr.updated}</dd><dt>Branches</dt><dd>${esc(pr.branch)} → main</dd><dt>Changes</dt><dd>${pr.files.length} files · +${pr.additions} −${pr.deletions}</dd></dl><div class="detail-progress"><h3 style="font-size:13px;margin:0">${pr.active ? "Continue your local review" : "Start a new local review"}</h3><p>${pr.active ? esc(pr.local) : "A separate managed jj workspace will be created. Your original workspace stays untouched."}</p></div><h3 style="font-size:12px;margin-top:28px">Changed files</h3><ul class="detail-files">${pr.files.map((file) => `<li>${esc(file)}</li>`).join("")}</ul><p class="selector-note">Opening a review returns to the same jj-stamp file tree, diff, and graph. This mockup previews metadata only; it does not load a different PR diff.</p>`
+          : "<h3>No matching PR</h3><p>Select a pull request from the list to see its details.</p>";
+      }
       function open(id) {
         document.querySelectorAll("dialog[open]").forEach((d) => d.close());
+        if (id === "start") renderPicker();
         $("#" + id).showModal();
       }
       function drafts() {
@@ -1053,12 +1569,27 @@
       }
       document.addEventListener("input", (e) => {
         if (e.target.id === "body") state.draftText = e.target.value;
+        if (e.target.id === "pr-filter") {
+          picker.query = e.target.value;
+          renderPicker();
+        }
       });
       document.addEventListener("click", (e) => {
         const b = e.target.closest("button");
         if (!b) return;
         if (b.hasAttribute("data-close")) {
           b.closest("dialog").close();
+          return;
+        }
+        if (b.dataset.scope) {
+          picker.scope = b.dataset.scope;
+          renderPicker();
+          return;
+        }
+        if (b.dataset.pr) {
+          picker.selected = Number(b.dataset.pr);
+          renderPicker();
+          $('[data-pr="' + picker.selected + '"]').focus();
           return;
         }
         if (b.dataset.mode) {
@@ -1081,7 +1612,7 @@
             $("#start").close();
             ensureReview();
             toast(
-              "Demo: switch this window to the managed workspace; retain the same jj-stamp layout.",
+              `Demo: selected #${picker.selected}. Returning to the fixed workspace capture; no PR content loaded.`,
             );
             break;
           case "compose":
@@ -1194,6 +1725,7 @@
       });
       new ResizeObserver(fit).observe($(".stage-shell"));
       render();
+      open("start");
     </script>
   </body>
 </html>
