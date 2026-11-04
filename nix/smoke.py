@@ -51,7 +51,7 @@ env["PATH"] = str(poison)
 # The launcher must override an ambient jj choice with the packaged executable.
 env["JJ_STAMP_JJ"] = "/not-the-packaged-jj"
 env.pop("NODE_PATH", None)
-process = subprocess.Popen([f"{package}/bin/jj-stamp", "--no-open", change],
+process = subprocess.Popen([f"{package}/bin/jj-stamp", "--no-open"],
                            cwd=repo, env=env, stdout=subprocess.PIPE,
                            stderr=subprocess.STDOUT)
 selector = selectors.DefaultSelector()

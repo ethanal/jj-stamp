@@ -281,9 +281,11 @@ test(
         cli.diagnostics(),
       );
       assert.equal(cli.stderr, "");
-      if (flag.includes("help") || flag === "-h")
-        assert.match(cli.stdout, /Usage: jj-stamp/);
-      else assert.equal(cli.stdout.trim(), `jj-stamp ${packageVersion}`);
+      if (flag.includes("help") || flag === "-h") {
+        assert.match(cli.stdout, /Usage: jj-stamp \[options\]\n/);
+        assert.match(cli.stdout, /Always starts at @/);
+        assert.doesNotMatch(cli.stdout, /--pr\b|\[change-id\]|jj-stamp @-/);
+      } else assert.equal(cli.stdout.trim(), `jj-stamp ${packageVersion}`);
       assert.doesNotMatch(cli.stdout, /listening on/);
     }
     assert.equal(await exists(invoked), false);
@@ -423,7 +425,7 @@ process.exit(result.status ?? 1);
 );
 
 test(
-  "invalid arguments, ports, revisions and non-repositories fail before serving or opening",
+  "invalid arguments, removed selection arguments, ports and non-repositories fail before serving or opening",
   { timeout: 60_000 },
   async (t) => {
     const box = await sandbox(t);
@@ -436,22 +438,37 @@ test(
         error: /argument missing|requires an argument/,
       },
       { args: ["--port"], error: /argument missing|requires an argument/ },
-      { args: ["one", "two"], error: /one change ID/ },
-      { args: [""], error: /one change ID/ },
+      { args: ["one", "two"], error: /does not take positional arguments/ },
+      { args: [""], error: /does not take positional arguments/ },
+      ...[
+        "@",
+        "@-",
+        "all()",
+        await revisionId(repo),
+        "does_not_exist_12345",
+        "42",
+        "https://github.com/example/repo/pull/42",
+      ].map((selection) => ({
+        args: ["--repository", repo, selection],
+        error: /does not take positional arguments/,
+      })),
+      {
+        args: ["--", "@-"],
+        error: /does not take positional arguments/,
+      },
+      ...[
+        ["--pr", "42"],
+        ["--pr=https://github.com/example/repo/pull/42"],
+        ["--revision", "@"],
+        ["--revset", "all()"],
+      ].map((args) => ({ args, error: /Unknown option/ })),
       ...["-1", "65536", "1.5", "abc", "1e3", "", " 123", "Infinity"].map(
         (port) => ({
           args: [`--port=${port}`],
           error: /--port must be an integer/,
         }),
       ),
-      {
-        args: ["--repository", repo, "does_not_exist_12345"],
-        error: /requested revision cannot be resolved/,
-      },
-      {
-        args: ["--repository", repo, "all()"],
-        error: /exactly one|multiple|single/i,
-      },
+
       { args: ["--repository", box.root], error: /repo|workspace/ },
       {
         args: ["--repository", path.join(box.root, "missing")],
@@ -475,24 +492,18 @@ test(
 );
 
 test(
-  "non-@ change serves packaged UI from a foreign cwd and enforces loopback request security",
+  "CLI starts at @, supports UI revision selection from a foreign cwd and enforces loopback request security",
   { timeout: 60_000 },
   async (t) => {
     const box = await sandbox(t);
     const repo = await createDemo(box.root);
     const selectedId = await revisionId(repo);
     await jj(repo, ["new", "-m", "Descendant outside this review"]);
-    assert.notEqual(await revisionId(repo), selectedId);
-    const cli = box.start([
-      "--repository",
-      repo,
-      "--port",
-      "0",
-      "--no-open",
-      selectedId,
-    ]);
+    const workingCopyId = await revisionId(repo);
+    assert.notEqual(workingCopyId, selectedId);
+    const cli = box.start(["--repository", repo, "--port", "0", "--no-open"]);
     const url = await cli.url();
-    assert.match(cli.stdout, /Polish notification delivery/);
+    assert.match(cli.stdout, /Descendant outside this review/);
     const page = await request(url, "/");
     assert.equal(page.status, 200);
     assert.match(page.headers["content-type"]!, /text\/html/);
@@ -525,7 +536,22 @@ test(
       headers: { Origin: new URL(url).origin },
     });
     assert.equal(initial.status, 200, initial.body);
-    const state: State = JSON.parse(initial.body);
+    const startup: State = JSON.parse(initial.body);
+    assert.equal(startup.source.changeId, workingCopyId);
+    const selected = await request(url, "/api/revision", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Fold-Request": "1",
+        Origin: new URL(url).origin,
+      },
+      body: JSON.stringify({
+        version: startup.version,
+        changeId: selectedId,
+      }),
+    });
+    assert.equal(selected.status, 200, selected.body);
+    const state: State = JSON.parse(selected.body).state;
     assert.equal(state.source.changeId, selectedId);
     assert.equal(state.source.description, "Polish notification delivery");
     assert.equal(state.repo.path, repo);

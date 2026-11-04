@@ -714,7 +714,7 @@ test("PR HTTP handlers enforce loopback mutations and leave the original service
   }
 });
 
-test("bundled --pr CLI opens a real managed review and gracefully closes both servers", async () => {
+test("bundled CLI opens a managed review through the UI API and gracefully closes both servers", async () => {
   const f = await fixture();
   const executable = path.join(f.directory, "cli.cjs");
   const client = path.join(f.directory, "client");
@@ -748,7 +748,7 @@ test("bundled --pr CLI opens a real managed review and gracefully closes both se
   await chmod(git, 0o755);
   const child = spawn(
     process.execPath,
-    [executable, "-R", f.repoPath, "--pr", "#7", "--no-open", "--port", "0"],
+    [executable, "-R", f.repoPath, "--no-open", "--port", "0"],
     {
       env: {
         ...process.env,
@@ -772,7 +772,7 @@ test("bundled --pr CLI opens a real managed review and gracefully closes both se
   });
   const watchdog = setTimeout(() => child.kill("SIGKILL"), 20000);
   try {
-    const url = await new Promise<string>((resolve, reject) => {
+    const root = await new Promise<string>((resolve, reject) => {
       const inspect = () => {
         const match =
           /^jj-stamp listening on (http:\/\/127\.0\.0\.1:\d+\/)$/m.exec(stdout);
@@ -791,10 +791,31 @@ test("bundled --pr CLI opens a real managed review and gracefully closes both se
       );
       inspect();
     });
-    const root = /^Original workspace: (http:\/\/127\.0\.0\.1:\d+\/)$/m.exec(
-      stdout,
-    )?.[1];
-    assert.ok(root, stdout);
+    assert.equal(
+      (await (await fetch(`${root}api/pr/context`)).json()).mode,
+      "workspace",
+    );
+    // Ordinary startup snapshots @; opening the PR through the UI must not
+    // change that original workspace any further.
+    const originalOperation = (
+      await jj(f.repoPath, [
+        "op",
+        "log",
+        "--ignore-working-copy",
+        "--no-graph",
+        "--limit",
+        "1",
+        "-T",
+        "id",
+      ])
+    ).stdout;
+    const opened = await fetch(`${root}api/pr/open`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Fold-Request": "1" },
+      body: JSON.stringify({ input: "#7" }),
+    });
+    assert.equal(opened.status, 200, await opened.clone().text());
+    const { url } = await opened.json();
     assert.notEqual(root, url);
     assert.equal(
       (await (await fetch(`${url}api/pr/context`)).json()).mode,
@@ -817,7 +838,7 @@ test("bundled --pr CLI opens a real managed review and gracefully closes both se
           "id",
         ])
       ).stdout,
-      f.originalOperation,
+      originalOperation,
     );
     child.kill("SIGTERM");
     assert.equal(await exited, 0, stderr);

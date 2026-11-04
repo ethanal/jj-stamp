@@ -6,13 +6,13 @@ import { ReviewService } from "./server/service.ts";
 import { DEFAULT_PORT, startLocalServer } from "./server/http.ts";
 import { run } from "./server/process.ts";
 import { PrReviewManager } from "./server/pr-review.ts";
-import { parsePrInput } from "./server/pr-review-github.ts";
 
 declare const __JJ_STAMP_VERSION__: string;
 
-const usage = `Usage: jj-stamp [options] [change-id]
+const usage = `Usage: jj-stamp [options]
 
-Review a Jujutsu change in a local browser. Defaults to @ at startup.
+Review a Jujutsu change in a local browser. Always starts at @.
+Choose another change or open a pull request through the browser UI.
 The selected change is followed through rewrites; moving @ does not retarget it.
 Selected lines are squashed into that change's immediate mutable parent.
 
@@ -22,14 +22,12 @@ Options:
                          Use 0 to always choose an available port
       --no-open          Print the URL without launching a browser
       --trace            Write backend timing JSON to stderr (no arguments/output)
-      --pr NUMBER/URL    Open/resume an isolated current-repository GitHub PR
-                         Requires gh auth login; never submits or refreshes PRs
   -h, --help             Show this help
   -V, --version          Show version
 
 Examples:
-  jj-stamp rlvk
-  jj-stamp @-
+  jj-stamp
+  jj-stamp -R /path/to/workspace
   jj-stamp --no-open --port 8080
 
 Keep the terminal open. Ctrl-C drains accepted operations and stops the server.
@@ -54,8 +52,8 @@ function openBrowser(url: string) {
 }
 
 async function main() {
-  const { values, positionals } = parseArgs({
-    allowPositionals: true,
+  const { values } = parseArgs({
+    allowPositionals: false,
     options: {
       help: { type: "boolean", short: "h" },
       version: { type: "boolean", short: "V" },
@@ -63,7 +61,6 @@ async function main() {
       port: { type: "string" },
       "no-open": { type: "boolean", default: false },
       trace: { type: "boolean", default: false },
-      pr: { type: "string" },
     },
   });
   if (values.help) {
@@ -74,22 +71,14 @@ async function main() {
     console.log(`jj-stamp ${__JJ_STAMP_VERSION__}`);
     return;
   }
-  if (positionals.length > 1 || positionals[0] === "") {
-    throw new Error(
-      "Supply one change ID or revision expression. See jj-stamp --help.",
-    );
-  }
+
   if (
     values.port !== undefined &&
     (!/^\d+$/.test(values.port) || Number(values.port) > 65535)
   ) {
     throw new Error("--port must be an integer between 0 and 65535.");
   }
-  if (values.pr !== undefined) {
-    parsePrInput(values.pr);
-    if (positionals.length)
-      throw new Error("--pr cannot be combined with a local revision.");
-  }
+
   const repoPath = path.resolve(values.repository ?? process.cwd());
   const assetsDir = path.join(__dirname, "client");
   await access(path.join(assetsDir, "index.html"));
@@ -108,15 +97,13 @@ async function main() {
   }
   const service = new ReviewService({
     repoPath,
-    revision: positionals[0] ?? "@",
     onTiming: values.trace
       ? (record) => {
           console.error(`[jj-stamp timing] ${JSON.stringify(record)}`);
         }
       : undefined,
   });
-  // PR startup never snapshots or edits the original checkout.
-  const state = values.pr === undefined ? await service.getState() : null;
+  const state = await service.getState();
   const manager = new PrReviewManager({
     repoPath,
     assetsDir,
@@ -131,19 +118,11 @@ async function main() {
     pr: manager,
   });
   manager.setOriginalWorkspaceUrl(local.url);
-  let url = local.url;
-  try {
-    if (values.pr !== undefined) url = (await manager.open(values.pr)).url;
-  } catch (error) {
-    await Promise.all([local.close(), manager.close()]);
-    throw error;
-  }
-  if (state)
-    console.log(
-      `Reviewing ${state.source.changeId.slice(0, 12)}: ${state.source.description}`,
-    );
-  console.log(`Repository: ${state?.repo.path ?? repoPath}`);
-  if (url !== local.url) console.log(`Original workspace: ${local.url}`);
+  const { url } = local;
+  console.log(
+    `Reviewing ${state.source.changeId.slice(0, 12)}: ${state.source.description}`,
+  );
+  console.log(`Repository: ${state.repo.path}`);
   console.log(`jj-stamp listening on ${url}`);
   console.log("Ctrl-C to stop.");
   let stopping = false;

@@ -25,8 +25,7 @@ Now, inside any jj workspace:
 
 ```sh
 jj-stamp                          # start at @; select changes in the graph
-jj-stamp <change-id>              # optionally choose the initial change
-jj-stamp @-                      # any expression resolving to one visible change
+
 jj-stamp --no-open --port 8080    # print a URL instead of opening a browser
 jj-stamp -R /path/to/workspace
 ```
@@ -47,16 +46,15 @@ The flake exposes a default package/app and development shell for x86_64/aarch64
 
 ## PR reviews and comments (experimental)
 
-From a checkout of the GitHub repository, run jj-stamp and click **Open PR…**,
-or open a PR directly:
+From a jj workspace for the GitHub repository, run jj-stamp and click
+**Open PR…**:
 
 ```sh
 gh auth login
-jj-stamp --pr 42
-jj-stamp --pr https://github.com/OWNER/REPO/pull/42
+jj-stamp
 
 # Try this development branch without installing:
-nix run 'git+ssh://git@github.com/ethanal/jj-stamp?ref=feature/pr-review-local' --refresh -- --pr 42
+nix run 'git+ssh://git@github.com/ethanal/jj-stamp?ref=feature/pr-review-local' --refresh --
 ```
 
 The full-screen selector lists the first 50 open PRs in the current repository,
@@ -64,6 +62,10 @@ with title/author/number filtering and direct number/URL entry. This is an
 **all-open** list, not a review-requested filter. Only current-repository
 `github.com` PRs are supported. Ordinary startup and local refresh do not query
 GitHub; listing or explicitly opening a PR does.
+
+The CLI always starts at `@`; it accepts no positional change IDs, revsets, PR
+numbers/URLs, or PR-selection options. Choose revisions in the jj graph and PRs
+in the browser selector.
 
 A PR opens in an isolated, managed jj repository, served by its own loopback
 server. The invoking checkout's files and history are not changed by opening the
