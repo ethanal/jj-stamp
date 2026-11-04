@@ -1,4 +1,6 @@
 import {
+  lazy,
+  Suspense,
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -43,6 +45,15 @@ import { ShortcutsDialog } from "./ShortcutsDialog";
 import { useSidebarReveal } from "./useSidebarReveal";
 import { useScrollActiveFile } from "./useScrollActiveFile";
 import "./styles.css";
+
+// Deliberately opt-in: no sample data or prototype CSS loads in ordinary reviews.
+const showPrPrototype =
+  new URLSearchParams(window.location.search).get("pr-prototype") === "1";
+const PrReviewPrototype = lazy(() =>
+  import("./PrReviewPrototype").then((module) => ({
+    default: module.PrReviewPrototype,
+  })),
+);
 
 function readExpanded(side: "files" | "log"): boolean {
   try {
@@ -1019,6 +1030,11 @@ function App() {
           </span>
         </RevisionHeading>
         <div className="toolbar-actions">
+          {showPrPrototype && (
+            <Suspense fallback={null}>
+              <PrReviewPrototype disabled={idleActionDisabled || dragging} />
+            </Suspense>
+          )}
           <button
             className="action-button"
             onClick={() => void refresh()}

@@ -20,6 +20,11 @@ export async function createBrowserFixture({
   await using setup = new AsyncDisposableStack();
   const server = createServer(app);
   const vite = await createVite({
+    // Worktrees may share node_modules, but must not invalidate each other's
+    // optimizer cache. Prebundle the asynchronously loaded parser so a cold
+    // fixture cannot reload the page in the middle of a browser interaction.
+    cacheDir: ".data/node_modules/.vite-browser",
+    optimizeDeps: { include: ["web-tree-sitter"] },
     // Vite's client connects even with hmr:false. Share this fixture's ephemeral
     // HTTP server instead of competing for port 24678 (or another server's token).
     // No file watching/reloads are needed while a test runs.

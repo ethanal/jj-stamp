@@ -1,0 +1,553 @@
+/* Opt-in PR prototype. All selectors are isolated from the existing workspace. */
+.prp-toolbar-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+.prp-toolbar-demo {
+  font-size: 9px;
+  color: var(--added);
+  letter-spacing: 0.5px;
+}
+.prp-dialog {
+  color: var(--fg);
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0;
+  font: inherit;
+  box-shadow: 0 14px 48px #0005;
+  max-width: calc(100vw - 24px);
+  max-height: calc(100dvh - 24px);
+  overflow: auto;
+}
+.prp-dialog::backdrop {
+  background: #0008;
+}
+.prp-dialog,
+.prp-dialog * {
+  box-sizing: border-box;
+}
+.prp-dialog h2,
+.prp-dialog h3,
+.prp-dialog h4,
+.prp-dialog p {
+  margin: 0;
+}
+.prp-dialog h2,
+.prp-dialog h3,
+.prp-dialog h4 {
+  color: var(--strong);
+}
+.prp-dialog h2 {
+  font-size: 18px;
+  line-height: 1.4;
+  letter-spacing: -0.5px;
+}
+.prp-dialog button,
+.prp-dialog input,
+.prp-dialog textarea {
+  font: inherit;
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--panel);
+}
+.prp-dialog button {
+  cursor: pointer;
+  padding: 6px 10px;
+  min-height: 32px;
+  line-height: 1.5;
+}
+.prp-dialog button:hover:not(:disabled) {
+  background: var(--hover);
+  border-color: var(--muted);
+}
+.prp-dialog button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.prp-dialog :is(button, input, textarea, [tabindex]):focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: -2px;
+}
+.prp-dialog input:not([type="radio"]),
+.prp-dialog textarea {
+  display: block;
+  width: 100%;
+  padding: 10px;
+  background: var(--bg);
+}
+.prp-dialog textarea {
+  min-height: 100px;
+  resize: vertical;
+  margin: 8px 0 12px;
+}
+.prp-dialog .prp-primary {
+  border-color: var(--accent);
+  color: var(--strong);
+}
+.prp-dialog .prp-danger,
+.prp-error {
+  color: var(--removed);
+}
+.prp-muted,
+.prp-fine {
+  color: var(--muted);
+}
+.prp-fine {
+  font-size: 11px;
+}
+.prp-kicker {
+  color: var(--added);
+  font-size: 10px;
+  letter-spacing: 1.8px;
+  margin-bottom: 6px;
+}
+.prp-heading {
+  display: flex;
+  gap: 20px;
+  align-items: flex-start;
+  justify-content: space-between;
+  border-bottom: 1px solid var(--border);
+  padding: 20px 24px;
+  flex-shrink: 0;
+}
+.prp-heading > div {
+  min-width: 0;
+}
+.prp-heading p {
+  font-size: 12px;
+  margin-top: 5px;
+  overflow-wrap: anywhere;
+}
+.prp-back {
+  flex-shrink: 0;
+}
+.prp-notice {
+  padding: 14px;
+  border-left: 2px solid var(--modified);
+  background: var(--bg);
+  font-size: 12px;
+  line-height: 1.7;
+  overflow-wrap: anywhere;
+}
+.prp-dialog .prp-notice p {
+  margin-top: 8px;
+}
+.prp-menu {
+  position: fixed;
+  margin: 0;
+  width: 380px;
+  max-height: calc(100dvh - 60px);
+}
+.prp-menu .prp-heading {
+  padding: 16px;
+}
+.prp-menu-body {
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  font-size: 12px;
+  line-height: 1.6;
+}
+.prp-menu-body h3 {
+  font-size: 14px;
+}
+.prp-menu nav {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+}
+.prp-menu nav button {
+  text-align: left;
+  width: 100%;
+}
+.prp-menu hr {
+  border: 0;
+  border-top: 1px solid var(--border);
+  width: 100%;
+  margin: 4px 0;
+}
+.prp-dialog.prp-selector {
+  position: fixed;
+  inset: 0;
+  width: 100vw;
+  max-width: none;
+  height: 100dvh;
+  max-height: none;
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  overflow: hidden;
+  background: var(--bg);
+}
+.prp-selector[open] {
+  display: flex;
+  flex-direction: column;
+}
+.prp-selector .prp-heading {
+  padding: 24px 32px;
+}
+.prp-selector h2 {
+  font-size: 25px;
+}
+.prp-direct {
+  padding: 18px 32px;
+  border-bottom: 1px solid var(--border);
+  background: var(--panel);
+  flex-shrink: 0;
+}
+.prp-direct form {
+  display: flex;
+  align-items: flex-end;
+  gap: 12px;
+}
+.prp-direct-field {
+  display: block;
+  flex: 1;
+  min-width: 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+.prp-direct input {
+  margin-top: 8px;
+  height: 42px;
+}
+.prp-direct button {
+  min-height: 42px;
+}
+.prp-direct > p {
+  margin-top: 10px;
+  font-size: 12px;
+}
+.prp-selector-body {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(340px, 0.8fr);
+  flex: 1;
+  min-height: 0;
+}
+.prp-list-pane {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  border-right: 1px solid var(--border);
+}
+.prp-list-tools {
+  padding: 22px 28px 16px 32px;
+}
+.prp-filters {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 16px;
+}
+.prp-filters button {
+  font-size: 12px;
+}
+.prp-filters button[aria-pressed="true"] {
+  color: var(--added);
+  border-color: var(--added);
+  background: var(--panel);
+}
+.prp-list-tools label,
+.prp-list-tools output {
+  display: block;
+  color: var(--muted);
+  font-size: 11px;
+}
+.prp-list-tools input {
+  margin: 7px 0 10px;
+  height: 40px;
+}
+.prp-results {
+  overflow-y: auto;
+  min-height: 0;
+  flex: 1;
+  padding: 0 16px 24px 20px;
+}
+.prp-dialog .prp-choice {
+  display: block;
+  width: 100%;
+  padding: 18px 15px;
+  margin-bottom: 8px;
+  text-align: left;
+  white-space: normal;
+  background: transparent;
+  border-color: transparent;
+}
+.prp-dialog .prp-choice[aria-pressed="true"] {
+  border-color: var(--accent);
+  background: var(--panel);
+}
+.prp-choice-top {
+  display: flex;
+  gap: 14px;
+  align-items: baseline;
+  margin-bottom: 7px;
+}
+.prp-choice strong {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--strong);
+}
+.prp-number {
+  color: var(--accent);
+  font-size: 12px;
+}
+.prp-choice .prp-number {
+  flex-shrink: 0;
+  min-width: 38px;
+}
+.prp-choice-meta {
+  display: flex;
+  gap: 8px 16px;
+  flex-wrap: wrap;
+  padding-left: 52px;
+  font-size: 11px;
+  color: var(--muted);
+}
+.prp-local {
+  color: var(--added);
+}
+.prp-detail {
+  overflow-y: auto;
+  min-height: 0;
+  padding: 30px 32px;
+  background: var(--panel);
+  overflow-wrap: anywhere;
+}
+.prp-detail h3 {
+  margin: 10px 0 12px;
+  font-size: 22px;
+  font-weight: 500;
+  line-height: 1.45;
+}
+.prp-detail p {
+  font-size: 13px;
+  line-height: 1.8;
+  margin-bottom: 22px;
+}
+.prp-facts {
+  display: grid;
+  grid-template-columns: 85px minmax(0, 1fr);
+  gap: 12px;
+  font-size: 12px;
+  margin: 24px 0;
+}
+.prp-facts dt {
+  color: var(--muted);
+}
+.prp-facts dd {
+  margin: 0;
+}
+.prp-detail .prp-notice {
+  margin: 22px 0;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 18px;
+}
+.prp-detail .prp-notice p {
+  font-size: 12px;
+  margin: 9px 0 0;
+}
+.prp-detail h4 {
+  margin-top: 28px;
+  font-size: 12px;
+}
+.prp-files {
+  padding: 0;
+  list-style: none;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 2.2;
+}
+.prp-selector-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  flex-shrink: 0;
+  padding: 18px 32px;
+  background: var(--panel);
+  border-top: 1px solid var(--border);
+}
+.prp-selector-footer > div {
+  min-width: 0;
+}
+.prp-selector-footer p {
+  font-size: 11px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+.prp-selector-footer button {
+  flex-shrink: 0;
+  padding: 9px 18px;
+}
+.prp-empty {
+  padding: 24px 15px;
+  color: var(--muted);
+}
+.prp-sheet {
+  width: 680px;
+}
+.prp-sheet-body {
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  line-height: 1.7;
+}
+.prp-comment {
+  border-top: 1px solid var(--border);
+  padding: 16px 0;
+}
+.prp-comment code {
+  color: var(--accent);
+  font-size: 11px;
+}
+.prp-comment p {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  margin: 8px 0;
+}
+.prp-warning {
+  color: var(--modified);
+  font-size: 11px;
+}
+.prp-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+}
+.prp-review-events {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  padding: 10px 0;
+  margin: 0 0 14px;
+  border: 0;
+}
+.prp-review-events label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+@media (max-width: 800px) {
+  .prp-selector .prp-heading {
+    padding: 18px 20px;
+    gap: 12px;
+  }
+  .prp-selector h2 {
+    font-size: 21px;
+  }
+  .prp-direct {
+    padding: 14px 20px;
+  }
+  .prp-selector-body {
+    display: block;
+    overflow-y: auto;
+  }
+  .prp-list-pane {
+    border-right: 0;
+  }
+  .prp-list-tools {
+    padding: 20px 20px 12px;
+  }
+  .prp-results {
+    overflow: visible;
+    padding: 0 10px 12px;
+  }
+  .prp-detail {
+    overflow: visible;
+    border-top: 1px solid var(--border);
+    padding: 24px 20px;
+  }
+  .prp-selector-footer {
+    padding: 12px 20px;
+    gap: 10px;
+  }
+  .prp-selector-footer button {
+    padding: 7px 12px;
+  }
+}
+@media (max-width: 480px) {
+  .prp-toolbar-demo {
+    display: none;
+  }
+  .prp-heading {
+    padding: 16px;
+    gap: 10px;
+  }
+  .prp-selector .prp-heading {
+    padding: 14px 16px;
+  }
+  .prp-heading p {
+    font-size: 10px;
+  }
+  .prp-kicker {
+    font-size: 9px;
+    letter-spacing: 1px;
+  }
+  .prp-back {
+    max-width: 115px;
+    font-size: 11px !important;
+  }
+  .prp-direct {
+    padding: 12px 16px;
+  }
+  .prp-direct form {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .prp-direct-field {
+    flex-basis: 100%;
+  }
+  .prp-direct button {
+    min-height: 32px;
+  }
+  .prp-filters {
+    gap: 6px;
+  }
+  .prp-filters button {
+    font-size: 11px;
+    padding: 5px 8px;
+  }
+  .prp-selector-footer {
+    flex-wrap: wrap;
+    padding: 10px 16px;
+    gap: 8px;
+  }
+  .prp-selector-footer > div {
+    flex-basis: 100%;
+  }
+  .prp-selector-footer p {
+    font-size: 10px;
+  }
+  .prp-selector-footer button {
+    margin-left: auto;
+  }
+  .prp-sheet-body {
+    padding: 16px;
+  }
+}
+@media (max-height: 600px) {
+  .prp-selector[open] {
+    overflow-y: auto;
+  }
+  .prp-selector-body {
+    flex: none;
+    display: block;
+    overflow: visible;
+  }
+  .prp-results,
+  .prp-detail {
+    overflow: visible;
+  }
+}

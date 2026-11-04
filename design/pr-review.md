@@ -1,7 +1,16 @@
 # PR review workspaces
 
-Status: design draft; no implementation yet. Confirmed requirements are separated
-from proposals and open questions below.
+Status: design draft plus an opt-in frontend prototype. Confirmed requirements
+are separated from proposals and open questions below.
+
+The user selected **A (toolbar menu)** with the **full-screen PR selector**.
+Implementation is starting on branch `prototype/pr-review` in a separate
+development worktree. `src/PrReviewPrototype.tsx` mounts inside the existing
+toolbar only with `?pr-prototype=1`; it does not replace the workspace layout.
+This initial increment uses sample PR metadata and in-memory UI state, not `gh`,
+real PR switching, managed workspaces, or GitHub submission. See the README's
+prototype section for the isolated live preview and tests. The open history,
+conflict, and submission questions below still require decisions.
 
 ## Confirmed behavior
 
@@ -245,7 +254,8 @@ with no persistence or GitHub access.
   live in a popover or dialog.
 - **B — Slim review strip:** add a 42px row below the unchanged toolbar. Surface
   PR identity, update status, Refresh PR, staged count, and submission there.
-  This is the preferred direction for keeping remote and local state distinct.
+  This was an alternative for keeping remote and local state distinct; the user
+  chose A instead.
 - **C — Bottom comment tray:** use A's toolbar menu and add a 206px tray within
   the center diff column. Keep both sidebars full-height and preserve the footer.
   The production tray should be collapsible and resizable.

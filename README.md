@@ -76,7 +76,9 @@ The flake exposes a default package/app and development shell for x86_64/aarch64
 
 The heading groups the **change ID**, **title**, **commit ID**, and change line counts, without the author. The browser tab reads **`<title> (<short change ID> <full repo path>)`**. The graph is rendered by `jj`, with clickable change IDs and a high-contrast selected-change highlight. Bookmark (branch) names appear between each change ID and its description, followed by `|`; helper names ending in `-git-worktree` are hidden. jj’s remote qualifiers and tracking/conflict suffixes are preserved. It uses `visible() & (trunk() | (tracked_remote_bookmarks() & ~::trunk()) | (mutable() & mine())::)` instead of the default log revset or a 100-entry cap. The selected change and working copy are shown only when they match this revset. The graph loads at startup and stays updated even while its sidebar is collapsed, so hovering or pinning it does not trigger another read. Graph refreshes wait for queued operations to complete and show recorded history without snapshotting the working copy.
 
-There is no demo creation or reset endpoint. Test fixtures live only in temporary directories.
+There is no demo creation or reset endpoint. Tests use isolated fixtures; the
+optional development-only PR prototype described below creates its own disposable
+fixture under `.data/`.
 
 ## Safety and recovery
 
@@ -124,6 +126,39 @@ Browser suites share an ephemeral loopback server and Chromium fixture with HMR 
 Tests use isolated real jj repositories. They cover exact line squashes, optimistic queue compaction/recovery, revision selection and rewrite tracking, immutable/merge guards, stale requests, process-local undo and recovery guards, tree and graph interactions, full-path titles, local HTTP protections, browser launching, and graceful terminal-signal shutdown. Native tests cover exact selection, repeated text, asymmetric context, invalid UTF-8, CRLF, creation/deletion, source-tree preservation, callback inventories and filesystem containment. Nix checks exercise the installed CLI with poisoned obsolete hunk/patch executables on `PATH`, including a real partial squash, undo, and complete native-command error diagnostics.
 
 `@pierre/trees` is pinned to a beta release; review its API when upgrading.
+
+### PR-review UI prototype (option A)
+
+This is an opt-in React prototype of the toolbar PR menu and full-screen selector,
+not an implementation of GitHub reviews. Normal jj-stamp is unchanged; the
+prototype and its sample data load only when the page URL includes
+`?pr-prototype=1`.
+
+```sh
+npm run build
+npm run prototype:pr
+# Open http://127.0.0.1:8092/?pr-prototype=1, then click PR preview (DEMO).
+npm run test:pr-prototype
+```
+
+The dedicated preview runner creates a fresh disposable jj repository below
+`.data/pr-prototype/` on each start. The existing file tree, diff, jj graph,
+selection, squash, and undo remain real and operate **only on that fixture**.
+It never reviews or mutates the source checkout. Ctrl-C drains accepted operations.
+Use `--port PORT` to choose another loopback port. A trusted authenticated proxy
+can be explicitly allowed with `--public-origin https://your-host.example:PORT`;
+Host/Origin checks and mutation-header checks remain enabled. The ordinary CLI's
+loopback-only policy is not changed.
+
+The PR menu uses fictional `orbit/notifications` data. The full-screen selector
+supports search, review-requested/local-review filters, PR details, and validated
+sample number/URL entry. Preview selection **does not switch the displayed jj
+workspace or diff**. Refresh/submission/dismissal flows operate on in-memory demo
+state only; they never call GitHub, fetch revisions, or create managed workspaces.
+Reloading clears that state. Inline anchoring, `gh` access, local JSON persistence,
+and managed review history are subsequent implementation steps. The history and
+submission decisions still open in `design/pr-review.md` are not resolved by this
+prototype.
 
 ## Responsive browsing
 
