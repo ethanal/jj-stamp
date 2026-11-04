@@ -13,7 +13,11 @@ import {
 import { createRoot } from "react-dom/client";
 import type { FileDiffLoadedFiles, SelectedLineRange } from "@pierre/diffs";
 import type { LogRow, RepoState, Selections } from "./types";
-import type { ReviewCommentMutation } from "./review-comments";
+import type {
+  ReviewCommentMutation,
+  ReviewCommentOverlay,
+} from "./review-comments";
+import { CommentOverlays } from "./comment-overlays";
 import {
   refsFromFile,
   refsFromSelection,
@@ -137,6 +141,29 @@ function App() {
       ) as Promise<FileDiffLoadedFiles>;
     },
     [contentStore, state?.source.commitId, state?.version],
+  );
+  const commentOverlays = useMemo(
+    () =>
+      new CommentOverlays((path, version) =>
+        api<ReviewCommentOverlay>("comments/file", { path, version }),
+      ),
+    [queued.confirmed?.repo.path],
+  );
+  const loadComments = useCallback(
+    (path: string, version: string) => {
+      const current = queue.getSnapshot();
+      if (
+        !current.confirmed?.commentsEnabled ||
+        current.confirmed.version !== version ||
+        current.pending ||
+        revisionPreview
+      )
+        return Promise.reject(
+          new Error("The displayed review changed; refresh its comments."),
+        );
+      return commentOverlays.get(path, version);
+    },
+    [commentOverlays, queue, revisionPreview],
   );
   useEffect(() => {
     document.title = revisionPageTitle(source, state?.repo.path);
@@ -740,7 +767,7 @@ function App() {
         input.version !== current.confirmed.version
       )
         throw new Error(
-          "The displayed working copy changed. Refresh before editing comments.",
+          "The displayed review or comment branches changed. Refresh before editing comments.",
         );
       refreshGeneration.current++;
       lock.current = true;
@@ -751,8 +778,8 @@ function App() {
         replace(result.state);
         setNotice(
           input.action === "remove"
-            ? "Local comment removed from file"
-            : "Local comment saved in file; nothing sent to GitHub",
+            ? "Local comment removed from its COMMENTS branch"
+            : "Comment saved in its COMMENTS branch; nothing sent to GitHub",
         );
       } catch (error) {
         setError(error);
@@ -1202,6 +1229,13 @@ function App() {
             }}
             loadFile={loadFile}
             onComment={saveComment}
+            loadComments={
+              state?.commentsEnabled && !revisionPreview && !queued.pending
+                ? loadComments
+                : undefined
+            }
+            commentIdentity={state?.version}
+            commentUnavailable={state?.commentUnavailable}
             commentEditingEnabled={!!state?.canEditComments && !revisionPreview}
             commentBusy={idleActionDisabled || dragging || queued.halted}
           />

@@ -43,6 +43,8 @@ export interface RepoState {
   operation: string;
   canUndo: boolean;
   canEditComments?: boolean;
+  commentsEnabled?: boolean;
+  commentUnavailable?: string;
 }
 export type Selections = Record<string, number[]>;
 

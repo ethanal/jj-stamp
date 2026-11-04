@@ -417,6 +417,13 @@ export function createApi(
   router.post("/comments", async (req, res) => {
     res.json(await service.comment(commentMutationSchema.parse(req.body)));
   });
+  router.post("/comments/file", async (req, res) => {
+    const input = z
+      .object({ version, path: z.string().min(1).max(4096) })
+      .strict()
+      .parse(req.body);
+    res.json(await service.getComments(input));
+  });
   router.post("/preview", async (req, res) => {
     res.json(await service.preview(previewSchema.parse(req.body)));
   });

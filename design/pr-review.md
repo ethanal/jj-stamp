@@ -1,16 +1,16 @@
 # PR review workspaces
 
-Status: design draft plus an opt-in frontend prototype. Confirmed requirements
-are separated from proposals and open questions below.
+Status: experimental real PR opening and independent file-backed comment branches
+on `feature/pr-review-local`, plus an older opt-in frontend prototype. Confirmed
+requirements are separated from future proposals and open questions below.
 
 The user selected **A (toolbar menu)** with the **full-screen PR selector**.
-Implementation is starting on branch `prototype/pr-review` in a separate
-development worktree. `src/PrReviewPrototype.tsx` mounts inside the existing
+Implementation uses a separate development worktree. The older
+`src/PrReviewPrototype.tsx` mounts inside the existing
 toolbar only with `?pr-prototype=1`; it does not replace the workspace layout.
-This initial increment uses sample PR metadata and in-memory UI state, not `gh`,
-real PR switching, managed workspaces, or GitHub submission. See the README's
-prototype section for the isolated live preview and tests. The open history,
-conflict, and submission questions below still require decisions.
+That prototype uses sample metadata and in-memory state; it is separate from the
+real PR implementation described in the README. Remote refresh and submission
+remain future work.
 
 ## Confirmed behavior
 
@@ -32,6 +32,11 @@ conflict, and submission questions below still require decisions.
   UI elements in the diff, not as raw marker text. This supersedes the earlier
   JSON-only draft-body plan; metadata can still live under
   `~/.local/share/jj-stamp`. Do not create GitHub drafts while composing.
+- Store annotations in comment-only companion commits **branching independently
+  off each partial code commit**, not interleaved into the review stack. Overlay
+  them on the code revisions they affect. Before submission, explicitly
+  consolidate complete comments into a shared COMMENTS commit; do not split a
+  range's markers or body across arbitrary hunks.
 - Submit staged comments as Comment, Approve, or Request changes, with an optional
   overall message.
 - Report comments whose locations cannot be mapped unambiguously, including their
@@ -54,15 +59,19 @@ hold remaining changes and subsequent updates. Squashing moves content between
 commits; imported snapshot identities must therefore live in metadata, not be
 inferred from current synthetic commit hashes.
 
-For annotation-free history, the central invariant is that the complete review
+The central invariant is that the complete review
 stack's tip tree equals the last imported PR head tree. Moving content into
-reviewed commits must preserve that aggregate tree. Embedded comments mean this
-raw-tree equality cannot also hold for annotated file versions. Proposed revised
-invariant: the code tree, excluding recognized local review annotations, equals
-the imported PR head tree. Whether annotations live in the review stack or a
-separate working-copy layer, and how to validate that projection without removing
-ordinary source comments, remain open below. The exact-tree construction steps
-that follow describe the annotation-free import, not a license to overwrite drafts.
+reviewed commits must preserve that exact aggregate tree. Comment-only companion
+commits are independent children of their associated code commits: Reviewed has
+both Remaining and Reviewed's COMMENTS branch as children; Remaining has its own
+COMMENTS child. They never become intermediate squash destinations.
+
+Each companion's tree must reduce to its own code parent's exact tree when only
+validated, uniquely identified annotation marker lines are removed. This
+projection validates comment-only history; it is not permission to strip ordinary
+code or ambiguous markers. The main working copy remains on Remaining, with
+unannotated source files. Comment editing rewrites a companion revision directly
+through the validated native diff editor without changing the main checkout.
 Local synthetic commit IDs must never be used as GitHub review `commit_id` values.
 
 An unchanged-base refresh does not rewrite existing stack commits. A base-change
@@ -116,9 +125,9 @@ Multiple merge-bases, missing/divergent managed changes, unexpected local edits,
 or an externally rearranged stack require a diagnostic rather than guessing.
 Ordinary squash rewrites are expected and tracked by jj change ID.
 
-The repository is shared by jj workspaces: isolation means not changing the
-original workspace's files, selected change, or unrelated history, not hiding new
-review commits from its log.
+The initial implementation uses an independent managed jj repository rather than
+a linked workspace sharing the invoking repository. Its fetched objects and
+review history therefore do not modify the original repository either.
 
 ## Local persistence (proposed)
 
@@ -175,10 +184,11 @@ Confirmed representation:
 - A comment starts with a source-comment marker such as
   `// JJ-STAMP(uuid): What does this do?`.
 - A matching `// JJ-STAMP(uuid)` may delimit its end. Exact single-line,
-  multiline-body, and code-range grammar still needs definition.
+  multiline-body, and code-range grammar is defined in the README for the initial
+  supported `//` source-language subset.
 - The diff renders recognized markers as real inline UI elements, not literal
-  source lines. The current prototype's detached sample-comment list does not
-  implement this representation.
+  source lines. Clean code diffs use projected overlays from companion branches;
+  the older prototype's detached sample list is separate.
 
 Proposed interaction: a rendered comment card contains the body and edit/remove
 controls; its editor writes back to the embedded representation. Edits made in an
@@ -341,14 +351,13 @@ imports remote changes into the managed review stack. Opening a review switches
 the existing app's data scope to that workspace without replacing its layout.
 Returning to the original workspace does not dismiss the saved review.
 
-**Non-PR workspace (proposed):** show only a neutral **Open PR…** toolbar entry,
+**Non-PR workspace (implemented):** show only a neutral **Open PR…** toolbar entry,
 opening the full-screen selector directly. Do not show a PR identity, update
 badge, staged count, Refresh PR, Submit, or Dismiss when the current workspace is
 not a PR review. Saved reviews remain available in the selector's Active locally
 filter; their existence alone does not put the current workspace in PR mode.
 Once in a PR review, the toolbar entry identifies that PR and opens A's actions
-menu. The prototype currently retains its explicit PR preview/DEMO label and
-an initial menu with only Open PR; this simplified non-PR entry is not implemented.
+menu. The separate prototype retains its explicit PR preview/DEMO label.
 
 All three demonstrate explicit refresh, staged comments, submission, mapping
 failures, and local dismissal. The partial-submission confirmation and archive
@@ -370,19 +379,18 @@ independent, managed jj repositories with separate loopback servers; the origina
 checkout is not modified by PR initialization. Remote refresh, submission,
 discussion import, and dismissal remain unimplemented.
 
-The initial implementation puts markers directly in the Remaining working-copy
-revision and conservatively blocks squash for files containing markers. This is
-an interim safety restriction, not the intended review workflow.
+The original direct-marker prototype was superseded by independent COMMENTS
+branches as explicitly clarified by the user. A single top working-copy layer and
+interleaved comment commits are **not** the chosen topology. Code selection and
+squash coordinates come from clean code revisions; overlay coordinates must never
+be copied from annotated-file physical offsets. Ordinary workspace comment
+editing is disabled rather than silently introducing new history there.
 
-**Proposed replacement, pending confirmation:** add a dedicated `COMMENTS`
-commit above Reviewed → Remaining. Only file-backed annotations belong in that
-top commit; the UI overlays them on the lower code revisions they affect.
-Squashing between Remaining and Reviewed should operate on annotation-free
-code, preserving the combined code tree and leaving COMMENTS on top. Overlay
-coordinates must be mapped into the displayed code revision, never copied from
-the annotation-bearing file's physical line numbers. Actual code changes,
-deleted-side anchors, conflict handling, and remote-update reconciliation need
-explicit rules; ambiguous mappings must remain visible rather than guessed.
+Consolidation into a shared COMMENTS commit is an explicit future preparation
+step before submission, not an automatic side effect of saving or squashing.
+Deleted-side anchors, conflict resolution, and remote-update reconciliation
+still need explicit rules; ambiguous mappings must remain visible rather than
+guessed.
 
 ## Implementation references to verify
 

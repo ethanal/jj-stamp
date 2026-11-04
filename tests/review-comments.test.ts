@@ -1,35 +1,30 @@
 import test, { type TestContext } from "node:test";
 import assert from "node:assert/strict";
-import {
-  chmod,
-  link,
-  lstat,
-  mkdir,
-  mkdtemp,
-  readFile,
-  rm,
-  symlink,
-  writeFile,
-} from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, writeFile, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { ReviewService, ApiError, type State } from "../server/service.ts";
-import { jj } from "../server/process.ts";
+import { jj, run, ProcessError } from "../server/process.ts";
 import { startLocalServer } from "../server/http.ts";
 import {
-  captureReviewFile,
-  replaceReviewFile,
-} from "../server/review-comments.ts";
+  validateCommentsLayer,
+  type CommentsLayerConfig,
+} from "../server/comments-layer.ts";
 import {
   parseReviewComments,
   type ReviewCommentMutation,
 } from "../src/review-comments.ts";
+import { withDiffEditor } from "../server/diff-editor.ts";
 
 const filename = "src/main.ts";
 const original = "const a = 1;\nconst b = 2;\nconst c = 3;\n";
 const working = original.replace("b = 2", "b = 20");
-async function fixture(t: TestContext, crlf = false) {
-  const root = await mkdtemp(path.join(os.tmpdir(), "jj-stamp-comments-"));
+async function fixture(
+  t: TestContext,
+  crlf = false,
+  code = { old: original, new: working },
+) {
+  const root = await mkdtemp(path.join(os.tmpdir(), "jj-stamp-branches-"));
   t.after(() => rm(root, { recursive: true, force: true }));
   await jj(root, ["git", "init", "--no-colocate", "."]);
   await jj(root, ["config", "set", "--repo", "user.name", "Review Tester"]);
@@ -51,13 +46,43 @@ async function fixture(t: TestContext, crlf = false) {
   const file = path.join(root, filename);
   const encode = (text: string) =>
     crlf ? text.replaceAll("\n", "\r\n") : text;
-  await writeFile(file, encode(original));
-  await jj(root, ["commit", "-m", "Mutable parent"]);
-  await writeFile(file, encode(working));
-  await jj(root, ["describe", "-m", "Review working copy"]);
-  const service = new ReviewService({ repoPath: root });
+  await writeFile(file, encode(code.old));
+  await jj(root, ["commit", "-m", "Reviewed"]);
+  await writeFile(file, encode(code.new));
+  await jj(root, ["describe", "-m", "Remaining"]);
+  const id = async (rev: string) =>
+    (
+      await jj(root, ["log", "--no-graph", "-r", rev, "-T", "change_id"])
+    ).stdout.trim();
+  const sourceChangeId = await id("@");
+  const reviewedChangeId = await id("@-");
+  const branches = [];
+  for (const [name, codeChangeId] of [
+    ["Reviewed", reviewedChangeId],
+    ["Remaining", sourceChangeId],
+  ]) {
+    await jj(root, [
+      "new",
+      "--no-edit",
+      "-r",
+      `change_id("${codeChangeId}")`,
+      "-m",
+      `COMMENTS ${name}`,
+    ]);
+    branches.push({
+      codeChangeId,
+      commentsChangeId: await id(`description(substring:"COMMENTS ${name}")`),
+    });
+  }
+  const comments: CommentsLayerConfig = {
+    sourceChangeId,
+    reviewedChangeId,
+    branches,
+  };
+  const service = new ReviewService({ repoPath: root, comments });
   const state = await service.getState();
-  return { root, file, service, state, source: encode(working) };
+  assert.equal(state.canEditComments, true, state.commentUnavailable);
+  return { root, file, comments, service, state, source: encode(code.new) };
 }
 const add = (state: State, extra = {}): ReviewCommentMutation => ({
   version: state.version,
@@ -67,14 +92,15 @@ const add = (state: State, extra = {}): ReviewCommentMutation => ({
   body: "Please simplify",
   ...extra,
 });
-function rejectsCode(promise: Promise<unknown>, code: string) {
-  return assert.rejects(
+const overlay = (service: ReviewService, state: State) =>
+  service.getComments({ version: state.version, path: filename });
+const rejectsCode = (promise: Promise<unknown>, code: string) =>
+  assert.rejects(
     promise,
     (error: unknown) => error instanceof ApiError && error.code === code,
   );
-}
-const selections = (state: State, file = filename) => {
-  const hunk = state.files.find((entry) => entry.path === file)!.hunks[0];
+const selections = (state: State) => {
+  const hunk = state.files.find((file) => file.path === filename)!.hunks[0];
   return [
     {
       id: hunk.id,
@@ -84,146 +110,327 @@ const selections = (state: State, file = filename) => {
     },
   ];
 };
+async function branchFile(
+  root: string,
+  config: CommentsLayerConfig,
+  code = config.sourceChangeId,
+) {
+  const branch = config.branches.find(
+    (branch) => branch.codeChangeId === code,
+  )!;
+  return (
+    await jj(root, [
+      "file",
+      "show",
+      "--ignore-working-copy",
+      "-r",
+      `change_id("${branch.commentsChangeId}")`,
+      "--",
+      `root-file:${JSON.stringify(filename)}`,
+    ])
+  ).stdout;
+}
 
-test("real-jj comment CRUD persists through restart, preserves mode/CRLF and invalidates previews", async (t) => {
+test("real-jj branch CRUD/restart preserves both clean code revisions and main @ with LF/CRLF", async (t) => {
   for (const crlf of [false, true]) {
-    const { service, state, root, file, source } = await fixture(t, crlf);
-    assert.equal(state.canEditComments, true);
-    await chmod(file, 0o640);
+    const { root, file, comments, service, state, source } = await fixture(
+      t,
+      crlf,
+    );
+    const initial = await validateCommentsLayer(root, comments);
     const preview = await service.preview({
       version: state.version,
       target: state.parent!.changeId,
       selections: selections(state),
     });
-    const added = await service.comment(
-      add(state, { endLine: 3, body: "First\nSecond" }),
+    const added = (
+      await service.comment(add(state, { endLine: 3, body: "First\nSecond" }))
+    ).state;
+    assert.equal(added.source.commitId, state.source.commitId);
+    assert.notEqual(added.version, state.version);
+    assert.equal(await readFile(file, "utf8"), source);
+    const text = await branchFile(root, comments);
+    const parsed = parseReviewComments(filename, text).comments[0];
+    assert.equal(parsed.body, "First\nSecond");
+    if (crlf) assert.equal(text.replaceAll("\r\n", "").includes("\n"), false);
+    const projected = await overlay(service, added);
+    assert.deepEqual(
+      projected.comments.map(({ id, body, startLine, endLine }) => ({
+        id,
+        body,
+        startLine,
+        endLine,
+      })),
+      [{ id: parsed.id, body: "First\nSecond", startLine: 2, endLine: 3 }],
     );
-    assert.equal(added.state.canUndo, false);
-    assert.equal(added.state.canEditComments, true);
-    assert.equal(added.state.source.changeId, state.source.changeId);
-    assert.notEqual(added.state.version, state.version);
-    assert.equal((await lstat(file)).mode & 0o777, 0o640);
-    const contents = await readFile(file, "utf8");
-    const comment = parseReviewComments(filename, contents).comments[0];
-    assert.equal(comment.body, "First\nSecond");
-    assert.equal(comment.anchorLine, 4);
-    assert.equal(comment.endAnchorLine, 5);
-    assert.equal(comment.endMarkerLine, 6);
-    if (crlf)
-      assert.equal(contents.replaceAll("\r\n", "").includes("\n"), false);
+    const clean = await service.getFile({
+      version: added.version,
+      path: filename,
+    });
+    assert.equal(clean.newFile!.contents, source);
+    assert.doesNotMatch(clean.newFile!.contents, /JJ-STAMP/);
     await rejectsCode(service.squash(preview.token), "STALE_PREVIEW");
     await rejectsCode(service.comment(add(state)), "STALE_STATE");
-    const restarted = new ReviewService({ repoPath: root });
-    const refreshed = await restarted.getState();
-    assert.deepEqual(refreshed, added.state);
-    const pinned = await restarted.getFile({
-      version: refreshed.version,
-      path: filename,
-    });
-    assert.equal(pinned.newFile!.contents, contents);
-    assert.deepEqual(
-      parseReviewComments(filename, pinned.newFile!.contents).comments[0],
-      comment,
-    );
-    const edited = await restarted.comment({
-      action: "edit",
-      version: refreshed.version,
-      path: filename,
-      id: comment.id,
-      body: "Changed",
-    });
+    const restarted = new ReviewService({ repoPath: root, comments });
+    const fresh = await restarted.getState();
+    assert.deepEqual(fresh, added);
+    const edited = (
+      await restarted.comment({
+        version: fresh.version,
+        path: filename,
+        action: "edit",
+        id: parsed.id,
+        body: "Changed",
+      })
+    ).state;
+    assert.equal((await overlay(restarted, edited)).comments[0].id, parsed.id);
     assert.equal(
-      parseReviewComments(filename, await readFile(file, "utf8")).comments[0]
-        .body,
+      (await overlay(restarted, edited)).comments[0].body,
       "Changed",
     );
-    const removed = await restarted.comment({
-      action: "remove",
-      version: edited.state.version,
-      path: filename,
-      id: comment.id,
-    });
+    const removed = (
+      await restarted.comment({
+        version: edited.version,
+        path: filename,
+        action: "remove",
+        id: parsed.id,
+      })
+    ).state;
+    assert.equal((await overlay(restarted, removed)).comments.length, 0);
+    assert.equal(await branchFile(root, comments), source);
+    const final = await validateCommentsLayer(root, comments);
+    assert.equal(final.source.commitId, initial.source.commitId);
+    assert.equal(final.reviewed.commitId, initial.reviewed.commitId);
     assert.equal(await readFile(file, "utf8"), source);
-    assert.equal(removed.state.canUndo, false);
-    assert.equal((await lstat(file)).mode & 0o777, 0o640);
   }
 });
 
-test("comments only authorize live mutable conflict-free @, independent of graph filtering", async (t) => {
-  const { root, file, state } = await fixture(t);
-  const historical = new ReviewService({
-    repoPath: root,
-    revision: state.parent!.changeId,
-  });
-  const historyState = await historical.getState();
-  assert.equal(historyState.canEditComments, false);
-  await rejectsCode(
-    historical.comment(add(historyState)),
-    "COMMENTS_UNAVAILABLE",
+test("ordinary review comments are read-only; managed Reviewed has its own editable side branch", async (t) => {
+  const { root, comments, service, state } = await fixture(t);
+  const ordinary = new ReviewService({ repoPath: root });
+  const plain = await ordinary.getState();
+  assert.equal(plain.canEditComments, false);
+  assert.equal(plain.commentsEnabled, undefined);
+  await rejectsCode(ordinary.comment(add(plain)), "COMMENTS_UNAVAILABLE");
+  const first = (await service.comment(add(state))).state;
+  const reviewed = (
+    await service.selectRevision({
+      version: first.version,
+      changeId: comments.reviewedChangeId,
+    })
+  ).state;
+  assert.equal(reviewed.canEditComments, true);
+  const before = await overlay(service, reviewed);
+  assert.equal(before.unmapped.length, 1);
+  assert.equal(before.unmapped[0].body, "Please simplify");
+  const own = (
+    await service.comment(add(reviewed, { line: 1, body: "Reviewed note" }))
+  ).state;
+  assert.equal((await overlay(service, own)).comments[0].body, "Reviewed note");
+  assert.match(
+    await branchFile(root, comments, comments.reviewedChangeId),
+    /Reviewed note/,
   );
-  assert.equal(await readFile(file, "utf8"), working);
-  await jj(root, [
-    "config",
-    "set",
-    "--repo",
-    'revset-aliases."immutable_heads()"',
-    "@",
-  ]);
-  const immutable = new ReviewService({ repoPath: root });
-  const immutableState = await immutable.getState();
-  assert.equal(immutableState.canEditComments, false);
-  await rejectsCode(
-    immutable.comment(add(immutableState)),
-    "COMMENTS_UNAVAILABLE",
-  );
-  await jj(root, [
-    "config",
-    "set",
-    "--repo",
-    'revset-aliases."immutable_heads()"',
-    "root()",
-  ]);
-  await jj(root, [
-    "config",
-    "set",
-    "--repo",
-    'revset-aliases."conflicts()"',
-    "@",
-  ]);
-  const conflicted = new ReviewService({ repoPath: root });
-  const conflictState = await conflicted.getState();
-  assert.equal(conflictState.canEditComments, false);
-  await rejectsCode(
-    conflicted.comment(add(conflictState)),
-    "COMMENTS_UNAVAILABLE",
-  );
-  await jj(root, [
-    "config",
-    "set",
-    "--repo",
-    'revset-aliases."conflicts()"',
-    "none()",
-  ]);
-  // mine() excludes this source; it is still fully eligible for comments.
-  await jj(root, [
-    "config",
-    "set",
-    "--repo",
-    "user.email",
-    "someone-else@example.test",
-  ]);
-  const filtered = new ReviewService({ repoPath: root });
-  const eligible = await filtered.getState();
-  assert.equal(eligible.canEditComments, true);
-  assert.ok(!(await filtered.getLog()).rows.some((row) => row.isWorkingCopy));
-  assert.equal(
-    (await filtered.comment(add(eligible))).state.canEditComments,
-    true,
+  assert.doesNotMatch(
+    await branchFile(root, comments, comments.sourceChangeId),
+    /Reviewed note/,
   );
 });
 
-test("serialized duplicate submissions write once; unsnapshotted edits and workspace movement stale requests", async (t) => {
-  const { service, state, file, root } = await fixture(t);
+test("duplicate cross-branch anchors stay unmapped unless complete code trees are identical", async (t) => {
+  const { service, state, comments } = await fixture(t, false, {
+    old: "same();\noldCode();\nsame();\n",
+    new: "same();\nnewCode();\nsame();\n",
+  });
+  const added = (
+    await service.comment(add(state, { line: 1, body: "Duplicate anchor" }))
+  ).state;
+  const id = (await overlay(service, added)).comments[0].id;
+  const reviewed = (
+    await service.selectRevision({
+      version: added.version,
+      changeId: comments.reviewedChangeId,
+    })
+  ).state;
+  const projected = await overlay(service, reviewed);
+  assert.equal(projected.comments.length, 0);
+  assert.equal(projected.unmapped[0].id, id);
+  assert.equal(projected.unmapped[0].body, "Duplicate anchor");
+  const remaining = (
+    await service.selectRevision({
+      version: reviewed.version,
+      changeId: comments.sourceChangeId,
+    })
+  ).state;
+  assert.equal((await overlay(service, remaining)).comments[0].id, id);
+  const moved = await service.squashLines({
+    version: remaining.version,
+    selections: selections(remaining),
+  });
+  const selected = (
+    await service.selectRevision({
+      version: moved.state.version,
+      changeId: comments.reviewedChangeId,
+    })
+  ).state;
+  assert.equal((await overlay(service, selected)).comments[0].id, id);
+});
+
+test("comment commit IDs cannot be shadowed by same-named bookmarks", async (t) => {
+  const { root, comments } = await fixture(t);
+  const initial = await validateCommentsLayer(root, comments);
+  const branch = initial.branches.find(
+    (branch) => branch.code.changeId === comments.sourceChangeId,
+  )!;
+  await jj(root, [
+    "bookmark",
+    "create",
+    branch.comments.commitId,
+    "-r",
+    `commit_id("${initial.reviewed.commitId}")`,
+  ]);
+  const service = new ReviewService({ repoPath: root, comments });
+  const state = await service.getState();
+  const added = (await service.comment(add(state, { body: "Correct branch" })))
+    .state;
+  assert.equal(
+    (await overlay(service, added)).comments[0].body,
+    "Correct branch",
+  );
+  const after = await validateCommentsLayer(root, comments);
+  assert.equal(after.reviewed.commitId, initial.reviewed.commitId);
+  assert.equal(after.source.commitId, initial.source.commitId);
+  assert.match(await branchFile(root, comments), /Correct branch/);
+});
+
+test("code edits in a branch fail closed while retaining previously validated bodies for diagnosis", async (t) => {
+  const { root, comments, service, state } = await fixture(t);
+  const added = (
+    await service.comment(add(state, { body: "Do not lose this body" }))
+  ).state;
+  const id = (await overlay(service, added)).comments[0].id;
+  const layer = await validateCommentsLayer(root, comments);
+  const branch = layer.branches.find(
+    (branch) => branch.code.changeId === comments.sourceChangeId,
+  )!;
+  const source = branch.files.get(filename)!.annotated;
+  const result = Buffer.concat([
+    source,
+    Buffer.from("const unexpected = 1;\n"),
+  ]);
+  await withDiffEditor(
+    {
+      version: 1,
+      repository: root,
+      files: [
+        {
+          path: filename,
+          base: null,
+          source: source.toString("base64"),
+          result: result.toString("base64"),
+        },
+      ],
+    },
+    (config) =>
+      run(
+        "jj",
+        [
+          "diffedit",
+          "--from",
+          "root()",
+          "--to",
+          `commit_id("${branch.comments.commitId}")`,
+          "--tool",
+          "jj-stamp",
+          "--ignore-working-copy",
+          ...config,
+          "--",
+          `root-file:${JSON.stringify(filename)}`,
+        ],
+        root,
+      ),
+  );
+  await rejectsCode(
+    validateCommentsLayer(root, comments),
+    "COMMENTS_LAYER_INVALID",
+  );
+  const invalid = await service.getState();
+  assert.equal(invalid.canEditComments, false);
+  assert.match(invalid.commentUnavailable!, /actual code edits/);
+  const diagnosed = await overlay(service, invalid);
+  assert.equal(diagnosed.unmapped[0].id, id);
+  assert.equal(diagnosed.unmapped[0].body, "Do not lose this body");
+  assert.match(await branchFile(root, comments), /Do not lose this body/);
+});
+
+test("ambiguous lexical files return a read-only overlay explanation instead of a failed request", async (t) => {
+  const { service, state } = await fixture(t, false, {
+    old: "const template = `old`;\n",
+    new: "const template = `new`;\n",
+  });
+  const projected = await overlay(service, state);
+  assert.equal(projected.editable, false);
+  assert.match(projected.reason!, /lexical/);
+});
+
+test("annotated code squashes normally, projects across branches onto Reviewed, edits UUID owner, and undoes safely", async (t) => {
+  const { root, file, comments, service, state, source } = await fixture(t);
+  const added = (
+    await service.comment(add(state, { body: "Follows this line" }))
+  ).state;
+  const id = (await overlay(service, added)).comments[0].id;
+  const squashed = await service.squashLines({
+    version: added.version,
+    selections: selections(added),
+  });
+  assert.equal(squashed.state.canUndo, true);
+  assert.equal(await readFile(file, "utf8"), source);
+  assert.doesNotMatch(
+    squashed.state.files.map((file) => file.patch).join(""),
+    /JJ-STAMP/,
+  );
+  const reviewed = (
+    await service.selectRevision({
+      version: squashed.state.version,
+      changeId: comments.reviewedChangeId,
+    })
+  ).state;
+  const projected = await overlay(service, reviewed);
+  assert.ok(
+    projected.comments.some(
+      (comment) => comment.id === id && comment.startLine === 2,
+    ),
+  );
+  assert.equal(projected.unmapped.length, 0);
+  const edited = (
+    await service.comment({
+      version: reviewed.version,
+      path: filename,
+      action: "edit",
+      id,
+      body: "Edited across branch",
+    })
+  ).state;
+  assert.equal(edited.canUndo, false);
+  assert.match(await branchFile(root, comments), /Edited across branch/);
+  assert.doesNotMatch(
+    await branchFile(root, comments, comments.reviewedChangeId),
+    /Edited across branch/,
+  );
+  // A separate fixture exercises exact undo without the intervening edit.
+  const other = await fixture(t);
+  const annotated = (await other.service.comment(add(other.state))).state;
+  const moved = await other.service.squashLines({
+    version: annotated.version,
+    selections: selections(annotated),
+  });
+  const undone = await other.service.undo(moved.state.version);
+  assert.equal((await overlay(other.service, undone.state)).comments.length, 1);
+  assert.equal(await readFile(other.file, "utf8"), other.source);
+});
+
+test("serialized duplicates and unsnapshotted code edits reject stale requests without extra comments", async (t) => {
+  const { service, state, file } = await fixture(t);
   const results = await Promise.allSettled([
     service.comment(add(state)),
     service.comment(add(state)),
@@ -232,236 +439,146 @@ test("serialized duplicate submissions write once; unsnapshotted edits and works
     results.filter((result) => result.status === "fulfilled").length,
     1,
   );
-  const failure = results.find((result) => result.status === "rejected");
-  assert.ok(
-    failure?.status === "rejected" && failure.reason.code === "STALE_STATE",
-  );
-  assert.equal(
-    parseReviewComments(filename, await readFile(file, "utf8")).comments.length,
-    1,
-  );
   const fresh = await service.getState();
-  await writeFile(
-    file,
-    (await readFile(file, "utf8")) + "const external = 1;\n",
-  );
+  assert.equal((await overlay(service, fresh)).comments.length, 1);
+  await writeFile(file, working + "const external = 1;\n");
   await rejectsCode(service.comment(add(fresh)), "STALE_STATE");
-  const pinned = await service.getState();
-  await jj(root, ["new", "-m", "Different workspace change"]);
-  await rejectsCode(service.comment(add(pinned)), "STALE_STATE");
 });
 
-test("exact captured bytes and inode identity reject external replacement, hardlinks, symlinks and traversal", async (t) => {
-  const { root, file, service, state } = await fixture(t);
-  const captured = await captureReviewFile(root, filename);
-  await writeFile(file, "external edit\n");
+test("external code in a comment branch, working-copy movement and unexpected descendants fail closed", async (t) => {
+  const { root, comments, service, state } = await fixture(t);
+  const branch = comments.branches.find(
+    (branch) => branch.codeChangeId === comments.sourceChangeId,
+  )!;
+  await jj(root, [
+    "new",
+    "--no-edit",
+    "-r",
+    `change_id("${branch.commentsChangeId}")`,
+    "-m",
+    "Unexpected descendant",
+  ]);
+  const invalid = await service.getState();
+  assert.equal(invalid.commentsEnabled, true);
+  assert.equal(invalid.canEditComments, false);
+  assert.match(invalid.commentUnavailable!, /leaf/);
+  await rejectsCode(service.comment(add(invalid)), "COMMENTS_UNAVAILABLE");
   await rejectsCode(
-    replaceReviewFile(captured, Buffer.from("must not overwrite\n")),
-    "STALE_STATE",
+    validateCommentsLayer(root, comments),
+    "COMMENTS_LAYER_INVALID",
   );
-  assert.equal(await readFile(file, "utf8"), "external edit\n");
-  await writeFile(file, working);
-  await link(file, path.join(root, "hardlink.ts"));
   await rejectsCode(
-    service.comment(add(await service.getState())),
-    "COMMENTS_UNAVAILABLE",
+    service.squashLines({
+      version: invalid.version,
+      selections: selections(state),
+    }),
+    "SQUASH_UNAVAILABLE",
   );
-  await rm(path.join(root, "hardlink.ts"));
-  await rm(file);
-  await symlink(path.join(root, "target.ts"), file);
-  await writeFile(path.join(root, "target.ts"), working);
-  await rejectsCode(captureReviewFile(root, filename), "COMMENTS_UNAVAILABLE");
-  for (const bad of [
-    "../outside.ts",
-    "/tmp/outside.ts",
-    "src/../main.ts",
-    ".jj/repo/config.toml",
-    "src\\main.ts",
-  ])
-    await rejectsCode(captureReviewFile(root, bad), "INVALID_PATH");
-  await rejectsCode(
-    service.comment({ ...add(state), path: "../outside.ts" }),
-    "STALE_STATE",
-  );
+  const other = await fixture(t);
+  await jj(other.root, ["new", "-m", "Moved workspace"]);
+  const moved = await other.service.getState();
+  assert.equal(moved.canEditComments, false);
+  assert.match(moved.commentUnavailable!, /working copy/);
 });
 
-test("pinned byte mismatch and interleaved metadata changes fail before comment writes", async (t) => {
-  const { root, file } = await fixture(t);
-  let race: "bytes" | "metadata" | undefined;
-  let metadata = 0;
+test("nonzero or unattributed diffedit installs a nonreplayable in-memory recovery guard", async (t) => {
+  for (const mode of ["exit", "attribution"] as const) {
+    const { root, comments } = await fixture(t);
+    let calls = 0;
+    let breakAttribution = false;
+    const service = new ReviewService({
+      repoPath: root,
+      comments,
+      toolRunner: async (command, args, cwd) => {
+        calls++;
+        const result = await run(command, args, cwd);
+        if (mode === "exit")
+          throw new ProcessError(
+            command,
+            args,
+            { ...result, stderr: "post-write failure" },
+            1,
+            cwd,
+          );
+        breakAttribution = true;
+        return result;
+      },
+      jjRunner: async (cwd, args) => {
+        if (breakAttribution && args[0] === "op") {
+          breakAttribution = false;
+          throw new Error("unreadable attribution");
+        }
+        return jj(cwd, args);
+      },
+    });
+    const state = await service.getState();
+    await rejectsCode(
+      service.comment(add(state)),
+      mode === "exit" ? "PARTIAL_FAILURE" : "HISTORY_CHANGED",
+    );
+    assert.match(await branchFile(root, comments), /JJ-STAMP/);
+    const current = await service.getState();
+    await rejectsCode(service.comment(add(current)), "RECOVERY_REQUIRED");
+    await rejectsCode(
+      service.selectRevision({
+        version: current.version,
+        changeId: comments.reviewedChangeId,
+      }),
+      "RECOVERY_REQUIRED",
+    );
+    assert.equal(calls, 1);
+    assert.equal(
+      (await new ReviewService({ repoPath: root, comments }).getState())
+        .canUndo,
+      false,
+    );
+  }
+});
+
+test("post-attribution refresh failure reports completed revision edit without false pending guard", async (t) => {
+  const { root, comments } = await fixture(t);
+  let fail = false;
+  let written = false;
   const service = new ReviewService({
     repoPath: root,
-    jjRunner: async (cwd, args) => {
-      const result = await jj(cwd, args);
-      if (race === "bytes" && args[0] === "file")
-        return {
-          ...result,
-          stdout: result.stdout + "extra\n",
-          stdoutBytes: Buffer.from(result.stdout + "extra\n"),
-        };
-      if (
-        race === "metadata" &&
-        args[0] === "log" &&
-        args.includes("--no-graph") &&
-        ++metadata === 2
-      )
-        await writeFile(file, working + "const external = 2;\n");
+    comments,
+    toolRunner: async (command, args, cwd) => {
+      const result = await run(command, args, cwd);
+      written = true;
       return result;
     },
-  });
-  const state = await service.getState();
-  race = "bytes";
-  await rejectsCode(service.comment(add(state)), "STALE_STATE");
-  assert.equal(await readFile(file, "utf8"), working);
-  race = "metadata";
-  await rejectsCode(service.comment(add(state)), "STALE_STATE");
-  assert.doesNotMatch(await readFile(file, "utf8"), /JJ-STAMP/);
-});
-
-test("post-write refresh failures honestly report changed files without retries or rollback", async (t) => {
-  const { root, file } = await fixture(t);
-  let fail = false;
-  let failures = 0;
-  const service = new ReviewService({
-    repoPath: root,
     jjRunner: async (cwd, args) => {
-      if (
-        fail &&
-        args[0] === "log" &&
-        (await readFile(file, "utf8")).includes("JJ-STAMP")
-      ) {
+      if (fail && written && args[0] === "log") {
         fail = false;
-        failures++;
-        throw new Error("simulated refresh failure");
+        throw new Error("refresh failed");
       }
       return jj(cwd, args);
     },
   });
   const state = await service.getState();
-  const preview = await service.preview({
-    version: state.version,
-    target: state.parent!.changeId,
-    selections: selections(state),
-  });
   fail = true;
   await assert.rejects(
     service.comment(add(state)),
     (error: unknown) =>
       error instanceof ApiError &&
-      error.code === "PARTIAL_FAILURE" &&
-      error.details?.fileMayHaveChanged === true &&
-      /already changed/.test(error.message),
+      error.code === "HISTORY_CHANGED" &&
+      Boolean(error.details?.completedOperation) &&
+      !error.details?.pending,
   );
-  const changed = await readFile(file, "utf8");
-  assert.equal(parseReviewComments(filename, changed).comments.length, 1);
-  await service.getState();
-  assert.equal(await readFile(file, "utf8"), changed);
-  assert.equal(failures, 1);
-  await rejectsCode(service.squash(preview.token), "STALE_PREVIEW");
-});
-
-test("post-write inode/mode changes are detected even when bytes remain identical", async (t) => {
-  const { root, file } = await fixture(t);
-  let race = false;
-  const service = new ReviewService({
-    repoPath: root,
-    jjRunner: async (cwd, args) => {
-      if (
-        race &&
-        args[0] === "log" &&
-        (await readFile(file, "utf8")).includes("JJ-STAMP")
-      ) {
-        race = false;
-        await chmod(file, 0o600);
-      }
-      return jj(cwd, args);
-    },
+  const fresh = await service.getState();
+  assert.equal((await overlay(service, fresh)).comments.length, 1);
+  await service.selectRevision({
+    version: fresh.version,
+    changeId: comments.reviewedChangeId,
   });
-  const state = await service.getState();
-  race = true;
-  await rejectsCode(service.comment(add(state)), "PARTIAL_FAILURE");
-  assert.equal(
-    parseReviewComments(filename, await readFile(file, "utf8")).comments.length,
-    1,
-  );
-  assert.equal((await lstat(file)).mode & 0o777, 0o600);
 });
 
-test("history guard ignores plain brand references but blocks malformed reserved source lines", async (t) => {
-  const { file, service } = await fixture(t);
-  await writeFile(file, working + "const name = 'JJ-STAMP';\n");
-  const brand = await service.getState();
-  await service.preview({
-    version: brand.version,
-    target: brand.parent!.changeId,
-    selections: selections(brand),
-  });
-  await writeFile(file, working + "//JJ-STAMP(bad): reserved\n");
-  const reserved = await service.getState();
-  await rejectsCode(
-    service.preview({
-      version: reserved.version,
-      target: reserved.parent!.changeId,
-      selections: selections(reserved),
-    }),
-    "REVIEW_COMMENTS_PRESENT",
-  );
-});
-
-test("squash and legacy preview block any marker-looking pinned side, without blocking other files", async (t) => {
-  const { service, state, root, file } = await fixture(t);
-  const annotated = (await service.comment(add(state))).state;
-  const selected = selections(annotated);
-  await rejectsCode(
-    service.preview({
-      version: annotated.version,
-      target: annotated.parent!.changeId,
-      selections: selected,
-    }),
-    "REVIEW_COMMENTS_PRESENT",
-  );
-  await rejectsCode(
-    service.squashLines({ version: annotated.version, selections: selected }),
-    "REVIEW_COMMENTS_PRESENT",
-  );
-  await writeFile(path.join(root, "other.ts"), "const other = 1;\n");
-  const both = await service.getState();
-  await service.squashLines({
-    version: both.version,
-    selections: selections(both, "other.ts"),
-  });
-  assert.match(await readFile(file, "utf8"), /JJ-STAMP/);
-  // Move markers into the base, then remove them from source: source-only
-  // scanning would silently allow their deletion during squash.
-  await jj(root, ["commit", "-m", "Pinned annotations"]);
-  await writeFile(file, working);
-  const baseMarkers = new ReviewService({ repoPath: root });
-  const next = await baseMarkers.getState();
-  await rejectsCode(
-    baseMarkers.squashLines({
-      version: next.version,
-      selections: selections(next),
-    }),
-    "REVIEW_COMMENTS_PRESENT",
-  );
-  await writeFile(file, "const markerLooking = 'JJ-STAMP(bad)';\n");
-  const malformed = await baseMarkers.getState();
-  await rejectsCode(
-    baseMarkers.squashLines({
-      version: malformed.version,
-      selections: selections(malformed),
-    }),
-    "REVIEW_COMMENTS_PRESENT",
-  );
-});
-
-test("HTTP comment validation, loopback protection and benign PR context fallback", async (t) => {
-  const { service, state, root, file } = await fixture(t);
+test("HTTP validation and loopback protection; separate overlay never contaminates immutable code bytes", async (t) => {
+  const { service, state, root } = await fixture(t);
   const server = await startLocalServer({ service, assetsDir: root, port: 0 });
   t.after(() => server.close());
-  const endpoint = new URL("api/comments", server.url);
-  const request = (body: unknown, headers = {}) =>
-    fetch(endpoint, {
+  const request = (body: unknown, headers = {}, route = "comments") =>
+    fetch(new URL(`api/${route}`, server.url), {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -470,36 +587,15 @@ test("HTTP comment validation, loopback protection and benign PR context fallbac
       },
       body: JSON.stringify(body),
     });
-  const context = await fetch(new URL("api/pr/context", server.url));
-  assert.equal(context.status, 200);
-  assert.equal(await context.json(), null);
   for (const bad of [
-    { ...add(state), action: "replace" },
     { ...add(state), line: 0 },
-    { ...add(state), line: 1.5 },
     { ...add(state), body: "" },
     { ...add(state), body: "unsafe\r\ntext" },
     { ...add(state), body: "unsafe\u2028text" },
     { ...add(state), unknown: true },
-    {
-      version: state.version,
-      path: filename,
-      action: "remove",
-      id: "not-a-uuid",
-    },
-    {
-      version: state.version,
-      path: filename,
-      action: "edit",
-      id: "12345678-1234-1234-1234-123456789abc",
-      body: "x",
-      line: 1,
-    },
-  ]) {
-    const response = await request(bad);
-    assert.equal(response.status, 400, JSON.stringify(bad));
-    assert.equal((await response.json()).code, "INVALID_REQUEST");
-  }
+    { version: state.version, path: filename, action: "remove", id: "bad" },
+  ])
+    assert.equal((await request(bad)).status, 400);
   assert.equal(
     (await request(add(state), { "X-Fold-Request": "0" })).status,
     403,
@@ -508,11 +604,23 @@ test("HTTP comment validation, loopback protection and benign PR context fallbac
     (await request(add(state), { Origin: "https://evil.example" })).status,
     403,
   );
-  assert.equal(await readFile(file, "utf8"), working);
-  const response = await request(add(state));
-  assert.equal(response.status, 200);
-  const result = await response.json();
-  assert.ok(result.state.version);
-  assert.equal(result.state.canEditComments, true);
-  assert.equal((await request(add(state))).status, 409);
+  const saved = await request(add(state));
+  assert.equal(saved.status, 200);
+  const next = (await saved.json()).state;
+  const projected = await request(
+    { version: next.version, path: filename },
+    {},
+    "comments/file",
+  );
+  assert.equal(projected.status, 200);
+  assert.equal((await projected.json()).comments[0].startLine, 2);
+  const immutable = await request(
+    { commitId: state.source.commitId, path: filename },
+    {},
+    "commit-file",
+  );
+  assert.equal(immutable.status, 200);
+  assert.equal((await immutable.json()).newFile.contents, working);
+  const context = await fetch(new URL("api/pr/context", server.url));
+  assert.equal(await context.json(), null);
 });

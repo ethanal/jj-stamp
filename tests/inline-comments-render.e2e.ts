@@ -32,17 +32,9 @@ try {
     await expect(current).toBeVisible();
     await expect(page.locator("#loads")).toHaveText("1");
   }
-  await current.getByRole("button", { name: "Edit comment" }).click();
-  const editor = page.getByRole("textbox", { name: "Comment body" });
-  await editor.fill("unsaved body");
-  await page.getByRole("button", { name: "Save comment" }).click();
-  await expect(page.getByRole("alert")).toContainText(
-    "Fixture mutation deliberately rejected",
-  );
-  await expect(editor).toHaveValue("unsaved body");
-  await editor.press("Escape");
-  await expect(editor).toHaveCount(0);
-  await expect(page.locator(".code-surface")).toBeFocused();
+  // Ordinary historical source markers are view-only. Editing is exclusively
+  // available through the independently loaded managed COMMENTS overlay.
+  await expect(current.getByRole("button")).toHaveCount(0);
   await expect(current).toContainText("Current question");
 
   // Marker-bearing files permit comment range selection, but never produce
@@ -51,7 +43,9 @@ try {
     .locator('[data-line="2"]:not([data-line-type="change-deletion"])')
     .last()
     .click();
-  await expect(page.getByRole("button", { name: "Add comment" })).toBeEnabled();
+  await expect(page.getByRole("button", { name: "Add comment" })).toHaveCount(
+    0,
+  );
   await expect(page.locator("#selection")).toHaveText("{}");
   await page.getByRole("button", { name: "Historical revision" }).click();
   await expect(current.getByRole("button")).toHaveCount(0);

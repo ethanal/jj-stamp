@@ -7,6 +7,7 @@ import { materializeSelection } from "./selection.ts";
 import { withDiffEditor } from "./diff-editor.ts";
 import type { DiffEditorPlan } from "./diff-editor.ts";
 import { editorExpression, resolveEditorPath } from "./editor.ts";
+import { unchangedCodeLines } from "./comment-mapping.ts";
 import { ApiError } from "./errors.ts";
 import { ReadLane } from "./read-lane.ts";
 import {
@@ -32,14 +33,19 @@ import type { OperationName, TimingObserver } from "./timing.ts";
 import {
   containsReviewMarkers,
   type ReviewCommentMutation,
+  type ReviewCommentOverlay,
 } from "../src/review-comments.ts";
 import {
-  captureReviewFile,
-  replaceReviewFile,
-  reviewFileUnchanged,
   mutateReviewComments,
   validateCommentMutation,
 } from "./review-comments.ts";
+import {
+  validateCommentsLayer,
+  readCommentsFile,
+  projectCommentsFile,
+  type CommentsLayerConfig,
+  type ValidatedCommentsLayer,
+} from "./comments-layer.ts";
 
 export type {
   OperationTiming,
@@ -93,12 +99,23 @@ export interface State {
   operation: string;
   canUndo: boolean;
   canEditComments: boolean;
+  commentsEnabled?: boolean;
+  commentUnavailable?: string;
+  /** Versioned managed branch identities, not annotation bodies. */
+  commentLayer?: string;
 }
 // Revision IDs pin the diff bytes. Repository versions do not depend on
 // rendering or transient diff errors, so graph reads need no diff loading.
 type RevisionView = Pick<
   State,
-  "source" | "targets" | "parent" | "squashUnavailable" | "canEditComments"
+  | "source"
+  | "targets"
+  | "parent"
+  | "squashUnavailable"
+  | "canEditComments"
+  | "commentsEnabled"
+  | "commentUnavailable"
+  | "commentLayer"
 >;
 interface UnavailableView {
   unavailable: {
@@ -169,7 +186,7 @@ interface SessionHistory {
     sourceChangeId: string;
     targetCommit: string;
     targetChangeId: string;
-    kind: "squash" | "undo";
+    kind: "squash" | "undo" | "comment";
   };
 }
 interface Operation {
@@ -185,6 +202,7 @@ export interface ServiceOptions {
   toolRunner?: typeof run;
   jjRunner?: typeof jj;
   onTiming?: TimingObserver;
+  comments?: CommentsLayerConfig;
 }
 const hash = (value: string) =>
   createHash("sha256").update(value).digest("hex");
@@ -247,6 +265,9 @@ export class ReviewService {
   private readonly editorRunner: typeof run;
   private readonly toolRunner: typeof run;
   private readonly timing?: ServiceTiming;
+  private readonly comments?: CommentsLayerConfig;
+  private latestCommentsLayer?: ValidatedCommentsLayer;
+  private lastValidCommentsLayer?: ValidatedCommentsLayer;
   constructor(options: ServiceOptions) {
     if (!options?.repoPath)
       throw new Error("ReviewService requires explicit repoPath.");
@@ -265,6 +286,9 @@ export class ReviewService {
     }
     this.repoPath = path.resolve(options.repoPath);
     this.requestedRevision = options.revision ?? "@";
+    this.comments = options.comments
+      ? structuredClone(options.comments)
+      : undefined;
   }
   private serial<T>(name: OperationName, task: () => Promise<T>): Promise<T> {
     if (this.serialPending >= 64)
@@ -573,7 +597,7 @@ export class ReviewService {
           "Unrecognized revision metadata.",
         ),
       );
-    return selections.map((selection, index) => {
+    const views: ReviewView[] = selections.map((selection, index) => {
       const metadata = rows.map(({ revision, flags }) => ({
         revision,
         source: flags[index * 3],
@@ -652,13 +676,48 @@ export class ReviewService {
         source,
         targets,
         parent,
-        canEditComments:
-          mutableSource &&
-          !conflictedSource &&
-          metadata.some((entry) => entry.source && entry.workingCopy),
+        canEditComments: false,
+        commentUnavailable:
+          "Comment editing requires a managed PR review with independent comment branches.",
         ...(squashUnavailable ? { squashUnavailable } : {}),
       };
     });
+    if (this.comments) {
+      try {
+        const layer = await validateCommentsLayer(
+          this.root,
+          this.comments,
+          this.jjRunner,
+        );
+        this.latestCommentsLayer = layer;
+        this.lastValidCommentsLayer = layer;
+        for (const view of views) {
+          if ("unavailable" in view) continue;
+          view.commentsEnabled = true;
+          view.commentLayer = layer.fingerprint;
+          view.canEditComments = [
+            this.comments.sourceChangeId,
+            this.comments.reviewedChangeId,
+          ].includes(view.source.changeId);
+          view.commentUnavailable = view.canEditComments
+            ? undefined
+            : "Select Remaining or Reviewed to edit its independent comment branch.";
+        }
+      } catch (error) {
+        this.latestCommentsLayer = undefined;
+        for (const view of views) {
+          if ("unavailable" in view) continue;
+          view.commentsEnabled = true;
+          view.commentLayer = hash(String(error));
+          view.commentUnavailable =
+            error instanceof Error ? error.message : String(error);
+          view.squashUnavailable = `Managed comment branches are unsafe: ${view.commentUnavailable}`;
+          view.parent = null;
+          view.targets = [];
+        }
+      }
+    }
+    return views;
   }
   private version(view: ReviewView, operation: string): string {
     return hash(JSON.stringify([this.root, operation, view]));
@@ -1287,7 +1346,178 @@ export class ReviewService {
       return { oldFile, newFile };
     });
   }
-  /** File-embedded drafts are workspace edits, never history rewrites. */
+  getComments(input: {
+    version: string;
+    path: string;
+  }): Promise<ReviewCommentOverlay> {
+    return this.serial("file", async () => {
+      const state = await this.readState();
+      this.requireVersion(state, input.version);
+      if (!state.canEditComments || !this.latestCommentsLayer)
+        return {
+          comments: [],
+          unmapped:
+            this.lastValidCommentsLayer?.branches.flatMap(
+              (branch) =>
+                branch.files.get(input.path)?.cleanComments.map((comment) => ({
+                  id: comment.id,
+                  body: comment.body,
+                  reason:
+                    state.commentUnavailable ??
+                    "Comment branch validation failed.",
+                })) ?? [],
+            ) ?? [],
+          issues: state.commentUnavailable ? [state.commentUnavailable] : [],
+          editable: false,
+          reason:
+            state.commentUnavailable ??
+            "Comments are unavailable for this selection.",
+        };
+      const file = state.files.find((file) => file.path === input.path);
+      if (!file)
+        throw new ApiError(
+          400,
+          "INVALID_PATH",
+          "Choose a file in the selected code diff.",
+        );
+      if (file.unsupported || /^\+\+\+ \/dev\/null$/m.test(file.patch))
+        return {
+          comments: [],
+          unmapped: this.latestCommentsLayer.branches.flatMap(
+            (branch) =>
+              branch.files.get(input.path)?.cleanComments.map((comment) => ({
+                id: comment.id,
+                body: comment.body,
+                reason:
+                  file.unsupported ??
+                  "This file is absent on the selected code revision.",
+              })) ?? [],
+          ),
+          issues: [],
+          editable: false,
+          reason:
+            file.unsupported ?? "Deleted files cannot anchor new comments.",
+        };
+      const layer = this.latestCommentsLayer;
+      const selected = layer.branches.find(
+        (branch) => branch.code.changeId === state.source.changeId,
+      )!;
+      const clean = await readCommentsFile(
+        this.root,
+        selected.code.commitId,
+        input.path,
+        this.jjRunner,
+      );
+      const own = selected.files.get(input.path);
+      let parsed;
+      try {
+        parsed = projectCommentsFile(input.path, own?.annotated ?? clean);
+      } catch (error) {
+        await this.revalidateVersion(state.version);
+        return {
+          comments: own?.cleanComments ?? [],
+          unmapped: layer.branches
+            .filter((branch) => branch !== selected)
+            .flatMap(
+              (branch) =>
+                branch.files.get(input.path)?.cleanComments.map((comment) => ({
+                  id: comment.id,
+                  body: comment.body,
+                  reason: "The selected code file cannot be projected safely.",
+                })) ?? [],
+            ),
+          issues: [],
+          editable: false,
+          reason: error instanceof Error ? error.message : String(error),
+        };
+      }
+      const overlay: ReviewCommentOverlay = {
+        comments: [...(own?.cleanComments ?? [])],
+        unmapped: [],
+        issues: [],
+        editable: true,
+      };
+      // Parsing the clean file also validates lexical/newline eligibility.
+      if (!parsed.clean.equals(clean))
+        throw new ApiError(
+          409,
+          "COMMENTS_LAYER_INVALID",
+          "Clean code contains reserved annotations.",
+        );
+      const other = layer.branches.find((branch) => branch !== selected)!;
+      const otherFile = other.files.get(input.path);
+      if (otherFile) {
+        try {
+          const patch = (await this.files(layer.source.commitId)).find(
+            (file) => file.path === input.path,
+          )?.patch;
+          const sourceSelected =
+            selected.code.changeId === layer.source.changeId;
+          const mapping = unchangedCodeLines(
+            input.path,
+            (sourceSelected ? otherFile.clean : clean).toString("utf8"),
+            (sourceSelected ? clean : otherFile.clean).toString("utf8"),
+            patch,
+          );
+          const direction = sourceSelected
+            ? mapping
+            : new Map([...mapping].map(([a, b]) => [b, a]));
+          const sameCode = clean.equals(otherFile.clean);
+          const counts = (bytes: Buffer) => {
+            const result = new Map<string, number>();
+            for (const line of bytes.toString("utf8").split("\n"))
+              result.set(line, (result.get(line) ?? 0) + 1);
+            return result;
+          };
+          const selectedCounts = counts(clean);
+          const otherCounts = counts(otherFile.clean);
+          const otherLines = otherFile.clean.toString("utf8").split("\n");
+          for (const comment of otherFile.cleanComments) {
+            const first = direction.get(comment.startLine);
+            if (
+              first === undefined ||
+              (!sameCode &&
+                otherLines
+                  .slice(comment.startLine - 1, comment.endLine)
+                  .some(
+                    (line) =>
+                      otherCounts.get(line) !== 1 ||
+                      selectedCounts.get(line) !== 1,
+                  )) ||
+              Array.from(
+                { length: comment.endLine - comment.startLine + 1 },
+                (_, i) => direction.get(comment.startLine + i),
+              ).some((line, i) => line !== first + i)
+            )
+              overlay.unmapped.push({
+                id: comment.id,
+                body: comment.body,
+                reason:
+                  "This comment has changed or ambiguous anchors between Reviewed and Remaining.",
+              });
+            else
+              overlay.comments.push({
+                ...comment,
+                startLine: first,
+                endLine: first + comment.endLine - comment.startLine,
+              });
+          }
+        } catch {
+          overlay.unmapped.push(
+            ...otherFile.cleanComments.map((comment) => ({
+              id: comment.id,
+              body: comment.body,
+              reason:
+                "No exact unchanged mapping exists for this comment on the selected code revision.",
+            })),
+          );
+        }
+      }
+      await this.revalidateVersion(state.version);
+      return overlay;
+    });
+  }
+  /** Edit an independent jj comment revision; never write or move main @. */
   comment(input: ReviewCommentMutation): Promise<{ state: State }> {
     // Uses the existing file timing category and the same bounded serial queue.
     return this.serial("file", async () => {
@@ -1295,12 +1525,14 @@ export class ReviewService {
       this.assertNotPending();
       const { state, views } = await this.captureState();
       this.requireVersion(state, input.version);
-      if (!state.canEditComments)
+      if (!state.canEditComments || !this.latestCommentsLayer)
         throw new ApiError(
           409,
           "COMMENTS_UNAVAILABLE",
-          "Review comments can only edit the live, mutable, conflict-free working-copy change (@). Historical revisions are read-only.",
+          state.commentUnavailable ??
+            "Review comments require managed PR comment branches.",
         );
+      const beforeLayer = this.latestCommentsLayer;
       const file = state.files.find((file) => file.path === input.path);
       if (!file)
         throw new ApiError(
@@ -1308,55 +1540,212 @@ export class ReviewService {
           "INVALID_PATH",
           "Choose a file in the current diff.",
         );
-      if (file.unsupported)
+      if (file.unsupported && input.action === "add")
         throw new ApiError(422, "COMMENTS_UNAVAILABLE", file.unsupported);
-      if (/^\+\+\+ \/dev\/null$/m.test(file.patch))
+      if (input.action === "add" && /^\+\+\+ \/dev\/null$/m.test(file.patch))
         throw new ApiError(
           422,
           "COMMENTS_UNAVAILABLE",
           "Deleted files cannot contain review drafts.",
         );
-      const pinned = await this.jjRunner(this.root, [
-        "file",
-        "show",
-        "-r",
-        state.source.commitId,
-        "--ignore-working-copy",
-        "--",
-        `root-file:${JSON.stringify(file.path)}`,
-      ]);
-      const bytes = pinned.stdoutBytes ?? Buffer.from(pinned.stdout, "utf8");
-      const captured = await captureReviewFile(this.root, input.path);
-      if (!captured.bytes.equals(bytes))
+      let branch = beforeLayer.branches.find(
+        (branch) => branch.code.changeId === state.source.changeId,
+      )!;
+      if (input.action !== "add") {
+        const owners = beforeLayer.branches.filter((branch) =>
+          branch.files
+            .get(input.path)
+            ?.comments.some((comment) => comment.id === input.id),
+        );
+        if (owners.length !== 1)
+          throw new ApiError(
+            400,
+            "INVALID_COMMENT",
+            "Choose one unique UUID from this file's comment branches.",
+          );
+        branch = owners[0];
+      }
+      const clean = await readCommentsFile(
+        this.root,
+        branch.code.commitId,
+        input.path,
+        this.jjRunner,
+      );
+      const bytes =
+        branch.files.get(input.path)?.annotated ??
+        (await readCommentsFile(
+          this.root,
+          branch.comments.commitId,
+          input.path,
+          this.jjRunner,
+        ));
+      const projected = projectCommentsFile(input.path, bytes);
+      if (!projected.clean.equals(clean))
         throw new ApiError(
           409,
-          "STALE_STATE",
-          "The workspace file differs from the exact pinned source bytes. Refresh before editing comments.",
+          "COMMENTS_LAYER_INVALID",
+          "The comment branch differs from its clean code beyond annotations.",
         );
-      const result = mutateReviewComments(input.path, bytes, input);
-      await this.validateViews(views, state.operation);
-      // Even a failed write attempt must not leave old history authorizations.
-      this.history.undo = undefined;
-      this.plans.clear();
-      const replaced = await replaceReviewFile(captured, result);
-      try {
-        const after = await this.readState();
-        const verified = await captureReviewFile(this.root, input.path);
+      let mutation = input;
+      if (input.action === "add") {
+        const removed = new Set(
+          projected.comments.flatMap((comment) => comment.markerLines),
+        );
+        const physical = bytes.toString("utf8").split("\n");
+        const codeLines = physical
+          .map((_, index) => index + 1)
+          .filter((line) => !removed.has(line));
+        const end = input.endLine ?? input.line;
         if (
-          !reviewFileUnchanged(replaced, verified) ||
-          !after.canEditComments ||
-          after.source.changeId !== state.source.changeId
+          !codeLines[input.line - 1] ||
+          !codeLines[end - 1] ||
+          end < input.line
         )
-          throw new Error(
-            "Workspace or selected source changed after writing.",
+          throw new ApiError(
+            400,
+            "INVALID_LINE",
+            "Choose clean source lines inside this code revision.",
           );
-        return { state: this.publishWatchState(after) };
-      } catch {
+        mutation = {
+          ...input,
+          line: codeLines[input.line - 1],
+          endLine: codeLines[end - 1],
+        };
+      }
+      const result = mutateReviewComments(input.path, bytes, mutation);
+      if (bytes.equals(result)) return { state };
+      if (!projectCommentsFile(input.path, result).clean.equals(clean))
         throw new ApiError(
+          422,
+          "COMMENTS_LAYER_INVALID",
+          "The requested annotation would change clean code.",
+        );
+      await this.validateViews(views, state.operation);
+      this.history = {
+        pending: {
+          beforeOperation: state.operation,
+          sourceCommit: branch.comments.commitId,
+          sourceChangeId: branch.comments.changeId,
+          targetCommit: branch.code.commitId,
+          targetChangeId: branch.code.changeId,
+          kind: "comment",
+        },
+      };
+      this.plans.clear();
+      let output;
+      try {
+        output = await withDiffEditor(
+          {
+            version: 1,
+            repository: this.root,
+            files: [
+              {
+                path: input.path,
+                base: null,
+                source: bytes.toString("base64"),
+                result: result.toString("base64"),
+              },
+            ],
+          },
+          (config) =>
+            this.toolRunner(
+              "jj",
+              [
+                "diffedit",
+                "--from",
+                "root()",
+                "--to",
+                `commit_id("${branch.comments.commitId}")`,
+                "--tool",
+                "jj-stamp",
+                "--ignore-working-copy",
+                ...config,
+                "--",
+                `root-file:${JSON.stringify(input.path)}`,
+              ],
+              this.root,
+            ),
+        );
+      } catch (error) {
+        // Even a nonzero exit without a recorded operation is not replayable.
+        throw this.pendingError(
           500,
           "PARTIAL_FAILURE",
-          "The review comment file was already changed, but refreshing or validating the updated state failed. Inspect the file and refresh; do not automatically retry. No rollback was attempted.",
-          { fileMayHaveChanged: true },
+          "The comment revision may already have changed. Inspect jj op log and the comment branch; no automatic retry or rollback was attempted.",
+          {
+            output:
+              error instanceof ProcessError
+                ? processFailureOutput(error)
+                : String(error),
+            fileMayHaveChanged: true,
+          },
+        );
+      }
+      let completed: Operation;
+      try {
+        completed = await this.operation();
+        if (
+          !same(completed.parents, [state.operation]) ||
+          completed.description !== `edit commit ${branch.comments.commitId}` ||
+          !completed.attributes.includes(
+            `--to ${formatCommand("x", [`commit_id("${branch.comments.commitId}")`]).slice(2)} `,
+          ) ||
+          !completed.attributes.includes("--tool jj-stamp ")
+        )
+          throw new Error("Comment operation attribution failed.");
+      } catch (error) {
+        throw this.pendingError(
+          409,
+          "HISTORY_CHANGED",
+          "The comment tool completed, but its history operation could not be attributed. The revision may already be changed; no retry or rollback was attempted.",
+          { output: processOutput(output), cause: String(error) },
+        );
+      }
+      this.history = {};
+      try {
+        const after = await this.readState();
+        const afterLayer = this.latestCommentsLayer;
+        if (
+          !afterLayer ||
+          after.operation !== completed.id ||
+          after.source.changeId !== state.source.changeId ||
+          afterLayer.source.commitId !== beforeLayer.source.commitId ||
+          afterLayer.reviewed.commitId !== beforeLayer.reviewed.commitId ||
+          beforeLayer.branches.some(
+            (before) =>
+              before !== branch &&
+              afterLayer.branches.find(
+                (next) => next.comments.changeId === before.comments.changeId,
+              )?.comments.commitId !== before.comments.commitId,
+          )
+        )
+          throw new Error(
+            "Code, working copy or another comment branch changed.",
+          );
+        const saved = await readCommentsFile(
+          this.root,
+          afterLayer.branches.find(
+            (next) => next.comments.changeId === branch.comments.changeId,
+          )!.comments.commitId,
+          input.path,
+          this.jjRunner,
+        );
+        if (!saved.equals(result))
+          throw new Error(
+            "The saved comment file differs from the exact requested result.",
+          );
+        await this.revalidateVersion(after.version);
+        return { state: this.publishWatchState(after) };
+      } catch (error) {
+        throw new ApiError(
+          409,
+          "HISTORY_CHANGED",
+          "The comment edit completed and was attributed, but validating its updated view failed. Inspect the comment branch and refresh; do not retry the completed edit. No rollback was attempted.",
+          {
+            fileMayHaveChanged: true,
+            completedOperation: completed.id,
+            cause: String(error),
+          },
         );
       }
     });
@@ -1688,6 +2077,7 @@ export class ReviewService {
     plan: Plan,
     before: State,
   ): Promise<{ state: State; output: string; warning?: string }> {
+    const commentsBefore = this.latestCommentsLayer;
     // Compare change identities: rebasing an existing conflict changes its
     // commit ID, but does not mean this squash introduced that conflict.
     const existingConflicts = await this.conflictChangeIds();
@@ -1767,6 +2157,15 @@ export class ReviewService {
         warning =
           "The squash created a conflict. Undo this operation or resolve the affected revision with jj before editing it.";
       after = await this.readState();
+      if (
+        this.comments &&
+        (!this.latestCommentsLayer ||
+          this.commentInventory(commentsBefore) !==
+            this.commentInventory(this.latestCommentsLayer))
+      )
+        throw new Error(
+          "Comment branches conflicted or changed annotations during squash; their raw draft revisions were retained.",
+        );
       if (after.operation !== afterOp.id)
         throw new Error("Another operation followed the squash.");
     } catch (error) {
@@ -1811,6 +2210,23 @@ export class ReviewService {
       operation.attributes.includes("--tool jj-stamp ")
     );
   }
+  private commentInventory(layer: ValidatedCommentsLayer | undefined): string {
+    return JSON.stringify(
+      layer?.branches
+        .flatMap((branch) =>
+          [...branch.files.values()].flatMap((file) =>
+            file.cleanComments.map((comment) => [
+              branch.code.changeId,
+              file.path,
+              comment.id,
+              comment.body,
+            ]),
+          ),
+        )
+        .sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b))) ??
+        [],
+    );
+  }
   private async failedMutation(
     error: unknown,
     beforeOperation: string,
@@ -1844,6 +2260,7 @@ export class ReviewService {
   undo(version: string): Promise<{ state: State; output: string }> {
     return this.serial("undo", async () => {
       const state = await this.readState();
+      const commentsBefore = this.latestCommentsLayer;
       this.requireVersion(state, version);
       this.assertNotPending();
       const undo = this.history.undo;
@@ -1896,6 +2313,30 @@ export class ReviewService {
           { currentOperation: after.id },
         );
       this.history = {};
+      if (this.comments) {
+        try {
+          const refreshed = await this.readState();
+          if (
+            !this.latestCommentsLayer ||
+            this.commentInventory(commentsBefore) !==
+              this.commentInventory(this.latestCommentsLayer)
+          )
+            throw new Error(
+              "Comment branches changed or conflicted during undo.",
+            );
+          return {
+            state: this.publishWatchState(refreshed),
+            output: processOutput(result).trim(),
+          };
+        } catch (error) {
+          throw new ApiError(
+            409,
+            "HISTORY_CHANGED",
+            "Undo completed, but comment branch validation failed. Inspect the retained comment revisions and refresh; no retry or rollback was attempted.",
+            { completedOperation: after.id, cause: String(error) },
+          );
+        }
+      }
       return {
         state: this.publishWatchState(await this.readState()),
         output: processOutput(result).trim(),

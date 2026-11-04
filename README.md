@@ -37,13 +37,87 @@ Or run without installing, from this checkout:
 nix run . -- --repository /path/to/workspace
 ```
 
-The flake bundles the browser assets, Node.js, `jj`, and jj-stamp's native diff-editor callback. `flake.lock` pins the Nix inputs. The launcher pins its absolute `jj` executable via `JJ_STAMP_JJ`; callbacks use the same Node.js runtime as the server. There is no Rust/Cargo or GNU `patch` dependency in this branch.
+The flake bundles the browser assets, Node.js, `jj`, Git, `gh`, and jj-stamp's native diff-editor callback. `flake.lock` pins the Nix inputs. The launcher pins its absolute `jj` executable via `JJ_STAMP_JJ`; callbacks use the same Node.js runtime as the server. There is no Rust/Cargo or GNU `patch` dependency in this branch.
 
 No npm installation or runtime download of assets or bundled tools is needed. Builds may need network access. Your browser and any external helpers configured in jj (for example, signing tools) are not bundled. Linux browser launch uses bundled `xdg-open`; macOS uses system `open`.
 
 The server binds **only to `127.0.0.1`**, uses port **8000** when available (otherwise a free port), and opens the URL in your browser by default. Run `jj-stamp --no-open` to print the URL without launching a browser; the server still starts normally. Keep the terminal running. **Ctrl-C** stops accepting requests and waits for accepted operations to finish. A failed browser launch leaves the server running and prints the URL. An explicit `--port` is never silently changed; use `--port 0` to always request a free port.
 
 The flake exposes a default package/app and development shell for x86_64/aarch64 Linux and macOS. Linux and Apple Silicon use the locked `nixpkgs-unstable`; Intel macOS uses a separate locked 26.05 Darwin input. Builds and installed-package smoke tests are exercised on x86_64 Linux; other platforms are evaluated, not execution-tested here.
+
+## PR reviews and comments (experimental)
+
+From a checkout of the GitHub repository, run jj-stamp and click **Open PR…**,
+or open a PR directly:
+
+```sh
+gh auth login
+jj-stamp --pr 42
+jj-stamp --pr https://github.com/OWNER/REPO/pull/42
+
+# Try this development branch without installing:
+nix run 'git+ssh://git@github.com/ethanal/jj-stamp?ref=feature/pr-review-local' --refresh -- --pr 42
+```
+
+The full-screen selector lists the first 50 open PRs in the current repository,
+with title/author/number filtering and direct number/URL entry. This is an
+**all-open** list, not a review-requested filter. Only current-repository
+`github.com` PRs are supported. Ordinary startup and local refresh do not query
+GitHub; listing or explicitly opening a PR does.
+
+A PR opens in an isolated, managed jj repository, served by its own loopback
+server. The invoking checkout's files and history are not changed by opening the
+PR. Its menu can return you to the original workspace. The initial code stack is
+merge-base → **Reviewed** → **Remaining** (`@`), with Remaining's complete tree
+equal to the captured PR head. Squash/Undo/Clear, the file tree, diff controls,
+and jj graph remain available.
+
+### Independent COMMENTS branches
+
+Each partial code commit has a **comment-only child on an independent branch**.
+These children are not inserted between Reviewed and Remaining. Adding a comment
+rewrites its companion COMMENTS revision, not either code revision or the main
+working-copy file. The comment body is stored in that revision's source file,
+not in a separate JSON body database:
+
+```ts
+// JJ-STAMP(12345678-1234-4234-8234-123456789abc): Why these values?
+const low = 1;
+const high = 9;
+// JJ-STAMP(12345678-1234-4234-8234-123456789abc)
+```
+
+Select new-side code lines, click **Add comment**, and save. Cards can be edited
+or removed inline. Multiline bodies use adjacent `: body` marker lines with the
+same UUID; a bare matching marker after the code closes a range. The UI overlays
+cards on the clean code diff, so marker lines never become squash coordinates.
+**Commented code remains squashable.** Comments whose anchors cannot be mapped
+unambiguously are reported with their bodies, rather than silently relocated.
+When a file has been fully squashed out of Remaining, select Reviewed to see its
+code and comment overlays. The current viewer shows overlays only for files in
+the selected revision's diff; companion revisions retain all draft bodies.
+
+This first version enables comment editing only in managed PR reviews and only
+for supported regular `//` source files. Ambiguous lexical constructs (including
+template/raw strings, regex/division, JSX and multiline literals), malformed
+markers, unsupported file formats and deleted-side anchors fail closed. Raw
+markers already present in ordinary code revisions are read-only and still
+block squashing that file; this does not apply to independent branch overlays.
+To inspect stored drafts, select their COMMENTS revision in the graph or use
+`jj file show -r <comments-change-id> <path>` in the managed repository.
+
+Reviews live under `$XDG_DATA_HOME/jj-stamp/pr-reviews/` (by default
+`~/.local/share/jj-stamp/pr-reviews/`), keyed by repository and PR. Metadata records
+the imported identities and companion change IDs; source files in jj history
+remain authoritative for bodies. Clean shutdown releases the review lock.
+Reopening resumes local progress without fetching or importing newer PR changes.
+After a crash, inspect the managed repository's `jj op log` and files before
+manually removing the `active.lock` identified by the error. Missing, corrupt,
+incompatible, or partially initialized archives are never silently reset.
+
+**Not implemented yet:** remote-update detection/import, consolidation into a
+shared COMMENTS commit before submission, GitHub submission, discussion-thread
+import, or dismissal. Saving a comment never sends anything to GitHub.
 
 ## Review
 
@@ -92,7 +166,16 @@ This is a **single-user local tool**, not a network service. Host and Origin che
 - If a queued job fails, unsent jobs are canceled and the actual repository is reloaded. Completed jobs are not rolled back. Failed mutations are never automatically retried.
 - Do not close the browser with queued work. An accepted request can finish after a disconnection, but unsent browser-local jobs are lost.
 
-The backend stores **no durable application state on disk**. A native squash temporarily writes a private manifest containing the pinned input and selected output bytes; it is removed after success or failure. An abrupt process/VM crash can leave that private temporary directory behind; it is not a recovery journal and is never reused. Selected revision, preview tokens, undo information and recovery guards exist only in the running process. Existing `operations-*.json` files from older versions are ignored and are not deleted automatically. Browser appearance preferences remain in `localStorage`.
+Ordinary local reviews store **no durable application bookkeeping on disk**.
+Managed PR reviews additionally persist the identity metadata and lock described
+above; comment bodies persist in companion jj revisions. Native squash and
+comment edits temporarily write private manifests containing pinned input and
+output bytes, removed after the invocation. An abrupt process/VM crash can leave
+these private temporary directories behind; they are not recovery journals and
+are never reused. Selected revision, preview tokens, undo information and
+recovery guards exist only in the running process. Existing `operations-*.json`
+files from older versions are ignored and are not deleted automatically.
+Browser appearance preferences remain in `localStorage`.
 
 An ambiguous history operation blocks further mutations and revision switching in that process. Inspect `jj op log` and the current diff before restarting; restarting clears only app bookkeeping, never rolls back history or retries a squash. Undo is available only for operations performed by the current process. Do not blindly repeat a selection after an uncertain result. See [backend notes](server/README.md).
 
@@ -105,7 +188,11 @@ npm run build
 npm start -- --repository /path/to/workspace --no-open
 ```
 
-Without Nix, provide Node.js 24+ and `jj` on `PATH`. No hunk tool, Rust toolchain, or external `patch` is needed. Unpack/install the complete `dist/` directory: the bundled CLI must keep its sibling `diff-editor.cjs` and browser assets. `JJ_STAMP_JJ`, when set, selects the same absolute jj executable for reads, mutations and diagnostics.
+Without Nix, provide Node.js 24+ and `jj` on `PATH`; PR discovery/import additionally
+requires Git and authenticated `gh`. No hunk tool, Rust toolchain, or external
+`patch` is needed. Unpack/install the complete `dist/` directory: the bundled CLI
+must keep its sibling `diff-editor.cjs` and browser assets. `JJ_STAMP_JJ`, when set,
+selects the same absolute jj executable for reads, mutations and diagnostics.
 
 Native selection currently supports regular, non-executable, lossless UTF-8 text with final newlines (including CRLF). Existing conservative restrictions on binary files, rename/copy/mode changes, merges, and ambiguous paths/formats remain. File snapshots are verified as bytes before applying a selection; there is no context search, offset adjustment, or fuzz.
 `npm run build` typechecks and produces **`dist/cli.cjs`**, **`dist/diff-editor.cjs`**, and **`dist/client/`**. The CLI is bundled, so it does not need `node_modules` at runtime. `npm run dev -- -R /path/to/workspace` rebuilds and runs it; restart after source edits.
@@ -130,8 +217,8 @@ Tests use isolated real jj repositories. They cover exact line squashes, optimis
 ### PR-review UI prototype (option A)
 
 This is an opt-in React prototype of the toolbar PR menu and full-screen selector,
-not an implementation of GitHub reviews. Normal jj-stamp is unchanged; the
-prototype and its sample data load only when the page URL includes
+not the real PR implementation described above. The prototype and its sample
+data load instead of the real PR toolbar only when the page URL includes
 `?pr-prototype=1`.
 
 ```sh
@@ -155,10 +242,9 @@ supports search, review-requested/local-review filters, PR details, and validate
 sample number/URL entry. Preview selection **does not switch the displayed jj
 workspace or diff**. Refresh/submission/dismissal flows operate on in-memory demo
 state only; they never call GitHub, fetch revisions, or create managed workspaces.
-Reloading clears that state. Inline anchoring, `gh` access, local JSON persistence,
-and managed review history are subsequent implementation steps. The history and
-submission decisions still open in `design/pr-review.md` are not resolved by this
-prototype.
+Reloading clears that state. Its simulated capabilities are not claims about the
+real implementation. Future refresh, consolidation, and submission decisions
+remain documented in `design/pr-review.md`.
 
 ## Responsive browsing
 

@@ -17,7 +17,7 @@ import type {
   PrOpenResult,
   PrRepository,
 } from "../src/pr-review-types.ts";
-import { parseReviewComments } from "../src/review-comments.ts";
+import { validateCommentsLayer } from "./comments-layer.ts";
 
 export interface PrHandlers {
   context(): PrContext;
@@ -180,6 +180,11 @@ export class PrReviewManager implements PrHandlers {
         const service = new ReviewService({
           repoPath: archive.workspace,
           revision: `change_id("${metadata.sourceChangeId}")`,
+          comments: {
+            sourceChangeId: metadata.sourceChangeId,
+            reviewedChangeId: metadata.reviewedChangeId,
+            branches: metadata.branches,
+          },
           onTiming: this.options.onTiming,
         });
         await service.getState();
@@ -345,14 +350,58 @@ export class PrReviewManager implements PrHandlers {
       ],
       true,
     );
+    const branches = [];
+    for (const [codeChangeId, label] of [
+      [reviewedChangeId, "Reviewed"],
+      [sourceChangeId, "Remaining"],
+    ] as const) {
+      const description = `COMMENTS ${label} PR #${number}`;
+      await this.jj(workspace, [
+        "new",
+        "--no-edit",
+        "-r",
+        `change_id("${codeChangeId}")`,
+        "-m",
+        description,
+      ]);
+      const children = await this.jj(
+        workspace,
+        [
+          "log",
+          "--ignore-working-copy",
+          "--no-graph",
+          "-r",
+          `children(change_id("${codeChangeId}"))`,
+          "-T",
+          'json(change_id) ++ "\\t" ++ json(description.first_line()) ++ "\\n"',
+        ],
+        true,
+      );
+      const matches = children
+        .split("\n")
+        .map((line) =>
+          line.split("\t").map((field) => JSON.parse(field) as unknown),
+        )
+        .filter((row) => row.length === 2 && row[1] === description);
+      if (
+        matches.length !== 1 ||
+        typeof matches[0]![0] !== "string" ||
+        !/^[k-z]{32}$/.test(matches[0]![0])
+      )
+        throw new Error(
+          "Could not identify the new independent COMMENTS branch.",
+        );
+      branches.push({ codeChangeId, commentsChangeId: matches[0]![0] });
+    }
     return {
-      schema: 1,
+      schema: 2,
       repository,
       pullRequest,
       mergeBaseOid,
       headTreeOid,
       sourceChangeId,
       reviewedChangeId,
+      branches,
     };
   }
 
@@ -395,6 +444,7 @@ export class PrReviewManager implements PrHandlers {
     };
     const source = await inspect(metadata.sourceChangeId);
     const reviewed = await inspect(metadata.reviewedChangeId);
+
     const workingCopy = await this.jj(
       workspace,
       [
@@ -425,126 +475,62 @@ export class PrReviewManager implements PrHandlers {
       workspace,
       true,
     );
-    if (tree !== metadata.headTreeOid) {
-      if (!allowComments)
+    if (tree !== metadata.headTreeOid)
+      throw new Error(
+        "Managed Remaining tree differs from the exact pinned PR head. The archive was not reset.",
+      );
+    const expectedCode = new Map([
+      [metadata.sourceChangeId, source],
+      [metadata.reviewedChangeId, reviewed],
+    ]);
+    const commentsIds = new Set<string>();
+    for (const branch of metadata.branches) {
+      const code = expectedCode.get(branch.codeChangeId);
+      if (
+        !code ||
+        commentsIds.has(branch.commentsChangeId) ||
+        [metadata.sourceChangeId, metadata.reviewedChangeId].includes(
+          branch.commentsChangeId,
+        )
+      )
         throw new Error(
-          "Managed review initial tree differs from the pinned PR head.",
+          "Managed COMMENTS branch identities are inconsistent. The archive was not reset.",
         );
-      await this.validateCommentOnlyTree(
-        workspace,
-        metadata.headTreeOid,
-        oid.parse(tree),
-      );
-    }
-  }
-
-  private async validateCommentOnlyTree(
-    workspace: string,
-    headTree: string,
-    sourceTree: string,
-  ) {
-    const changed = () =>
-      new Error(
-        "Managed review total tree changed beyond recognized review annotations. The archive was not reset.",
-      );
-    // Never parse a patch (filenames/content can resemble patch headers). Raw
-    // NUL-delimited object identities let unchanged binary files stay opaque.
-    const raw = await this.runner(
-      "git",
-      [
-        "diff",
-        "--raw",
-        "-z",
-        "--no-renames",
-        "--no-ext-diff",
-        "--no-textconv",
-        "--abbrev=40",
-        headTree,
-        sourceTree,
-        "--",
-      ],
-      workspace,
-      { maxOutputBytes: 1024 * 1024 },
-    );
-    const bytes = raw.stdoutBytes ?? Buffer.from(raw.stdout, "utf8");
-    let entries: string[];
-    try {
-      entries = new TextDecoder("utf-8", { fatal: true })
-        .decode(bytes)
-        .split("\0");
-    } catch {
-      throw changed();
-    }
-    if (
-      entries.pop() !== "" ||
-      entries.length === 0 ||
-      entries.length > 512 ||
-      entries.length % 2
-    )
-      throw changed();
-    let totalBytes = 0;
-    for (let index = 0; index < entries.length; index += 2) {
-      const match =
-        /^:(100644|100755) \1 ([0-9a-f]{40}) ([0-9a-f]{40}) M$/.exec(
-          entries[index]!,
+      commentsIds.add(branch.commentsChangeId);
+      expectedCode.delete(branch.codeChangeId);
+      const comments = await inspect(branch.commentsChangeId);
+      if (comments.parents !== code.commit)
+        throw new Error(
+          "Managed COMMENTS branch parent changed. The archive was not reset.",
         );
-      const file = entries[index + 1]!;
-      if (
-        !match ||
-        file === "" ||
-        file.startsWith("/") ||
-        file
-          .split("/")
-          .some(
-            (part) =>
-              !part ||
-              part === "." ||
-              part === ".." ||
-              part === ".jj" ||
-              part === ".git",
-          )
-      )
-        throw changed();
-      const readBlob = async (blob: string) => {
-        const result = await this.runner(
+      const codeTree = oid.parse(
+        await this.command(
           "git",
-          ["cat-file", "blob", blob],
+          ["rev-parse", `${code.commit}^{tree}`],
           workspace,
-          { maxOutputBytes: 4 * 1024 * 1024 },
-        );
-        const bytes = result.stdoutBytes ?? Buffer.from(result.stdout, "utf8");
-        totalBytes += bytes.length;
-        if (totalBytes > 16 * 1024 * 1024) throw changed();
-        return bytes;
-      };
-      const head = await readBlob(match[2]!);
-      const source = await readBlob(match[3]!);
-      const text = source.toString("utf8");
-      if (
-        !Buffer.from(text, "utf8").equals(source) ||
-        text.includes("\0") ||
-        text.startsWith("\ufeff") ||
-        !text.endsWith("\n")
-      )
-        throw changed();
-      const parsed = parseReviewComments(file, text);
-      if (
-        !parsed.editable ||
-        !parsed.lexicalSafe ||
-        parsed.issues.length ||
-        !parsed.comments.length
-      )
-        throw changed();
-      const markers = new Set(
-        parsed.comments.flatMap((comment) => comment.markerLines),
+          true,
+        ),
       );
-      const lines = text.match(/[^\n]*\n/g) ?? [];
-      const stripped = Buffer.from(
-        lines.filter((_line, index) => !markers.has(index + 1)).join(""),
-        "utf8",
+      const commentsTree = oid.parse(
+        await this.command(
+          "git",
+          ["rev-parse", `${comments.commit}^{tree}`],
+          workspace,
+          true,
+        ),
       );
-      if (!stripped.equals(head)) throw changed();
+      if (!allowComments && commentsTree !== codeTree)
+        throw new Error("Managed initial COMMENTS branch is not empty.");
     }
+    if (expectedCode.size)
+      throw new Error(
+        "Managed COMMENTS branch coverage is incomplete. The archive was not reset.",
+      );
+    await validateCommentsLayer(workspace, {
+      sourceChangeId: metadata.sourceChangeId,
+      reviewedChangeId: metadata.reviewedChangeId,
+      branches: metadata.branches,
+    });
   }
 
   close(): Promise<void> {

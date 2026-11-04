@@ -46,7 +46,11 @@ import { colorSchemes, type ColorScheme } from "./preferences";
 import { moveVimLine, vimLines, type VimCursorRequest } from "./vim-navigation";
 import { SplitDiffResize } from "./SplitDiffLayout";
 import { remapVimCursor } from "./vim-refresh";
-import { commentSyntax, containsReviewMarkers } from "./review-comments";
+import {
+  commentSyntax,
+  containsReviewMarkers,
+  type ReviewCommentOverlay,
+} from "./review-comments";
 import {
   InlineCommentEditor,
   InlineReviewComment,
@@ -325,6 +329,9 @@ export function CodeDiff({
   onComment,
   commentEditingEnabled = false,
   commentBusy = false,
+  loadComments,
+  commentIdentity,
+  commentUnavailable,
   onCommentMarkers,
 }: {
   file: DiffFile;
@@ -399,19 +406,42 @@ export function CodeDiff({
   const commentFile =
     commentFileState?.key === fileLoadKey ? commentFileState.file : null;
   const [commentLoadError, setCommentLoadError] = useState("");
+  const overlayKey = `${contentIdentity}\u0000${commentIdentity ?? version}\u0000${file.path}`;
+  const [overlayState, setOverlayState] = useState<{
+    key: string;
+    value: ReviewCommentOverlay;
+  } | null>(null);
+  const overlay =
+    loadComments && overlayState?.key === overlayKey
+      ? overlayState.value
+      : null;
+  const hasOverlayLoader = !!loadComments;
+  const [overlayError, setOverlayError] = useState<{
+    key: string;
+    message: string;
+  } | null>(null);
+  const overlayLoader = useRef(loadComments);
+  overlayLoader.current = loadComments;
+  const overlayRequest = useRef<{
+    key: string;
+    promise: Promise<ReviewCommentOverlay>;
+  } | null>(null);
   const [compose, setCompose] = useState<{
     key: string;
     line: number;
     endLine: number;
   } | null>(null);
   const hasCommentMarkers =
-    containsReviewMarkers(file.patch) || !!commentFile?.hasMarkers;
+    containsReviewMarkers(file.patch.replace(/^[ +-]/gm, "")) ||
+    !!commentFile?.hasMarkers;
   const commentEditable =
     commentEditingEnabled &&
     !readOnly &&
     !!onComment &&
-    !commentFile?.old.issues.length &&
-    !!commentFile?.new.editable;
+    !!loadComments &&
+    !!overlay?.editable &&
+    !overlay.issues.length &&
+    !hasCommentMarkers;
   const selectedCommentRange = commentRange(
     range,
     commentFile?.newMarkerLines ?? new Set(),
@@ -426,7 +456,7 @@ export function CodeDiff({
           annotations.push({
             side: "additions",
             lineNumber: comment.startLine,
-            metadata: { kind: "comment", comment, historical: false },
+            metadata: { kind: "raw", comment, historical: false },
           });
       if (!commentFile.old.issues.length)
         for (const comment of commentFile.old.comments) {
@@ -442,10 +472,16 @@ export function CodeDiff({
           annotations.push({
             side: "deletions",
             lineNumber: comment.startLine,
-            metadata: { kind: "comment", comment, historical: true },
+            metadata: { kind: "raw", comment, historical: true },
           });
         }
     }
+    for (const comment of overlay?.comments ?? [])
+      annotations.push({
+        side: "additions",
+        lineNumber: comment.startLine,
+        metadata: { kind: "overlay", comment },
+      });
     if (compose?.key === fileLoadKey && commentEditable)
       annotations.push({
         side: "additions",
@@ -453,7 +489,7 @@ export function CodeDiff({
         metadata: { kind: "compose", ...compose },
       });
     return annotations;
-  }, [commentFile, compose, fileLoadKey, style, commentEditable]);
+  }, [commentFile, compose, fileLoadKey, style, commentEditable, overlay]);
   const loadedContexts = useRef<{
     key: string;
     promise: Promise<Record<string, HunkContext>>;
@@ -817,6 +853,37 @@ export function CodeDiff({
     )
       onSelection(range, {});
   }, [hasCommentMarkers, selections, onSelection, range]);
+  useEffect(() => {
+    const loader = overlayLoader.current;
+    if (!loader || contextDisabled) return;
+    let active = true;
+    let request = overlayRequest.current;
+    if (request?.key !== overlayKey) {
+      const promise = Promise.resolve().then(() => loader(file.path, version));
+      request = { key: overlayKey, promise };
+      overlayRequest.current = request;
+    }
+    void request.promise
+      .then((value) => {
+        if (active) {
+          setOverlayState({ key: overlayKey, value });
+          setOverlayError(null);
+        }
+      })
+      .catch((error) => {
+        if (overlayRequest.current === request) overlayRequest.current = null;
+        if (active)
+          setOverlayError({
+            key: overlayKey,
+            message: error instanceof Error ? error.message : String(error),
+          });
+      });
+    return () => {
+      active = false;
+    };
+    // The overlay has its own live identity. Callback/version changes alone
+    // must not invalidate immutable file bytes or reset the diff renderer.
+  }, [overlayKey, hasOverlayLoader, contextDisabled]);
   useEffect(() => {
     if (contextDisabled || !root.current || !supportsHunkContext(file.path))
       return;
@@ -1569,6 +1636,17 @@ export function CodeDiff({
       paint,
     ],
   );
+  const editComment = async (id: string, body: string) => {
+    if (!onComment || !commentEditable)
+      throw new Error("Comment editing is unavailable.");
+    await onComment({ version, path: file.path, action: "edit", id, body });
+  };
+  const removeComment = async (id: string) => {
+    if (!onComment || !commentEditable)
+      throw new Error("Comment editing is unavailable.");
+    await onComment({ version, path: file.path, action: "remove", id });
+  };
+  const focusDiff = () => root.current?.focus({ preventScroll: true });
   return (
     <div
       className="code-surface"
@@ -1634,6 +1712,16 @@ export function CodeDiff({
           Review comments could not be loaded: {commentLoadError}
         </div>
       )}
+      {overlayError?.key === overlayKey && (
+        <div className="inline-comment-notice" role="alert">
+          COMMENTS revision could not be loaded: {overlayError.message}
+        </div>
+      )}
+      {!!overlay?.issues.length && (
+        <div className="inline-comment-notice" role="alert">
+          COMMENTS revision needs attention. {overlay.issues.join(" ")}
+        </div>
+      )}
       {commentFile &&
         (commentFile.old.issues.length > 0 ||
           commentFile.new.issues.length > 0) && (
@@ -1667,22 +1755,37 @@ export function CodeDiff({
                 Add comment
               </button>
               <span className="inline-comment-notice">
-                Select new-side code lines to comment. Comments are saved in
-                this file, not sent to GitHub.
+                Select new-side code lines to comment. Source annotations are
+                stored in an independent COMMENTS revision, not the code
+                revision or live workspace. Nothing is sent to GitHub.
               </span>
             </>
           ) : (
             <span className="inline-comment-notice">
-              {!commentFile
-                ? "Loading file-backed review comments…"
-                : !commentFile.new.editable
-                  ? commentFile.new.reason ||
-                    "Comment editing is unavailable for this file."
-                  : "Comments are read-only. Select a mutable working-copy (@) revision to edit."}
+              {commentUnavailable ||
+                (loadComments && !overlay
+                  ? "Loading independent COMMENTS revision…"
+                  : overlay?.reason ||
+                    (hasCommentMarkers
+                      ? "Source-marker comments are read-only."
+                      : "Comment editing requires a managed PR review with an independent COMMENTS revision."))}
             </span>
           )}
         </div>
       )}
+      {overlay?.unmapped.map((comment) => (
+        <InlineReviewComment
+          key={`${fileLoadKey}:unmapped:${comment.id}`}
+          comment={comment}
+          unmappedReason={comment.reason}
+          historical={false}
+          editable={commentEditable}
+          busy={commentBusy || disabled || contextDisabled}
+          onFocusDiff={focusDiff}
+          onEdit={(body) => editComment(comment.id, body)}
+          onRemove={() => removeComment(comment.id)}
+        />
+      ))}
       <StableDiffViewport patch={file.patch}>
         {/* A changed patch starts with contracted context. Mere theme, layout,
             version, and queue updates keep the expanded renderer intact. */}
@@ -1695,8 +1798,6 @@ export function CodeDiff({
             selectedLines={null}
             lineAnnotations={commentAnnotations}
             renderAnnotation={({ metadata }) => {
-              const focusDiff = () =>
-                root.current?.focus({ preventScroll: true });
               if (metadata.kind === "compose")
                 return (
                   <InlineCommentEditor
@@ -1729,33 +1830,24 @@ export function CodeDiff({
                 );
               return (
                 <InlineReviewComment
-                  key={`${fileLoadKey}:${metadata.historical}:${metadata.comment.id}`}
-                  comment={metadata.comment}
-                  historical={metadata.historical}
-                  editable={commentEditable}
+                  key={`${fileLoadKey}:${metadata.kind}:${metadata.comment.id}`}
+                  comment={
+                    metadata.kind === "raw"
+                      ? {
+                          id: metadata.comment.id,
+                          body: metadata.comment.body,
+                          startLine: metadata.comment.anchorLine,
+                          endLine: metadata.comment.endAnchorLine,
+                        }
+                      : metadata.comment
+                  }
+                  storage={metadata.kind === "raw" ? "raw" : "overlay"}
+                  historical={metadata.kind === "raw" && metadata.historical}
+                  editable={metadata.kind === "overlay" && commentEditable}
                   busy={commentBusy || disabled || contextDisabled}
                   onFocusDiff={focusDiff}
-                  onEdit={async (body) => {
-                    if (!onComment || !commentEditable || metadata.historical)
-                      throw new Error("Comment editing is unavailable.");
-                    await onComment({
-                      version,
-                      path: file.path,
-                      action: "edit",
-                      id: metadata.comment.id,
-                      body,
-                    });
-                  }}
-                  onRemove={async () => {
-                    if (!onComment || !commentEditable || metadata.historical)
-                      throw new Error("Comment editing is unavailable.");
-                    await onComment({
-                      version,
-                      path: file.path,
-                      action: "remove",
-                      id: metadata.comment.id,
-                    });
-                  }}
+                  onEdit={(body) => editComment(metadata.comment.id, body)}
+                  onRemove={() => removeComment(metadata.comment.id)}
                 />
               );
             }}

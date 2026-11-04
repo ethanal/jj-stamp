@@ -15,7 +15,11 @@ import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
 import { PrReviewManager } from "../server/pr-review.ts";
-import { parsePrInput, type PrRunner } from "../server/pr-review-github.ts";
+import {
+  parsePrInput,
+  summarySchema,
+  type PrRunner,
+} from "../server/pr-review-github.ts";
 import { run, jj } from "../server/process.ts";
 import type { PrReviewSummary } from "../src/pr-review-types.ts";
 import { startLocalServer } from "../server/http.ts";
@@ -171,16 +175,62 @@ test("strict PR inputs reject foreign URLs, shell text, ambiguity and noncanonic
     assert.throws(() => parsePrInput(input, repo), input);
 });
 
-test("file-backed comments survive managed restart and remain editable, without decoding untouched binaries", async () => {
+test("GitHub bot author logins remain supported as display-only values", () => {
+  for (const login of ["dependabot[bot]", "app/dependabot", "ordinary-user"])
+    assert.deepEqual(summarySchema.shape.author.parse({ login }), { login });
+  assert.throws(() =>
+    summarySchema.shape.author.parse({ login: "unsafe\nidentity" }),
+  );
+});
+
+test("independent comments branches survive annotating, squashing the same code, and managed restart", async () => {
   const f = await fixture();
   let manager = f.manager();
+  const headers = { "content-type": "application/json", "x-fold-request": "1" };
   try {
     const opened = await manager.open("#7");
     const state = await (await fetch(`${opened.url}api/state`)).json();
     assert.equal(state.canEditComments, true);
+    const archive = await f.archive();
+    assert.equal(archive.metadata.schema, 2);
+    assert.equal(archive.metadata.branches.length, 2);
+    const branch = archive.metadata.branches.find(
+      (branch: { codeChangeId: string }) =>
+        branch.codeChangeId === archive.metadata.sourceChangeId,
+    )!;
+    const reviewedBranch = archive.metadata.branches.find(
+      (branch: { codeChangeId: string }) =>
+        branch.codeChangeId === archive.metadata.reviewedChangeId,
+    )!;
+    const show = async (revision: string) =>
+      (
+        await jj(archive.workspace, [
+          "file",
+          "show",
+          "--ignore-working-copy",
+          "-r",
+          `change_id("${revision}")`,
+          "--",
+          'root-file:"review.ts"',
+        ])
+      ).stdout;
+    const commit = async (revision: string) =>
+      (
+        await jj(archive.workspace, [
+          "log",
+          "--ignore-working-copy",
+          "--no-graph",
+          "-r",
+          `change_id("${revision}")`,
+          "-T",
+          "commit_id",
+        ])
+      ).stdout;
+    const sourceBefore = await commit(archive.metadata.sourceChangeId);
+    const reviewedBefore = await commit(archive.metadata.reviewedChangeId);
     const response = await fetch(`${opened.url}api/comments`, {
       method: "POST",
-      headers: { "content-type": "application/json", "x-fold-request": "1" },
+      headers,
       body: JSON.stringify({
         action: "add",
         version: state.version,
@@ -192,46 +242,157 @@ test("file-backed comments survive managed restart and remain editable, without 
     const result = await response.json();
     assert.equal(response.status, 200, JSON.stringify(result));
     assert.equal(result.state.canEditComments, true);
-    const archive = await f.archive();
-    const annotated = await readFile(path.join(archive.workspace, "review.ts"));
-    assert.match(annotated.toString(), /Keep this draft/);
+    const annotated = await show(branch.commentsChangeId);
+    assert.match(annotated, /Keep this draft/);
+    assert.equal(
+      await readFile(path.join(archive.workspace, "review.ts"), "utf8"),
+      "head\n",
+    );
+    assert.equal(await show(archive.metadata.sourceChangeId), "head\n");
+    assert.equal(
+      await commit(archive.metadata.sourceChangeId),
+      sourceBefore,
+      "comment save must not rewrite the source code",
+    );
+    assert.equal(
+      await commit(archive.metadata.reviewedChangeId),
+      reviewedBefore,
+      "comment save must not rewrite Reviewed",
+    );
+    const overlayResponse = await fetch(`${opened.url}api/comments/file`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        version: result.state.version,
+        path: "review.ts",
+      }),
+    });
+    const overlay = await overlayResponse.json();
+    assert.equal(overlayResponse.status, 200, JSON.stringify(overlay));
+    assert.equal(overlay.comments[0].body, "Keep this draft\nAcross restarts");
+    const squash = await fetch(`${opened.url}api/squash-lines`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        version: result.state.version,
+        selections: result.state.files.flatMap(
+          (file: {
+            hunks: { id: string; rows: { index: number; raw: string }[] }[];
+          }) =>
+            file.hunks.map((hunk) => ({
+              id: hunk.id,
+              lines: hunk.rows
+                .filter((row) => /^[+-]/.test(row.raw))
+                .map((row) => row.index),
+            })),
+        ),
+      }),
+    });
+    const squashed = await squash.json();
+    assert.equal(squash.status, 200, JSON.stringify(squashed));
+    assert.equal(squashed.state.files.length, 0);
+    assert.notEqual(
+      await commit(archive.metadata.reviewedChangeId),
+      reviewedBefore,
+    );
+    assert.equal(await show(archive.metadata.reviewedChangeId), "head\n");
+    assert.equal(await show(archive.metadata.sourceChangeId), "head\n");
+    assert.equal(await show(branch.commentsChangeId), annotated);
+    // Reviewed has its own independent COMMENTS leaf, not an annotation commit
+    // inserted between the two clean code revisions.
+    const selectedReviewed = await fetch(`${opened.url}api/revision`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        version: squashed.state.version,
+        changeId: archive.metadata.reviewedChangeId,
+      }),
+    });
+    const selected = await selectedReviewed.json();
+    assert.equal(selectedReviewed.status, 200, JSON.stringify(selected));
+    assert.equal(selected.state.canEditComments, true);
+    const reviewedComment = await fetch(`${opened.url}api/comments`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        action: "add",
+        version: selected.state.version,
+        path: "review.ts",
+        line: 1,
+        body: "Reviewed branch draft",
+      }),
+    });
+    const savedReviewed = await reviewedComment.json();
+    assert.equal(reviewedComment.status, 200, JSON.stringify(savedReviewed));
+    const annotatedReviewed = await show(reviewedBranch.commentsChangeId);
+    assert.match(annotatedReviewed, /Reviewed branch draft/);
+    assert.equal(await show(branch.commentsChangeId), annotated);
+    assert.equal(await show(archive.metadata.sourceChangeId), "head\n");
+    assert.equal(await show(archive.metadata.reviewedChangeId), "head\n");
     await manager.close();
+    const beforeRestart = f.calls.length;
+    await writeFile(
+      f.data,
+      JSON.stringify({ ...f.summary, headRefOid: "a".repeat(40) }),
+    );
     manager = f.manager();
     const resumed = await manager.open("7");
     const resumedState = await (await fetch(`${resumed.url}api/state`)).json();
     assert.equal(resumedState.canEditComments, true);
-    assert.deepEqual(
-      await readFile(path.join(archive.workspace, "review.ts")),
-      annotated,
+    assert.equal(resumedState.source.changeId, archive.metadata.sourceChangeId);
+    assert.equal(resumedState.files.length, 0);
+    assert.equal(await show(branch.commentsChangeId), annotated);
+    assert.equal(
+      await show(reviewedBranch.commentsChangeId),
+      annotatedReviewed,
+    );
+    assert.equal(
+      await readFile(path.join(archive.workspace, "review.ts"), "utf8"),
+      "head\n",
+    );
+    assert.equal(
+      (
+        await jj(archive.workspace, [
+          "log",
+          "--ignore-working-copy",
+          "--no-graph",
+          "-r",
+          "@",
+          "-T",
+          "change_id",
+        ])
+      ).stdout,
+      archive.metadata.sourceChangeId,
     );
     assert.deepEqual(
       await readFile(path.join(archive.workspace, "opaque.bin")),
       Buffer.from([0, 255, 128, 1]),
     );
-    const file = await fetch(`${resumed.url}api/file`, {
-      method: "POST",
-      headers: { "content-type": "application/json", "x-fold-request": "1" },
-      body: JSON.stringify({
-        version: resumedState.version,
-        path: "review.ts",
-      }),
-    });
-    assert.match((await file.json()).newFile.contents, /Keep this draft/);
-    // Recognized markers are not permission to retain arbitrary code changes.
+    assert.equal(
+      f.calls
+        .slice(beforeRestart)
+        .some(
+          (call) =>
+            call.args.includes("fetch") ||
+            (call.command === "gh" && call.args[0] === "pr"),
+        ),
+      false,
+    );
+    // Source changes are never excused merely because a comment branch exists.
     await writeFile(
       path.join(archive.workspace, "review.ts"),
-      `${annotated.toString()}unexpected code\n`,
+      "unexpected code\n",
     );
     await jj(archive.workspace, ["status"]);
     await manager.close();
     manager = f.manager();
     await assert.rejects(
       manager.open("7"),
-      /beyond recognized review annotations/,
+      /Remaining tree differs from the exact pinned PR head/,
     );
-    assert.match(
+    assert.equal(
       await readFile(path.join(archive.workspace, "review.ts"), "utf8"),
-      /unexpected code/,
+      "unexpected code\n",
     );
   } finally {
     await manager.close();
@@ -407,6 +568,44 @@ test("archives fail closed after missing/corrupt metadata, without refetch or ov
     assert.equal(
       f.calls.slice(before).some((call) => call.args.includes("fetch")),
       false,
+    );
+  } finally {
+    await manager.close();
+  }
+});
+
+test("schema 1 archives require manual migration and are never reset or rewritten", async () => {
+  const f = await fixture();
+  let manager = f.manager();
+  try {
+    await manager.open("7");
+    await manager.close();
+    const archive = await f.archive();
+    const metadata = path.join(archive.dir, "review.json");
+    const legacy = { ...archive.metadata, schema: 1 };
+    delete legacy.branches;
+    const bytes = JSON.stringify(legacy);
+    await writeFile(metadata, bytes);
+    const before = f.calls.length;
+    manager = f.manager();
+    await assert.rejects(
+      manager.open("7"),
+      /schema 1.*Manual migration is required; no automatic migration or reset/,
+    );
+    assert.equal(await readFile(metadata, "utf8"), bytes);
+    assert.equal(
+      f.calls
+        .slice(before)
+        .some(
+          (call) =>
+            call.args.includes("fetch") ||
+            (call.command === "gh" && call.args[0] === "pr"),
+        ),
+      false,
+    );
+    assert.equal(
+      await readFile(path.join(archive.workspace, "review.ts"), "utf8"),
+      "head\n",
     );
   } finally {
     await manager.close();

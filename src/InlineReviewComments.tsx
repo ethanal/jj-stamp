@@ -5,6 +5,8 @@ import {
   parseReviewComments,
   type ReviewComment,
   type ReviewCommentMutation,
+  type ProjectedReviewComment,
+  type ReviewCommentOverlay,
   type ReviewCommentsParseResult,
 } from "./review-comments";
 import "./InlineReviewComments.css";
@@ -14,6 +16,13 @@ export interface InlineCommentProps {
   onComment?: (input: ReviewCommentMutation) => Promise<void>;
   commentEditingEnabled?: boolean;
   commentBusy?: boolean;
+  /** Mutable companion revision metadata, kept outside immutable file caches. */
+  loadComments?: (
+    path: string,
+    version: string,
+  ) => Promise<ReviewCommentOverlay>;
+  commentIdentity?: string;
+  commentUnavailable?: string;
 }
 
 export const commentSquashReason =
@@ -90,7 +99,8 @@ export function commentRange(
 }
 
 export type InlineCommentAnnotation =
-  | { kind: "comment"; comment: ReviewComment; historical: boolean }
+  | { kind: "raw"; comment: ReviewComment; historical: boolean }
+  | { kind: "overlay"; comment: ProjectedReviewComment }
   | { kind: "compose"; line: number; endLine: number };
 
 export function InlineCommentEditor({
@@ -164,7 +174,9 @@ export function InlineCommentEditor({
         <button type="button" disabled={busy || pending} onClick={onCancel}>
           Cancel
         </button>
-        <span>Saved in the source file · not sent to GitHub</span>
+        <span>
+          Saved in an independent COMMENTS revision · not sent to GitHub
+        </span>
       </div>
     </form>
   );
@@ -178,14 +190,23 @@ export function InlineReviewComment({
   onEdit,
   onRemove,
   onFocusDiff,
+  storage = "overlay",
+  unmappedReason,
 }: {
-  comment: ReviewComment;
+  comment: {
+    id: string;
+    body: string;
+    startLine?: number;
+    endLine?: number;
+  };
   historical: boolean;
   editable: boolean;
   busy: boolean;
   onEdit: (body: string) => Promise<void>;
   onRemove: () => Promise<void>;
   onFocusDiff: () => void;
+  storage?: "overlay" | "raw";
+  unmappedReason?: string;
 }) {
   const [editing, setEditing] = useState(false);
   const [removing, setRemoving] = useState(false);
@@ -220,13 +241,19 @@ export function InlineReviewComment({
           {historical ? "Previous review comment" : "Review comment"}
         </strong>
         <span>
-          Line {comment.anchorLine}
-          {comment.endAnchorLine !== comment.anchorLine
-            ? `–${comment.endAnchorLine}`
-            : ""}
-          {historical ? " · read-only" : " · file-backed"}
+          {unmappedReason
+            ? "Unresolved anchor"
+            : `Line ${comment.startLine}${comment.endLine !== comment.startLine ? `–${comment.endLine}` : ""}`}
+          {storage === "raw"
+            ? " · source marker · read-only"
+            : " · COMMENTS revision"}
         </span>
       </header>
+      {unmappedReason && (
+        <div className="inline-review-unmapped" role="note">
+          {unmappedReason} No code location has been guessed.
+        </div>
+      )}
       <p className="inline-review-body">{comment.body}</p>
       {error && <div role="alert">{error}</div>}
       {editable && !historical && (

@@ -11,13 +11,14 @@
     "test": "tsx --test tests/*.test.ts",
     "benchmark": "tsx scripts/benchmark.ts",
     "benchmark:browser": "tsx scripts/responsiveness.ts",
-    "test:browser": "tsx tests/code-diff.e2e.ts && tsx tests/split-diff.e2e.ts && tsx tests/copy-selection.e2e.ts && tsx tests/preferences.e2e.ts && tsx tests/shortcuts.e2e.ts && tsx tests/vim-mode.e2e.ts && tsx tests/vim-files.e2e.ts && tsx tests/vim-refresh.e2e.ts && tsx tests/vim-squash.e2e.ts && tsx tests/revision-keyboard.e2e.ts && tsx tests/files-keyboard.e2e.ts && tsx tests/squash-navigation.e2e.ts && tsx tests/file-view.e2e.ts && tsx tests/focus-refresh.e2e.ts && tsx tests/filesystem-refresh.e2e.ts && tsx tests/prefetch.e2e.ts && tsx tests/hunk-context-worker.e2e.ts && tsx tests/diff-runtime.e2e.ts && tsx tests/browser.e2e.ts && tsx tests/pr-review-prototype.e2e.ts",
+    "test:browser": "tsx tests/code-diff.e2e.ts && tsx tests/split-diff.e2e.ts && tsx tests/copy-selection.e2e.ts && tsx tests/preferences.e2e.ts && tsx tests/shortcuts.e2e.ts && tsx tests/vim-mode.e2e.ts && tsx tests/vim-files.e2e.ts && tsx tests/vim-refresh.e2e.ts && tsx tests/vim-squash.e2e.ts && tsx tests/revision-keyboard.e2e.ts && tsx tests/files-keyboard.e2e.ts && tsx tests/squash-navigation.e2e.ts && tsx tests/file-view.e2e.ts && tsx tests/focus-refresh.e2e.ts && tsx tests/filesystem-refresh.e2e.ts && tsx tests/prefetch.e2e.ts && tsx tests/hunk-context-worker.e2e.ts && tsx tests/diff-runtime.e2e.ts && tsx tests/browser.e2e.ts && tsx tests/pr-review-prototype.e2e.ts && tsx tests/pr-review-picker.e2e.ts && tsx tests/inline-comments-render.e2e.ts && tsx tests/inline-comments-overlay.e2e.ts && tsx tests/inline-comments.e2e.ts",
     "format": "prettier --write src server scripts tests cli.ts vite.config.ts tsconfig.json package.json README.md",
     "format:check": "prettier --check src server scripts tests cli.ts vite.config.ts tsconfig.json package.json README.md",
     "test:all": "npm run check && npm test && npm run test:browser && npm run test:cli",
     "test:cli": "npm run build && tsx --test tests/cli.e2e.ts",
     "prototype:pr": "tsx scripts/pr-review-prototype.ts",
-    "test:pr-prototype": "tsx tests/pr-review-prototype.e2e.ts"
+    "test:pr-prototype": "tsx tests/pr-review-prototype.e2e.ts",
+    "test:pr": "tsx --test tests/pr-review.test.ts tests/review-comments-parser.test.ts tests/review-comments.test.ts tests/comment-overlays.test.ts tests/comment-mapping.test.ts && tsx tests/pr-review-picker.e2e.ts && tsx tests/inline-comments-render.e2e.ts && tsx tests/inline-comments-overlay.e2e.ts && tsx tests/inline-comments.e2e.ts"
   },
   "dependencies": {
     "@pierre/diffs": "^1.4.3",

@@ -74,6 +74,8 @@
             packages = [
               pkgs.nodejs_24
               pkgs.jujutsu
+              pkgs.git
+              pkgs.gh
             ]
             ++ pkgs.lib.optionals pkgs.stdenv.hostPlatform.isLinux [ pkgs.xdg-utils ];
           };

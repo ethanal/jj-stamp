@@ -588,6 +588,9 @@ export function ReviewViewer({
   onComment,
   commentEditingEnabled = false,
   commentBusy = false,
+  loadComments,
+  commentIdentity,
+  commentUnavailable,
 }: {
   state: RepoState | null;
   source?: Revision;
@@ -656,7 +659,7 @@ export function ReviewViewer({
     [contentIdentity],
   );
   const squashFile = (entry: DiffFile): DiffFile =>
-    containsReviewMarkers(entry.patch) ||
+    containsReviewMarkers(entry.patch.replace(/^[ +-]/gm, "")) ||
     (commentMarkers.identity === contentIdentity &&
       commentMarkers.paths.has(entry.path))
       ? { ...entry, unsupported: commentSquashReason }
@@ -1061,6 +1064,9 @@ export function ReviewViewer({
                       onComment={onComment}
                       commentEditingEnabled={commentEditingEnabled}
                       commentBusy={commentBusy}
+                      loadComments={loadComments}
+                      commentIdentity={commentIdentity}
+                      commentUnavailable={commentUnavailable}
                       onCommentMarkers={onCommentMarkers}
                     />
                   )}

@@ -18,6 +18,22 @@ export interface ReviewCommentsParseResult {
   reason?: string;
 }
 
+/** Code coordinates, never physical annotation-file coordinates. */
+export interface ProjectedReviewComment {
+  id: string;
+  body: string;
+  startLine: number;
+  endLine: number;
+  codeChangeId?: string;
+}
+export interface ReviewCommentOverlay {
+  comments: ProjectedReviewComment[];
+  unmapped: Array<{ id: string; body: string; reason: string }>;
+  issues: string[];
+  editable: boolean;
+  reason?: string;
+}
+
 export type ReviewCommentMutation = { version: string; path: string } & (
   | { action: "add"; line: number; endLine?: number; body: string }
   | { action: "edit"; id: string; body: string }

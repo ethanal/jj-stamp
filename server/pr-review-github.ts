@@ -21,7 +21,17 @@ export const summarySchema = z.object({
   baseRefName: z.string().min(1).max(1024),
   headRefOid: oid,
   baseRefOid: oid,
-  author: z.object({ login: name }).nullable(),
+  // Bot identities can contain "[bot]" or the CLI's "app/" prefix. This
+  // display-only field is never used to construct a command or repository URL.
+  author: z
+    .object({
+      login: z
+        .string()
+        .min(1)
+        .max(256)
+        .regex(/^[^\u0000-\u001f\u007f]+$/),
+    })
+    .nullable(),
 });
 export const repositorySchema = z
   .object({

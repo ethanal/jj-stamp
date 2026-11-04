@@ -4,6 +4,13 @@ The CLI constructs `ReviewService({ repoPath, revision })` and passes it to `cre
 
 `server/http.ts` serves the bundled UI and router on `127.0.0.1`. It validates Host and Origin before any route, rejects cross-site requests, and requires JSON plus `X-Fold-Request: 1` for mutations. Browser launch and graceful shutdown live in `cli.ts`.
 
+The experimental PR manager additionally creates isolated managed repositories
+and one local server per open review. It passes
+`comments: {sourceChangeId, reviewedChangeId, branches:
+[{codeChangeId, commentsChangeId}, ...]}` to the service. Each of the two partial
+code revisions has an independent comment-only leaf child. Neither is inserted
+into the Reviewed → Remaining code chain; `@` stays on Remaining.
+
 Unversioned UI files (especially `/` and `/index.html`) use `Cache-Control: no-store`, without ETag or Last-Modified validators. Nix normalizes file timestamps, and different entry pages can have identical sizes; stat-based validators could otherwise return a false 304 and leave the browser requesting obsolete hashed bundles after an upgrade. Content-hashed `/assets/` files retain conditional caching. Missing static files return uncached plain-text 404s, never an HTML fallback.
 
 ## Native diff editor (experimental branch)
@@ -30,6 +37,12 @@ Every squash-eligible state exposes the exact single **mutable immediate parent*
 
 ## API
 
+The outer HTTP server mounts `GET /pr/context`, `GET /pr/list`, and
+`POST /pr/open {input}` under `/api` before the core router. Context is local-only;
+list/open deliberately invoke `gh`. The core router returns `null` for context
+when embedded without a PR manager. There are no remote-refresh, consolidation,
+submission, discussion-import, or dismissal endpoints.
+
 - `GET /events`: a same-origin SSE stream backed only by native filesystem notifications. It sends named `ready` after all watchers are established, then coalesced named `change` events with `{workspace:boolean,heads:string[]|null}`. Workspace paths are never exposed. Operation heads are up to 64 sorted full IDs read directly from the repository metadata; `null` means they could not be read safely or exceeded that bound. A watcher failure sends `unavailable` with `{code,message}` and ends the stream so focus/manual refresh remain available. Codes distinguish the app's directory/event limits, unsupported or unsafe metadata, and OS errors such as `ENOSPC` or `EACCES`; unknown failures use `WATCH_UNAVAILABLE`. SSE diagnostics omit filesystem paths and raw error text. The owner’s terminal logs the original error once under `[jj-stamp watch]` (which may include paths), without a UI alert. Further subscribers receive the same cached failure instead of repeatedly attempting setup or printing warnings.
 - `GET /state`: selected source, mutable ancestors (`targets`, for the legacy preview API), exact `parent`, optional `squashUnavailable`, Git patches, native hunk IDs and one-based patch-body rows, operation/version, and `canUndo`. Falls back to the current `@` whenever the selected change is missing, with no pending recovery guard.
 - `POST /revision {version,changeId}`: select one visible, non-divergent change, including immutable or conflicted changes for viewing; returns `{state}`. The browser supplies a full change ID from the graph, or exactly `"@"` for the live working copy independent of graph visibility. Existing change-ID prefixes remain accepted. Other revision expressions (including `@-`, unions, bookmarks and whitespace-padded `@`) are rejected; arbitrary revision expressions remain limited to the CLI's initial positional argument. The old source/version, candidate eligibility, operation checks, pending guard and rollback-on-validation-failure behavior apply equally to `@`.
@@ -38,6 +51,19 @@ Every squash-eligible state exposes the exact single **mutable immediate parent*
 - `POST /commit {commitId}`: immutable **display-only** content `{repo:{name,path},commitId,baseCommitId:string|null,files:ReviewFile[]}`. Requires a full lowercase hexadecimal commit ID (exactly 40 or 64 characters), never a short ID, change ID or revset. Metadata, diff and both file-side revision arguments use `commit_id("<full-id>")`, never bare hexadecimal symbols that a same-named bookmark could shadow. The exact identity is also checked against jj's metadata result, including for hidden commits after rewrites. Returns the same parsed patches/hunk IDs as state. Merge commits fail with `422 UNSUPPORTED_DIFF`; the root commit has `baseCommitId:null`. No selection, initialization of the selected source, workspace snapshot, live-version check or mutation authorization occurs.
 - `POST /commit-file {commitId,path}`: immutable immediate-parent/source `{oldFile,newFile}` display contents. Each existing side is `{name,contents}`; an added/deleted side is null. Only exact supported changed paths from that commit's parsed diff are accepted, with a single-parent context and literal root-relative filesets. Traversal, unsupported files and paths outside the diff fail closed. Like `/commit`, this route does not return a version or authorize any mutation. Both routes retain the existing same-origin loopback, JSON and `X-Fold-Request: 1` POST protections and `Cache-Control: no-store`.
 - `POST /file {version,path}`: full pinned immediate-parent/source file contents for a supported file in the current diff. New/deleted sides are null. Invalid paths, unsupported formats, merge context, and stale versions are rejected. Reads use literal root-relative filesets after `--`.
+- `POST /comments/file {version,path}`: a live `ReviewCommentOverlay` with
+  `comments:[{id,body,startLine,endLine,codeChangeId?}]`, `unmapped:[{id,body,reason}]`,
+  `issues`, `editable`, and optional `reason`. Coordinates refer to the clean
+  selected code file, not the annotated companion file. Exact verified unchanged
+  lines can project comments from the other code revision; changed or ambiguous
+  anchors remain unmapped with their bodies. This is separate from immutable
+  `/commit-file` content and is invalidated by the live version.
+- `POST /comments`: `{version,path,action:"add",line,endLine?,body}`,
+  `{version,path,action:"edit",id,body}`, or
+  `{version,path,action:"remove",id}`; returns `{state}`. Add coordinates are clean
+  selected-code lines; edit/remove resolve the unique owning branch by UUID.
+  Only managed Reviewed/Remaining selections support editing. State exposes
+  `commentsEnabled`, `canEditComments`, and `commentUnavailable` for the UI.
 - `POST /squash-lines {version,selections:[{id,lines}]}`: squash the exact selected changed rows from the selected change into its single mutable immediate parent. No target override or extra properties are accepted. Constructs and verifies exact pinned selected file bytes, rechecks live state in the same serialized task, and sets an in-memory pending guard before execution. Returns `{state,output,warning?}`.
 - `POST /undo {version}`: revert only the last exactly attributed app squash via `jj op revert <operation>`, while the selected-source state and repository operation still match. Undo is available only in the process that performed the squash, not after restart.
 - Legacy `POST /preview {version,target,selections:[{id,lines}]}` and `POST /squash {token}` remain for internal compatibility/tests. They are not used by the UI. Whole-hunk selections contain only changed rows; tokens are one-shot, expire after ten minutes, and do not survive restart.
@@ -78,9 +104,49 @@ History changes before attribution, unreadable operation metadata, and nonzero t
 
 External jj processes and file edits cannot be locked by this in-process queue. **This is not an atomic cross-process transaction.** An external edit can race final validation and tool execution; detection may occur after squash. Avoid concurrent edits/history operations and run only one app process per repository. Multiple browser tabs share the process's selected change; do not mutate concurrently across tabs.
 
+## Independent comment branches
+
+Canonical markers are whole source-comment lines:
+`// JJ-STAMP(uuid): body` immediately before the anchor. Adjacent same-UUID body
+lines form a multiline body; optional `// JJ-STAMP(uuid)` after code closes a
+range. Parsing is deliberately fail-closed for unsupported source syntax,
+malformed/duplicate markers, unsafe bytes, and ambiguous lexical constructs.
+
+Managed-only validation resolves both code revisions and both independent leaf
+companions, checks their identities, parents, mutability, conflicts, and `@`,
+and proves that removing only recognized marker lines reproduces each companion's
+code parent byte-for-byte. Branch metadata is included in live version
+validation. Reads are bounded; ordinary sessions add no layer-validation commands.
+
+Comment writes use the existing private native diff-editor manifest with
+`jj diffedit` against the pinned companion revision. An empty root comparison
+allows the first annotation to use the same strict scratch-inventory validator;
+only the exact literal selected file is editable. The main working copy is never
+moved or written. Pending guards and exact operation attribution prevent replay
+after ambiguous failures. Saving invalidates process-local squash undo. Squash
+and undo revalidate companion annotation inventories so unexpected annotation
+loss or conflicts are reported after the attributed history operation.
+
+Actual code-revision files containing reserved marker-looking lines still fail
+closed for squash; overlays from independent companions do not. Unresolved
+overlays retain text and a reason. There is no automatic consolidation,
+submission, repair, history reset, or mutation retry.
+
 ## In-memory operation state
 
-The backend stores no durable app state on disk (see the short-lived native callback manifest above). There is no `dataDir` option, app state directory, operation journal, startup journal read, or recovery-file migration. Neither `$XDG_STATE_HOME/jj-stamp` nor `~/.local/state/jj-stamp` is read or written. Existing `operations-*.json` files from older versions are ignored and left untouched; they are never deleted, interpreted as a guard, or used to restore undo.
+The core review service stores no durable operation bookkeeping on disk (see the
+short-lived native callback manifest above). There is no core operation journal
+or recovery-file migration. Neither `$XDG_STATE_HOME/jj-stamp` nor
+`~/.local/state/jj-stamp` is read or written. Existing `operations-*.json` files
+from older versions are ignored and left untouched; they are never deleted,
+interpreted as a guard, or used to restore undo.
+
+The separate PR manager does persist schema-versioned identity metadata and
+cross-process locks under `$XDG_DATA_HOME/jj-stamp/pr-reviews/`, plus the managed
+jj repository itself. Bodies live in source-file trees of companion revisions,
+not JSON metadata. Clean shutdown removes active locks. Crashed, missing,
+corrupt, incompatible, or incomplete archives require manual inspection; the
+manager never resets them or reimports remote changes on resume.
 
 Squashes and undo still make their normal changes to jj's repository and operation history. Those jj changes survive restart; app bookkeeping does not. A fresh service begins with no undo, pending guard or preview tokens, even if an older process stopped during an operation. This intentionally provides no durable crash-recovery guard: inspect `jj op log --no-pager` after an interrupted or ambiguous operation before submitting new work. Never blindly repeat the prior squash or use `jj op restore` as an automatic rollback.
 

@@ -255,6 +255,7 @@ try {
   ).toHaveCount(0);
   await expect(dialog).not.toBeVisible();
   await expect(actions).toHaveText([
+    "Open PR…",
     "Refresh",
     "Settings",
     "Squash",

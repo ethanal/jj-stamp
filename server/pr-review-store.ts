@@ -21,16 +21,28 @@ import type { PrRepository } from "../src/pr-review-types.ts";
 const changeId = z.string().regex(/^[k-z]{32}$/);
 export const metadataSchema = z
   .object({
-    schema: z.literal(1),
+    schema: z.literal(2),
     repository: repositorySchema,
     pullRequest: summarySchema,
     mergeBaseOid: oid,
     headTreeOid: oid,
     sourceChangeId: changeId,
     reviewedChangeId: changeId,
+    branches: z
+      .array(
+        z
+          .object({
+            codeChangeId: changeId,
+            commentsChangeId: changeId,
+          })
+          .strict(),
+      )
+      .length(2),
   })
   .strict();
 export type PrMetadata = z.infer<typeof metadataSchema>;
+
+class UnsupportedArchiveSchema extends Error {}
 
 export async function safeDirectory(directory: string): Promise<void> {
   const stat = await lstat(directory);
@@ -149,9 +161,17 @@ export class PrReviewStore {
             stat.size > 65536
           )
             throw new Error("Unsafe metadata file.");
-          const metadata = metadataSchema.parse(
-            JSON.parse(await readFile(metadataPath, "utf8")),
-          );
+          const raw: unknown = JSON.parse(await readFile(metadataPath, "utf8"));
+          if (
+            raw !== null &&
+            typeof raw === "object" &&
+            "schema" in raw &&
+            raw.schema !== 2
+          )
+            throw new UnsupportedArchiveSchema(
+              `Managed review archive schema ${String(raw.schema)} is incompatible with independent COMMENTS branches (schema 2). Manual migration is required; no automatic migration or reset was attempted.`,
+            );
+          const metadata = metadataSchema.parse(raw);
           if (
             metadata.repository.nameWithOwner.toLowerCase() !==
               repo.nameWithOwner.toLowerCase() ||
@@ -160,7 +180,8 @@ export class PrReviewStore {
             throw new Error("Archive identity mismatch.");
           validateSummary(metadata.pullRequest, metadata.repository);
           return metadata;
-        } catch {
+        } catch (error) {
+          if (error instanceof UnsupportedArchiveSchema) throw error;
           throw new Error(
             "Managed review archive is missing, corrupt, or unsafe. It was not recreated; inspect/restore the archive manually.",
           );
