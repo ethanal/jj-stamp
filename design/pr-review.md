@@ -234,20 +234,44 @@ the local review.
 
 ## UI alternatives
 
-`design/pr-review-options.html` is a standalone interactive design study with
-fictional data and no persistence or GitHub access:
+`design/pr-review-options.html` compares additions over screenshots of the actual
+running jj-stamp, not an alternative app layout. "Current app" removes all proposed
+controls; teal outlines identify additions. The captured baseline is not
+interactive. Proposed controls use fictional PR metadata and in-memory drafts,
+with no persistence or GitHub access.
 
-- **A — Quiet extension:** retain files/diff/graph, with a PR switcher and update
-  banner. Toggle the right pane between the graph and staged comments.
-- **B — Review inbox:** add an active/requested PR rail and a submission tray below
-  the diff. Easier switching, at the cost of horizontal space.
-- **C — Review cockpit:** replace the graph with a compact review-stack strip and
-  dedicate the right pane to staged comments and mapping failures.
+- **A — Toolbar menu:** add a PR button before the existing Refresh/Settings.
+  Open PR, update status, Refresh PR, staged comments, submission, and dismissal
+  live in a popover or dialog.
+- **B — Slim review strip:** add a 42px row below the unchanged toolbar. Surface
+  PR identity, update status, Refresh PR, staged count, and submission there.
+  This is the preferred direction for keeping remote and local state distinct.
+- **C — Bottom comment tray:** use A's toolbar menu and add a 206px tray within
+  the center diff column. Keep both sidebars full-height and preserve the footer.
+  The production tray should be collapsible and resizable.
 
-All three demonstrate inline composition, explicit refresh, staged comment
-submission, manual-mapping failures, and local dismissal. The partial-submission
-confirmation and archive retention shown are proposals, not resolved requirements.
-The mockup does not implement jj operations, anchor mapping, or API validation.
+All three retain the actual file tree, diff/view controls, jj graph/revision
+picker, and Squash/Undo/Clear actions. Add an anchored line-comment composer and
+a separate Comment selection action; commenting never squashes. Review commits
+will appear as ordinary entries in the existing jj graph, not a replacement
+timeline. The screenshots deliberately retain the original test history rather
+than pretending that the proposed PR stack has been implemented.
+
+Existing Refresh remains a local repository refresh. New Refresh PR explicitly
+imports remote changes into the managed review stack. Opening a review switches
+the existing app's data scope to that workspace without replacing its layout.
+Returning to the original workspace does not dismiss the saved review.
+
+All three demonstrate explicit refresh, staged comments, submission, mapping
+failures, and local dismissal. The partial-submission confirmation and archive
+retention shown are proposals, not resolved requirements. The mockup does not
+implement jj operations, anchor mapping, or API validation.
+
+Regenerate embedded captures with `npx tsx design/capture-pr-review.ts` from the
+repository root. This uses `tests/browser-fixture.ts`, the current application,
+and an isolated disposable jj repository. Intermediate screenshots and geometry
+go under ignored `.data/pr-review-capture`; only the self-contained HTML is
+published. It does not modify the source checkout's jj history or workspace.
 
 ## Implementation references to verify
 
