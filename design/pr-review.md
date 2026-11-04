@@ -26,7 +26,11 @@ conflict, and submission questions below still require decisions.
 - If the merge-base changes, first attempt to rebase the review stack onto the new
   merge-base, then append the interdiff.
 - Detect updates automatically, but import them only through an explicit Refresh.
-- New inline comments start staged in local JSON documents under
+- Store new inline comment bodies as text embedded in the reviewed file, for
+  example `// JJ-STAMP(uuid): What does this do?`, optionally paired with an
+  end marker `// JJ-STAMP(uuid)`. Render recognized annotations as real inline
+  UI elements in the diff, not as raw marker text. This supersedes the earlier
+  JSON-only draft-body plan; metadata can still live under
   `~/.local/share/jj-stamp`. Do not create GitHub drafts while composing.
 - Submit staged comments as Comment, Approve, or Request changes, with an optional
   overall message.
@@ -50,10 +54,16 @@ hold remaining changes and subsequent updates. Squashing moves content between
 commits; imported snapshot identities must therefore live in metadata, not be
 inferred from current synthetic commit hashes.
 
-The central invariant is that the complete review stack's tip tree equals the
-last imported PR head tree. Moving content into reviewed commits must preserve
-that aggregate tree. Local synthetic commit IDs must never be used as GitHub
-review `commit_id` values.
+For annotation-free history, the central invariant is that the complete review
+stack's tip tree equals the last imported PR head tree. Moving content into
+reviewed commits must preserve that aggregate tree. Embedded comments mean this
+raw-tree equality cannot also hold for annotated file versions. Proposed revised
+invariant: the code tree, excluding recognized local review annotations, equals
+the imported PR head tree. Whether annotations live in the review stack or a
+separate working-copy layer, and how to validate that projection without removing
+ordinary source comments, remain open below. The exact-tree construction steps
+that follow describe the annotation-free import, not a license to overwrite drafts.
+Local synthetic commit IDs must never be used as GitHub review `commit_id` values.
 
 An unchanged-base refresh does not rewrite existing stack commits. A base-change
 refresh necessarily rewrites them, preserving their jj change identities and the
@@ -133,24 +143,58 @@ cross-process mutation locking.
   import history with captured target OID and operation IDs.
 - Last observed remote state, refresh/recovery state, and submission receipts.
 
-`comments.json` records stable comment IDs, Markdown bodies, local staged state,
-creation/edit timestamps, and immutable original anchors: imported head/base,
-displayed revision pair, path, side, line/range, selected text, and context.
-Derived current mappings are separate from original anchors.
+Under the file-embedded comment requirement, `comments.json` is proposed metadata,
+not an independent authoritative store of draft bodies. It records marker UUIDs,
+local staged state, creation/edit timestamps, and immutable original anchors:
+imported head/base, displayed revision pair, path, side, line/range, selected text,
+and context. Derived current mappings are separate from original anchors. Any
+cached bodies must be reconciled against the annotated file version rather than
+silently overwriting file edits.
 
 `operations` journals distinguish prepared, running, completed, failed, and
 outcome-unknown operations. jj changes and JSON writes are not one atomic
 transaction. Restart must reconcile an interrupted operation before offering
 another mutation; it must not blindly re-run a refresh or GitHub submission.
 
-Dismiss removes unpublished bodies from comment documents and operation payloads,
-not merely from the visible list. Retain only non-content recovery metadata needed
-to diagnose an outcome-unknown submission. Warn before dismissing such a submission:
-it may already exist on GitHub, and dismissal will not retract it.
+Dismiss must remove unpublished annotations from active files and persisted draft
+copies, including caches and operation payloads, not merely from the visible list.
+Retain only non-content recovery metadata needed to diagnose an outcome-unknown
+submission. Warn before dismissing such a submission: it may already exist on
+GitHub, and dismissal will not retract it.
 
 Proposed default: retain the archived workspace/history; workspace deletion is a
 separate, explicit cleanup action. Reopening an archive does not resurrect
-discarded comments.
+discarded comments. If annotations enter jj history, retaining that history can
+also retain discarded bodies; resolve this conflict with dismissal semantics
+before implementing either behavior.
+
+## File-embedded comments
+
+Confirmed representation:
+
+- A comment starts with a source-comment marker such as
+  `// JJ-STAMP(uuid): What does this do?`.
+- A matching `// JJ-STAMP(uuid)` may delimit its end. Exact single-line,
+  multiline-body, and code-range grammar still needs definition.
+- The diff renders recognized markers as real inline UI elements, not literal
+  source lines. The current prototype's detached sample-comment list does not
+  implement this representation.
+
+Proposed interaction: a rendered comment card contains the body and edit/remove
+controls; its editor writes back to the embedded representation. Edits made in an
+external editor should appear in those same cards after refresh. The UUID ties
+the file representation to review/submission metadata, rather than creating two
+independently editable copies of the body.
+
+Implementation must distinguish annotated-file coordinates, displayed code
+coordinates, and real PR-diff coordinates. Marker lines are not GitHub source
+lines. Establish an explicit mapping before using them for code selection,
+squashing, editor navigation, or submission.
+
+Do not assume every marker-looking string is a local draft: ordinary PR content
+may contain examples of the syntax. Ownership, language-aware recognition, and
+handling of malformed/duplicate/missing markers need a specified policy. Preserve
+ambiguous text and report it rather than silently deleting or relocating it.
 
 ## Inline comment mapping and submission
 
@@ -220,6 +264,16 @@ the local review.
 4. **Other-repository URLs:** initially reject with a clear repository mismatch,
    or support selecting an existing local checkout? Automatic cloning has not
    been requested or approved.
+5. **Annotation grammar:** which line does an unpaired marker refer to? Does an
+   end marker delimit commented code, a multiline body, or both? Define escaping,
+   language-specific comment syntax, and handling of files without comments.
+6. **Annotation history:** should annotations move with code during squash, stay
+   in a separate layer, or follow another rule? Define refresh/rebase preservation,
+   comments on deleted code/files, and the annotation-free tree invariant.
+   Do not silently strip drafts to satisfy the previous raw-tree invariant.
+7. **Annotation lifecycle:** after submission, keep markers with submitted state
+   or remove them? How does dismissal discard bodies if historical snapshots
+   contain them? Resolve retention before choosing the history representation.
 
 ## Acceptance tests
 
@@ -236,7 +290,12 @@ the local review.
   only in an older update either map correctly or produce a useful failure report.
 - Submit all three events, including no inline comments; preserve failed drafts,
   handle API rejection/authentication failures, and reconcile unknown outcomes.
-- Dismiss is entirely local and removes unpublished content from retained JSON.
+- Embedded comments render as inline UI elements; UI and external-file edits
+  round-trip without duplicating bodies or treating markers as PR source lines.
+- Malformed markers, duplicate UUIDs, ordinary source examples, language-specific
+  syntax, and squash/refresh/rebase preserve drafts or fail explicitly.
+- Dismiss is entirely local and removes unpublished content according to the
+  resolved file/history retention policy, not just from JSON or the visible UI.
 - Concurrent tabs/processes, interrupted writes, stale UI versions, external jj
   operations, and archive/reopen flows cannot corrupt a review or duplicate a
   remote submission.
@@ -281,6 +340,15 @@ Existing Refresh remains a local repository refresh. New Refresh PR explicitly
 imports remote changes into the managed review stack. Opening a review switches
 the existing app's data scope to that workspace without replacing its layout.
 Returning to the original workspace does not dismiss the saved review.
+
+**Non-PR workspace (proposed):** show only a neutral **Open PR…** toolbar entry,
+opening the full-screen selector directly. Do not show a PR identity, update
+badge, staged count, Refresh PR, Submit, or Dismiss when the current workspace is
+not a PR review. Saved reviews remain available in the selector's Active locally
+filter; their existence alone does not put the current workspace in PR mode.
+Once in a PR review, the toolbar entry identifies that PR and opens A's actions
+menu. The prototype currently retains its explicit PR preview/DEMO label and
+an initial menu with only Open PR; this simplified non-PR entry is not implemented.
 
 All three demonstrate explicit refresh, staged comments, submission, mapping
 failures, and local dismissal. The partial-submission confirmation and archive
