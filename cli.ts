@@ -5,6 +5,8 @@ import { parseArgs } from "node:util";
 import { ReviewService } from "./server/service.ts";
 import { DEFAULT_PORT, startLocalServer } from "./server/http.ts";
 import { run } from "./server/process.ts";
+import { PrReviewManager } from "./server/pr-review.ts";
+import { parsePrInput } from "./server/pr-review-github.ts";
 
 declare const __JJ_STAMP_VERSION__: string;
 
@@ -20,6 +22,8 @@ Options:
                          Use 0 to always choose an available port
       --no-open          Print the URL without launching a browser
       --trace            Write backend timing JSON to stderr (no arguments/output)
+      --pr NUMBER/URL    Open/resume an isolated current-repository GitHub PR
+                         Requires gh auth login; never submits or refreshes PRs
   -h, --help             Show this help
   -V, --version          Show version
 
@@ -59,6 +63,7 @@ async function main() {
       port: { type: "string" },
       "no-open": { type: "boolean", default: false },
       trace: { type: "boolean", default: false },
+      pr: { type: "string" },
     },
   });
   if (values.help) {
@@ -79,6 +84,11 @@ async function main() {
     (!/^\d+$/.test(values.port) || Number(values.port) > 65535)
   ) {
     throw new Error("--port must be an integer between 0 and 65535.");
+  }
+  if (values.pr !== undefined) {
+    parsePrInput(values.pr);
+    if (positionals.length)
+      throw new Error("--pr cannot be combined with a local revision.");
   }
   const repoPath = path.resolve(values.repository ?? process.cwd());
   const assetsDir = path.join(__dirname, "client");
@@ -105,26 +115,43 @@ async function main() {
         }
       : undefined,
   });
-  // Resolve and validate before advertising a URL or opening an empty browser.
-  const state = await service.getState();
+  // PR startup never snapshots or edits the original checkout.
+  const state = values.pr === undefined ? await service.getState() : null;
+  const manager = new PrReviewManager({
+    repoPath,
+    assetsDir,
+    onTiming: values.trace
+      ? (record) => console.error(`[jj-stamp timing] ${JSON.stringify(record)}`)
+      : undefined,
+  });
   const local = await startLocalServer({
     service,
     assetsDir,
     port: values.port === undefined ? undefined : Number(values.port),
+    pr: manager,
   });
-  console.log(
-    `Reviewing ${state.source.changeId.slice(0, 12)}: ${state.source.description}`,
-  );
-  console.log(`Repository: ${state.repo.path}`);
-  console.log(`jj-stamp listening on ${local.url}`);
+  manager.setOriginalWorkspaceUrl(local.url);
+  let url = local.url;
+  try {
+    if (values.pr !== undefined) url = (await manager.open(values.pr)).url;
+  } catch (error) {
+    await Promise.all([local.close(), manager.close()]);
+    throw error;
+  }
+  if (state)
+    console.log(
+      `Reviewing ${state.source.changeId.slice(0, 12)}: ${state.source.description}`,
+    );
+  console.log(`Repository: ${state?.repo.path ?? repoPath}`);
+  if (url !== local.url) console.log(`Original workspace: ${local.url}`);
+  console.log(`jj-stamp listening on ${url}`);
   console.log("Ctrl-C to stop.");
   let stopping = false;
   const stop = () => {
     if (stopping) return;
     stopping = true;
     console.log("Stopping jj-stamp; waiting for accepted operations…");
-    void local
-      .close()
+    void Promise.all([local.close(), manager.close()])
       .then(() => {
         process.removeListener("SIGINT", stop);
         process.removeListener("SIGTERM", stop);
@@ -138,7 +165,7 @@ async function main() {
   };
   process.on("SIGINT", stop);
   process.on("SIGTERM", stop);
-  if (!values["no-open"]) openBrowser(local.url);
+  if (!values["no-open"]) openBrowser(url);
 }
 
 void main().catch((error: unknown) => {

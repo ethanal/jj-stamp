@@ -3,6 +3,7 @@ import { createServer } from "node:http";
 import path from "node:path";
 import { createApi } from "./api.ts";
 import type { ReviewService } from "./service.ts";
+import { createPrRouter, type PrHandlers } from "./pr-review.ts";
 
 export const DEFAULT_PORT = 8000;
 
@@ -10,6 +11,7 @@ export interface LocalServerOptions {
   service: ReviewService;
   assetsDir: string;
   port?: number;
+  pr?: PrHandlers;
 }
 
 /** A loopback-only UI; no externally reachable host or proxy configuration. */
@@ -17,6 +19,7 @@ export async function startLocalServer({
   service,
   assetsDir,
   port,
+  pr,
 }: LocalServerOptions) {
   const app = express();
   const server = createServer(app);
@@ -69,6 +72,7 @@ export async function startLocalServer({
     next();
   });
   const api = createApi(service);
+  if (pr) app.use("/api", createPrRouter(pr));
   app.use("/api", api);
   app.use("/api", (_req, res) => {
     res.status(404).json({ error: "API route not found.", code: "NOT_FOUND" });

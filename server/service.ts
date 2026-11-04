@@ -29,6 +29,17 @@ import type { Revision } from "./revision.ts";
 
 import { ServiceTiming, jjTimingName, toolTimingName } from "./timing.ts";
 import type { OperationName, TimingObserver } from "./timing.ts";
+import {
+  containsReviewMarkers,
+  type ReviewCommentMutation,
+} from "../src/review-comments.ts";
+import {
+  captureReviewFile,
+  replaceReviewFile,
+  reviewFileUnchanged,
+  mutateReviewComments,
+  validateCommentMutation,
+} from "./review-comments.ts";
 
 export type {
   OperationTiming,
@@ -81,12 +92,13 @@ export interface State {
   files: ReviewFile[];
   operation: string;
   canUndo: boolean;
+  canEditComments: boolean;
 }
 // Revision IDs pin the diff bytes. Repository versions do not depend on
 // rendering or transient diff errors, so graph reads need no diff loading.
 type RevisionView = Pick<
   State,
-  "source" | "targets" | "parent" | "squashUnavailable"
+  "source" | "targets" | "parent" | "squashUnavailable" | "canEditComments"
 >;
 interface UnavailableView {
   unavailable: {
@@ -544,6 +556,7 @@ export class ReviewService {
           // all visible history. Preserve configured conflicts() aliases.
           contained(`(${metadataRevset}) & conflicts()`) +
           ' ++ "\\t" ++ json(self.contained_in("mutable()"))' +
+          ' ++ "\\t" ++ json(current_working_copy)' +
           // @ names one commit even when its change is divergent. Unlike a
           // change_id() lookup, counting its rows alone cannot establish safety.
           (checkWorkingCopy ? ' ++ "\\t" ++ json(!hidden && !divergent)' : "") +
@@ -556,7 +569,7 @@ export class ReviewService {
       .map((line) =>
         parseRevisionRecord(
           line,
-          selections.length * 3 + 2 + Number(checkWorkingCopy),
+          selections.length * 3 + 3 + Number(checkWorkingCopy),
           "Unrecognized revision metadata.",
         ),
       );
@@ -568,7 +581,8 @@ export class ReviewService {
         parent: flags[index * 3 + 2],
         conflict: flags[selections.length * 3],
         mutable: flags[selections.length * 3 + 1],
-        availableWorkingCopy: flags[selections.length * 3 + 2],
+        workingCopy: flags[selections.length * 3 + 2],
+        availableWorkingCopy: flags[selections.length * 3 + 3],
       }));
       const sources = metadata
         .filter((entry) => entry.source)
@@ -638,6 +652,10 @@ export class ReviewService {
         source,
         targets,
         parent,
+        canEditComments:
+          mutableSource &&
+          !conflictedSource &&
+          metadata.some((entry) => entry.source && entry.workingCopy),
         ...(squashUnavailable ? { squashUnavailable } : {}),
       };
     });
@@ -1269,6 +1287,80 @@ export class ReviewService {
       return { oldFile, newFile };
     });
   }
+  /** File-embedded drafts are workspace edits, never history rewrites. */
+  comment(input: ReviewCommentMutation): Promise<{ state: State }> {
+    // Uses the existing file timing category and the same bounded serial queue.
+    return this.serial("file", async () => {
+      validateCommentMutation(input);
+      this.assertNotPending();
+      const { state, views } = await this.captureState();
+      this.requireVersion(state, input.version);
+      if (!state.canEditComments)
+        throw new ApiError(
+          409,
+          "COMMENTS_UNAVAILABLE",
+          "Review comments can only edit the live, mutable, conflict-free working-copy change (@). Historical revisions are read-only.",
+        );
+      const file = state.files.find((file) => file.path === input.path);
+      if (!file)
+        throw new ApiError(
+          400,
+          "INVALID_PATH",
+          "Choose a file in the current diff.",
+        );
+      if (file.unsupported)
+        throw new ApiError(422, "COMMENTS_UNAVAILABLE", file.unsupported);
+      if (/^\+\+\+ \/dev\/null$/m.test(file.patch))
+        throw new ApiError(
+          422,
+          "COMMENTS_UNAVAILABLE",
+          "Deleted files cannot contain review drafts.",
+        );
+      const pinned = await this.jjRunner(this.root, [
+        "file",
+        "show",
+        "-r",
+        state.source.commitId,
+        "--ignore-working-copy",
+        "--",
+        `root-file:${JSON.stringify(file.path)}`,
+      ]);
+      const bytes = pinned.stdoutBytes ?? Buffer.from(pinned.stdout, "utf8");
+      const captured = await captureReviewFile(this.root, input.path);
+      if (!captured.bytes.equals(bytes))
+        throw new ApiError(
+          409,
+          "STALE_STATE",
+          "The workspace file differs from the exact pinned source bytes. Refresh before editing comments.",
+        );
+      const result = mutateReviewComments(input.path, bytes, input);
+      await this.validateViews(views, state.operation);
+      // Even a failed write attempt must not leave old history authorizations.
+      this.history.undo = undefined;
+      this.plans.clear();
+      const replaced = await replaceReviewFile(captured, result);
+      try {
+        const after = await this.readState();
+        const verified = await captureReviewFile(this.root, input.path);
+        if (
+          !reviewFileUnchanged(replaced, verified) ||
+          !after.canEditComments ||
+          after.source.changeId !== state.source.changeId
+        )
+          throw new Error(
+            "Workspace or selected source changed after writing.",
+          );
+        return { state: this.publishWatchState(after) };
+      } catch {
+        throw new ApiError(
+          500,
+          "PARTIAL_FAILURE",
+          "The review comment file was already changed, but refreshing or validating the updated state failed. Inspect the file and refresh; do not automatically retry. No rollback was attempted.",
+          { fileMayHaveChanged: true },
+        );
+      }
+    });
+  }
   squashLines(
     input: SquashLinesInput,
   ): Promise<{ state: State; output: string; warning?: string }> {
@@ -1483,6 +1575,15 @@ export class ReviewService {
       const source = /^\+\+\+ \/dev\/null$/m.test(file.patch)
         ? null
         : await read(state.source.commitId);
+      if (
+        (base && containsReviewMarkers(base.toString("utf8"))) ||
+        (source && containsReviewMarkers(source.toString("utf8")))
+      )
+        throw new ApiError(
+          422,
+          "REVIEW_COMMENTS_PRESENT",
+          "This file contains JJ-STAMP review annotations on a pinned side. Remove or resolve its drafts before previewing or squashing this file; comment history behavior is not yet supported.",
+        );
       try {
         const materialized = materializeSelection(
           {

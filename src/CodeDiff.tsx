@@ -13,8 +13,9 @@ import {
 import { FileDiff } from "@pierre/diffs/react";
 import {
   parsePatchFiles,
-  type FileDiff as DiffInstance,
+  type FileDiff as PierreDiffInstance,
   type FileDiffLoadedFiles,
+  type DiffLineAnnotation,
   type SelectedLineRange,
   type VirtualFileMetrics,
 } from "@pierre/diffs";
@@ -45,8 +46,20 @@ import { colorSchemes, type ColorScheme } from "./preferences";
 import { moveVimLine, vimLines, type VimCursorRequest } from "./vim-navigation";
 import { SplitDiffResize } from "./SplitDiffLayout";
 import { remapVimCursor } from "./vim-refresh";
+import { commentSyntax, containsReviewMarkers } from "./review-comments";
+import {
+  InlineCommentEditor,
+  InlineReviewComment,
+  commentRange,
+  commentSquashReason,
+  readInlineCommentFile,
+  type InlineCommentAnnotation,
+  type InlineCommentFile,
+  type InlineCommentProps,
+} from "./InlineReviewComments";
 
 type Point = LinePoint;
+type DiffInstance = PierreDiffInstance<InlineCommentAnnotation>;
 function pointFromElement(element: Element | null): Point | null {
   const row = element?.closest<HTMLElement>(
     "[data-line], [data-column-number]",
@@ -129,6 +142,9 @@ const separatorCSS = `
   overflow-x: auto;
 }
 [data-line], [data-column-number] { cursor: default; touch-action: none; }
+/* Preserve the renderer's raw physical coordinates and virtual row metrics.
+   Marker rows are UI, not projected-away source lines. */
+[data-fold-comment-marker] { visibility: hidden; user-select: none !important; }
 [data-line] { user-select: text; -webkit-user-select: text; }
 [data-column-number] { user-select: none; }
 :host([data-fold-text-selection]) [data-line] { cursor: text; }
@@ -306,6 +322,10 @@ export function CodeDiff({
   onDragging,
   onError,
   loadFile,
+  onComment,
+  commentEditingEnabled = false,
+  commentBusy = false,
+  onCommentMarkers,
 }: {
   file: DiffFile;
   version: string;
@@ -343,7 +363,8 @@ export function CodeDiff({
   onDragging: (dragging: boolean) => void;
   onError: (message: string) => void;
   loadFile: (path: string, version: string) => Promise<FileDiffLoadedFiles>;
-}) {
+  onCommentMarkers?: (path: string, hasMarkers: boolean) => void;
+} & InlineCommentProps) {
   const root = useRef<HTMLDivElement>(null);
   const vimOverlay = useRef<HTMLDivElement>(null);
   const diffFontSize = useContext(DiffFontSizeContext);
@@ -371,6 +392,68 @@ export function CodeDiff({
     key: string;
     promise: Promise<FileDiffLoadedFiles>;
   } | null>(null);
+  const [commentFileState, setCommentFileState] = useState<{
+    key: string;
+    file: InlineCommentFile;
+  } | null>(null);
+  const commentFile =
+    commentFileState?.key === fileLoadKey ? commentFileState.file : null;
+  const [commentLoadError, setCommentLoadError] = useState("");
+  const [compose, setCompose] = useState<{
+    key: string;
+    line: number;
+    endLine: number;
+  } | null>(null);
+  const hasCommentMarkers =
+    containsReviewMarkers(file.patch) || !!commentFile?.hasMarkers;
+  const commentEditable =
+    commentEditingEnabled &&
+    !readOnly &&
+    !!onComment &&
+    !commentFile?.old.issues.length &&
+    !!commentFile?.new.editable;
+  const selectedCommentRange = commentRange(
+    range,
+    commentFile?.newMarkerLines ?? new Set(),
+  );
+  const commentAnnotations = useMemo<
+    DiffLineAnnotation<InlineCommentAnnotation>[]
+  >(() => {
+    const annotations: DiffLineAnnotation<InlineCommentAnnotation>[] = [];
+    if (commentFile) {
+      if (!commentFile.new.issues.length)
+        for (const comment of commentFile.new.comments)
+          annotations.push({
+            side: "additions",
+            lineNumber: comment.startLine,
+            metadata: { kind: "comment", comment, historical: false },
+          });
+      if (!commentFile.old.issues.length)
+        for (const comment of commentFile.old.comments) {
+          // Unified context has just one row. Don't duplicate an unchanged
+          // comment, but retain deleted/changed old-side comments read-only.
+          if (
+            style === "unified" &&
+            commentFile.new.comments.some(
+              (next) => next.id === comment.id && next.body === comment.body,
+            )
+          )
+            continue;
+          annotations.push({
+            side: "deletions",
+            lineNumber: comment.startLine,
+            metadata: { kind: "comment", comment, historical: true },
+          });
+        }
+    }
+    if (compose?.key === fileLoadKey && commentEditable)
+      annotations.push({
+        side: "additions",
+        lineNumber: compose.endLine,
+        metadata: { kind: "compose", ...compose },
+      });
+    return annotations;
+  }, [commentFile, compose, fileLoadKey, style, commentEditable]);
   const loadedContexts = useRef<{
     key: string;
     promise: Promise<Record<string, HunkContext>>;
@@ -407,6 +490,8 @@ export function CodeDiff({
     search,
     vimMode,
     active,
+    commentFile,
+    hasCommentMarkers,
   });
   current.current = {
     file,
@@ -425,6 +510,8 @@ export function CodeDiff({
     search,
     vimMode,
     active,
+    commentFile,
+    hasCommentMarkers,
   };
   const paint = useCallback(() => {
     const shadow = container.current?.shadowRoot;
@@ -432,6 +519,19 @@ export function CodeDiff({
     if (!shadow) return;
     const { file, selections, range, style, hunkContexts, search } =
       current.current;
+    for (const row of shadow.querySelectorAll<HTMLElement>(
+      "[data-line], [data-column-number]",
+    )) {
+      const point = pointFromElement(row);
+      const markers =
+        point?.side === "deletions"
+          ? current.current.commentFile?.oldMarkerLines
+          : current.current.commentFile?.newMarkerLines;
+      row.toggleAttribute(
+        "data-fold-comment-marker",
+        !!point && !!markers?.has(point.line),
+      );
+    }
     root.current?.setAttribute(
       "data-vim-mode",
       current.current.vimMode
@@ -648,6 +748,7 @@ export function CodeDiff({
     search,
     contentIdentity,
     vimMode,
+    commentFile,
   ]);
   const getLoadedFile = useCallback(() => {
     if (current.current.contextDisabled)
@@ -669,19 +770,9 @@ export function CodeDiff({
     if (loadedContexts.current?.key === contextLoadKey)
       return loadedContexts.current.promise;
     const promise = getLoadedFile()
-      .then(async (files) => {
-        try {
-          return await inferCachedHunkContexts(
-            contextLoadKey,
-            file.path,
-            file.hunks,
-            files,
-          );
-        } finally {
-          if (loadedFile.current?.key === fileLoadKey)
-            loadedFile.current = null;
-        }
-      })
+      .then((files) =>
+        inferCachedHunkContexts(contextLoadKey, file.path, file.hunks, files),
+      )
       .catch((error) => {
         if (loadedContexts.current?.promise === promise)
           loadedContexts.current = null;
@@ -690,6 +781,42 @@ export function CodeDiff({
     loadedContexts.current = { key: contextLoadKey, promise };
     return promise;
   }, [contextLoadKey, file.hunks, file.path, fileLoadKey, getLoadedFile]);
+  useEffect(() => {
+    if (contextDisabled || (!commentSyntax(file.path) && !hasCommentMarkers))
+      return;
+    let active = true;
+    setCommentLoadError("");
+    void getLoadedFile()
+      .then((files) => {
+        if (!active) return;
+        const parsed = readInlineCommentFile(file.path, files);
+        setCommentFileState({ key: fileLoadKey, file: parsed });
+        onCommentMarkers?.(file.path, parsed.hasMarkers);
+      })
+      .catch((error) => {
+        if (active)
+          setCommentLoadError(
+            error instanceof Error ? error.message : String(error),
+          );
+      });
+    return () => {
+      active = false;
+    };
+  }, [
+    contextDisabled,
+    file.path,
+    fileLoadKey,
+    getLoadedFile,
+    hasCommentMarkers,
+    onCommentMarkers,
+  ]);
+  useEffect(() => {
+    if (
+      hasCommentMarkers &&
+      Object.values(selections).some((rows) => rows.length > 0)
+    )
+      onSelection(range, {});
+  }, [hasCommentMarkers, selections, onSelection, range]);
   useEffect(() => {
     if (contextDisabled || !root.current || !supportsHunkContext(file.path))
       return;
@@ -822,6 +949,7 @@ export function CodeDiff({
         style: current.current.style,
         getLineIndex: rendered.getLineIndex,
         fileDiff: rendered.fileDiff,
+        newFileContents: current.current.commentFile?.copyContents,
         renderedLines: container.current?.shadowRoot
           ? readRenderedRightHandLines(container.current.shadowRoot)
           : [],
@@ -948,12 +1076,14 @@ export function CodeDiff({
     };
     current.current.onSelection(
       next,
-      selectionFromRange(
-        current.current.file.hunks,
-        next,
-        instance.current.getLineIndex,
-        current.current.style,
-      ),
+      current.current.hasCommentMarkers
+        ? {}
+        : selectionFromRange(
+            current.current.file.hunks,
+            next,
+            instance.current.getLineIndex,
+            current.current.style,
+          ),
     );
   }, []);
   const scrollToVimCursor = useCallback(() => {
@@ -1490,16 +1620,141 @@ export function CodeDiff({
           {editorError}
         </div>
       )}
+      {hasCommentMarkers && (
+        <div className="inline-comment-notice" role="note">
+          {commentSquashReason}
+        </div>
+      )}
+      {commentLoadError && (
+        <div className="inline-comment-notice" role="alert">
+          Review comments could not be loaded: {commentLoadError}
+        </div>
+      )}
+      {commentFile &&
+        (commentFile.old.issues.length > 0 ||
+          commentFile.new.issues.length > 0) && (
+          <div className="inline-comment-notice" role="alert">
+            Some review markers are malformed. They are shown as source text;
+            comment editing is disabled.{" "}
+            {[...commentFile.old.issues, ...commentFile.new.issues].join(" ")}
+          </div>
+        )}
+      {commentSyntax(file.path) && (
+        <div
+          className="inline-comment-tools"
+          onPointerDown={(event) => event.stopPropagation()}
+          onKeyDown={(event) => event.stopPropagation()}
+        >
+          {commentEditable ? (
+            <>
+              <button
+                disabled={
+                  disabled ||
+                  commentBusy ||
+                  contextDisabled ||
+                  !selectedCommentRange ||
+                  compose?.key === fileLoadKey
+                }
+                onClick={() => {
+                  if (selectedCommentRange)
+                    setCompose({ key: fileLoadKey, ...selectedCommentRange });
+                }}
+              >
+                Add comment
+              </button>
+              <span className="inline-comment-notice">
+                Select new-side code lines to comment. Comments are saved in
+                this file, not sent to GitHub.
+              </span>
+            </>
+          ) : (
+            <span className="inline-comment-notice">
+              {!commentFile
+                ? "Loading file-backed review comments…"
+                : !commentFile.new.editable
+                  ? commentFile.new.reason ||
+                    "Comment editing is unavailable for this file."
+                  : "Comments are read-only. Select a mutable working-copy (@) revision to edit."}
+            </span>
+          )}
+        </div>
+      )}
       <StableDiffViewport patch={file.patch}>
         {/* A changed patch starts with contracted context. Mere theme, layout,
             version, and queue updates keep the expanded renderer intact. */}
         {fileDiff && (
-          <FileDiff
+          <FileDiff<InlineCommentAnnotation>
             key={file.patch}
             fileDiff={fileDiff}
             options={options}
             metrics={virtualMetrics}
             selectedLines={null}
+            lineAnnotations={commentAnnotations}
+            renderAnnotation={({ metadata }) => {
+              const focusDiff = () =>
+                root.current?.focus({ preventScroll: true });
+              if (metadata.kind === "compose")
+                return (
+                  <InlineCommentEditor
+                    key={`${fileLoadKey}:${metadata.line}:${metadata.endLine}`}
+                    label={
+                      metadata.line === metadata.endLine
+                        ? `Comment on line ${metadata.line}`
+                        : `Comment on lines ${metadata.line}–${metadata.endLine}`
+                    }
+                    busy={commentBusy || disabled || contextDisabled}
+                    onCancel={() => {
+                      setCompose(null);
+                      focusDiff();
+                    }}
+                    onSave={async (body) => {
+                      if (!onComment || !commentEditable)
+                        throw new Error("Comment editing is unavailable.");
+                      await onComment({
+                        version,
+                        path: file.path,
+                        action: "add",
+                        line: metadata.line,
+                        endLine: metadata.endLine,
+                        body,
+                      });
+                      setCompose(null);
+                      focusDiff();
+                    }}
+                  />
+                );
+              return (
+                <InlineReviewComment
+                  key={`${fileLoadKey}:${metadata.historical}:${metadata.comment.id}`}
+                  comment={metadata.comment}
+                  historical={metadata.historical}
+                  editable={commentEditable}
+                  busy={commentBusy || disabled || contextDisabled}
+                  onFocusDiff={focusDiff}
+                  onEdit={async (body) => {
+                    if (!onComment || !commentEditable || metadata.historical)
+                      throw new Error("Comment editing is unavailable.");
+                    await onComment({
+                      version,
+                      path: file.path,
+                      action: "edit",
+                      id: metadata.comment.id,
+                      body,
+                    });
+                  }}
+                  onRemove={async () => {
+                    if (!onComment || !commentEditable || metadata.historical)
+                      throw new Error("Comment editing is unavailable.");
+                    await onComment({
+                      version,
+                      path: file.path,
+                      action: "remove",
+                      id: metadata.comment.id,
+                    });
+                  }}
+                />
+              );
+            }}
           />
         )}
       </StableDiffViewport>

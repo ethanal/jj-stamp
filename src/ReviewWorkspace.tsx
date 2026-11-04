@@ -21,6 +21,11 @@ import { ChangeId } from "./ReviewToolbar";
 import { SidebarResize } from "./SidebarResize";
 import { SplitDiffLayout } from "./SplitDiffLayout";
 import { SquashFileButton } from "./SquashFileButton";
+import { containsReviewMarkers } from "./review-comments";
+import {
+  commentSquashReason,
+  type InlineCommentProps,
+} from "./InlineReviewComments";
 import type { ColorScheme, FileView } from "./preferences";
 import type {
   DiffFile,
@@ -580,6 +585,9 @@ export function ReviewViewer({
   onRefresh,
   onDismissError,
   loadFile,
+  onComment,
+  commentEditingEnabled = false,
+  commentBusy = false,
 }: {
   state: RepoState | null;
   source?: Revision;
@@ -622,7 +630,37 @@ export function ReviewViewer({
   onRefresh: () => void;
   onDismissError: () => void;
   loadFile: (path: string, version: string) => Promise<FileDiffLoadedFiles>;
-}) {
+} & InlineCommentProps) {
+  const [commentMarkers, setCommentMarkers] = useState<{
+    identity: string;
+    paths: Set<string>;
+  }>({ identity: contentIdentity, paths: new Set() });
+  const onCommentMarkers = useCallback(
+    (path: string, hasMarkers: boolean) => {
+      setCommentMarkers((previous) => {
+        const paths =
+          previous.identity === contentIdentity
+            ? previous.paths
+            : new Set<string>();
+        if (
+          paths.has(path) === hasMarkers &&
+          previous.identity === contentIdentity
+        )
+          return previous;
+        const next = new Set(paths);
+        if (hasMarkers) next.add(path);
+        else next.delete(path);
+        return { identity: contentIdentity, paths: next };
+      });
+    },
+    [contentIdentity],
+  );
+  const squashFile = (entry: DiffFile): DiffFile =>
+    containsReviewMarkers(entry.patch) ||
+    (commentMarkers.identity === contentIdentity &&
+      commentMarkers.paths.has(entry.path))
+      ? { ...entry, unsupported: commentSquashReason }
+      : entry;
   const [vimEntry, setVimEntry] = useState<{
     request: number;
     scope: string;
@@ -790,7 +828,7 @@ export function ReviewViewer({
                 deletions={file.deletions}
               />
               <SquashFileButton
-                file={file}
+                file={squashFile(file)}
                 disabled={squashDisabled}
                 unavailable={state?.squashUnavailable}
                 onSquash={onSquashFile}
@@ -923,7 +961,7 @@ export function ReviewViewer({
                         deletions={entry.deletions}
                       />
                       <SquashFileButton
-                        file={entry}
+                        file={squashFile(entry)}
                         disabled={squashDisabled}
                         unavailable={state.squashUnavailable}
                         onSquash={onSquashFile}
@@ -1020,6 +1058,10 @@ export function ReviewViewer({
                       onDragging={onDragging}
                       onError={onError}
                       loadFile={loadFile}
+                      onComment={onComment}
+                      commentEditingEnabled={commentEditingEnabled}
+                      commentBusy={commentBusy}
+                      onCommentMarkers={onCommentMarkers}
                     />
                   )}
                 </FileDiffSection>

@@ -42,6 +42,7 @@ export interface RepoState {
   files: DiffFile[];
   operation: string;
   canUndo: boolean;
+  canEditComments?: boolean;
 }
 export type Selections = Record<string, number[]>;
 

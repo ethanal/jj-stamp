@@ -5,6 +5,8 @@
   nodejs_24,
   makeWrapper,
   jujutsu,
+  git,
+  gh,
   xdg-utils,
 }:
 
@@ -50,6 +52,8 @@ buildNpmPackage {
         lib.makeBinPath (
           [
             jujutsu
+            git
+            gh
           ]
           ++ lib.optionals stdenv.hostPlatform.isLinux [ xdg-utils ]
         )

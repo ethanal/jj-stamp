@@ -13,6 +13,7 @@ import {
 import { createRoot } from "react-dom/client";
 import type { FileDiffLoadedFiles, SelectedLineRange } from "@pierre/diffs";
 import type { LogRow, RepoState, Selections } from "./types";
+import type { ReviewCommentMutation } from "./review-comments";
 import {
   refsFromFile,
   refsFromSelection,
@@ -53,6 +54,9 @@ const PrReviewPrototype = lazy(() =>
   import("./PrReviewPrototype").then((module) => ({
     default: module.PrReviewPrototype,
   })),
+);
+const PrReview = lazy(() =>
+  import("./PrReview").then((module) => ({ default: module.PrReview })),
 );
 
 function readExpanded(side: "files" | "log"): boolean {
@@ -554,14 +558,15 @@ function App() {
     if (queued.halted) clear();
   }, [queued.halted, clear]);
   useEffect(() => {
-    if (!queued.pending && !queued.recovering) return;
+    if (!queued.pending && !queued.recovering && busy !== "saving comment")
+      return;
     const warn = (event: BeforeUnloadEvent) => {
       event.preventDefault();
       event.returnValue = "";
     };
     window.addEventListener("beforeunload", warn);
     return () => window.removeEventListener("beforeunload", warn);
-  }, [queued.pending, queued.recovering]);
+  }, [queued.pending, queued.recovering, busy]);
   const selectFile = useCallback(
     (path: string, { preserveScroll = false } = {}) => {
       // A read-only refresh need not interrupt browsing the current files.
@@ -716,6 +721,50 @@ function App() {
       setBusy("");
     }
   }, [queue, dragging, replace, revisionPreview]);
+  const saveComment = useCallback(
+    async (input: ReviewCommentMutation) => {
+      const current = queue.getSnapshot();
+      if (
+        lock.current ||
+        dragging ||
+        current.pending ||
+        current.recovering ||
+        current.halted ||
+        revisionPreview
+      )
+        throw new Error(
+          "Wait for current operations and refresh any failed squash before editing comments.",
+        );
+      if (
+        !current.confirmed?.canEditComments ||
+        input.version !== current.confirmed.version
+      )
+        throw new Error(
+          "The displayed working copy changed. Refresh before editing comments.",
+        );
+      refreshGeneration.current++;
+      lock.current = true;
+      setBusy("saving comment");
+      setError("");
+      try {
+        const result = await api<{ state: RepoState }>("comments", input);
+        replace(result.state);
+        setNotice(
+          input.action === "remove"
+            ? "Local comment removed from file"
+            : "Local comment saved in file; nothing sent to GitHub",
+        );
+      } catch (error) {
+        setError(error);
+        // Keep the inline editor's draft open on any failure. Never auto-retry.
+        throw error;
+      } finally {
+        lock.current = false;
+        setBusy("");
+      }
+    },
+    [queue, dragging, replace, revisionPreview],
+  );
   const navigationIntent = useRef(0);
   const navigationCallbacks = useRef({
     onState: (_next: RepoState) => {},
@@ -1030,9 +1079,13 @@ function App() {
           </span>
         </RevisionHeading>
         <div className="toolbar-actions">
-          {showPrPrototype && (
+          {showPrPrototype ? (
             <Suspense fallback={null}>
               <PrReviewPrototype disabled={idleActionDisabled || dragging} />
+            </Suspense>
+          ) : (
+            <Suspense fallback={null}>
+              <PrReview disabled={idleActionDisabled || dragging} />
             </Suspense>
           )}
           <button
@@ -1148,6 +1201,9 @@ function App() {
               queue.clearError();
             }}
             loadFile={loadFile}
+            onComment={saveComment}
+            commentEditingEnabled={!!state?.canEditComments && !revisionPreview}
+            commentBusy={idleActionDisabled || dragging || queued.halted}
           />
         </DiffFontSizeContext.Provider>
         <RevisionGraph

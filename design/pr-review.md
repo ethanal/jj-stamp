@@ -361,6 +361,29 @@ and an isolated disposable jj repository. Intermediate screenshots and geometry
 go under ignored `.data/pr-review-capture`; only the self-contained HTML is
 published. It does not modify the source checkout's jj history or workspace.
 
+## Experimental implementation checkpoint
+
+The `feature/pr-review-local` branch now has real PR list/open/resume and
+file-backed inline comment editing. Normal workspace mode opens the full-screen
+selector directly and makes no GitHub queries until requested. PR reviews run in
+independent, managed jj repositories with separate loopback servers; the original
+checkout is not modified by PR initialization. Remote refresh, submission,
+discussion import, and dismissal remain unimplemented.
+
+The initial implementation puts markers directly in the Remaining working-copy
+revision and conservatively blocks squash for files containing markers. This is
+an interim safety restriction, not the intended review workflow.
+
+**Proposed replacement, pending confirmation:** add a dedicated `COMMENTS`
+commit above Reviewed → Remaining. Only file-backed annotations belong in that
+top commit; the UI overlays them on the lower code revisions they affect.
+Squashing between Remaining and Reviewed should operate on annotation-free
+code, preserving the combined code tree and leaving COMMENTS on top. Overlay
+coordinates must be mapped into the displayed code revision, never copied from
+the annotation-bearing file's physical line numbers. Actual code changes,
+deleted-side anchors, conflict handling, and remote-update reconciliation need
+explicit rules; ambiguous mappings must remain visible rather than guessed.
+
 ## Implementation references to verify
 
 - GitHub CLI PR discovery and JSON fields:

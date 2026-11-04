@@ -90,7 +90,8 @@ try {
         .filter({ hasText: "namespace FixtureScope30 {" })
         .first(),
     ).toBeVisible();
-    await expect(page.locator("#file-loads")).toHaveText("2");
+    // Scope inference, comments, and expansion share the pinned file promise.
+    await expect(page.locator("#file-loads")).toHaveText("1");
     // A controlled anchor can be extended, replaced, cleared, and reset.
     const gutterGeometry = () =>
       page.locator("diffs-container").evaluate((host) =>
@@ -311,7 +312,7 @@ try {
     );
     await page.locator("[data-expand-up]").first().click();
     // Metadata-only refresh must not re-read unchanged pinned contents.
-    await expect(page.locator("#file-loads")).toHaveText("2");
+    await expect(page.locator("#file-loads")).toHaveText("1");
     await expect(line(20)).toBeVisible();
     await page.evaluate(() => {
       (

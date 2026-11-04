@@ -4,6 +4,7 @@ import { z } from "zod";
 import { ApiError, ReviewService } from "./service.ts";
 import { processFailureOutput, ProcessError } from "./process.ts";
 import { watchFailure, type WatchFailure } from "./watch-errors.ts";
+import { commentMutationSchema } from "./review-comments.ts";
 import {
   watchFilesystemEvents,
   type FilesystemChange,
@@ -343,6 +344,8 @@ export function createApi(
   router.get("/state", async (_req, res) => {
     res.json(await service.getState());
   });
+  // Embedders have no PR provider; CLI-specific routes precede this router.
+  router.get("/pr/context", (_req, res) => res.json(null));
   // This is local revision-graph data, not an event/telemetry logging endpoint.
   router.get("/graph", async (_req, res) => {
     const { version, rows } = await service.getLog({ includeOutput: false });
@@ -410,6 +413,9 @@ export function createApi(
         previewSchema.omit({ target: true }).parse(req.body),
       ),
     );
+  });
+  router.post("/comments", async (req, res) => {
+    res.json(await service.comment(commentMutationSchema.parse(req.body)));
   });
   router.post("/preview", async (req, res) => {
     res.json(await service.preview(previewSchema.parse(req.body)));
