@@ -59,9 +59,17 @@ nix run 'git+ssh://git@github.com/ethanal/jj-stamp?ref=feature/pr-review-local' 
 
 The full-screen selector lists the first 50 open PRs in the current repository,
 with title/author/number filtering and direct number/URL entry. This is an
-**all-open** list, not a review-requested filter. Only current-repository
-`github.com` PRs are supported. Ordinary startup and local refresh do not query
-GitHub; listing or explicitly opening a PR does.
+**all-open** list, not a review-requested filter. GitHub.com and GitHub Enterprise
+repositories are supported. The host is discovered through `gh repo view` in
+the current workspace; PR lookups explicitly target that host. Authenticate
+Enterprise hosts with `gh auth login --hostname github.your-company.example`.
+Only PRs on the current repository's host and in that repository can be opened.
+URLs must be canonical HTTPS URLs, without credentials, queries, or fragments.
+Ordinary startup and local refresh do not query GitHub; listing or explicitly
+opening a PR does.
+
+Saved reviews are isolated by GitHub host, repository, and PR number. Existing
+github.com archives keep their original identity and remain resumable.
 
 The CLI always starts at `@`; it accepts no positional change IDs, revsets, PR
 numbers/URLs, or PR-selection options. Choose revisions in the jj graph and PRs

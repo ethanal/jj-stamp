@@ -67,11 +67,13 @@ export class PrReviewStore {
   }
 
   async acquire(repo: PrRepository, number: number) {
+    repo = repositorySchema.parse(repo);
+    const host = new URL(repo.url).host;
+    // Preserve public GitHub's existing archive keys and reservation contents.
+    const identity = `${host === "github.com" ? "" : `${host}/`}${repo.nameWithOwner.toLowerCase()}#${number}`;
     await mkdir(this.root, { recursive: true, mode: 0o700 });
     await safeDirectory(this.root);
-    const key = createHash("sha256")
-      .update(`${repo.nameWithOwner.toLowerCase()}#${number}`)
-      .digest("hex");
+    const key = createHash("sha256").update(identity).digest("hex");
     const directory = path.join(this.root, key);
     // Keep identity reservations separate from the workspace directory. A
     // deleted/moved archive is not mistaken for a never-opened PR.
@@ -83,9 +85,7 @@ export class PrReviewStore {
     try {
       const markerFile = await open(marker, "wx", 0o600);
       try {
-        await markerFile.writeFile(
-          `${repo.nameWithOwner.toLowerCase()}#${number}\n`,
-        );
+        await markerFile.writeFile(`${identity}\n`);
         await markerFile.sync();
       } finally {
         await markerFile.close();
@@ -109,8 +109,7 @@ export class PrReviewStore {
         markerStat.isSymbolicLink() ||
         markerStat.nlink !== 1 ||
         markerStat.size > 1024 ||
-        (await readFile(marker, "utf8")) !==
-          `${repo.nameWithOwner.toLowerCase()}#${number}\n`
+        (await readFile(marker, "utf8")) !== `${identity}\n`
       )
         throw new Error(
           "Managed review identity reservation is corrupt. Nothing was recreated.",
@@ -173,6 +172,7 @@ export class PrReviewStore {
             );
           const metadata = metadataSchema.parse(raw);
           if (
+            new URL(metadata.repository.url).host !== host ||
             metadata.repository.nameWithOwner.toLowerCase() !==
               repo.nameWithOwner.toLowerCase() ||
             metadata.pullRequest.number !== number

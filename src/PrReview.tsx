@@ -42,6 +42,7 @@ export function PrReview({ disabled = false }: { disabled?: boolean }) {
   const [direct, setDirect] = useState("");
   const [selectedNumber, setSelectedNumber] = useState<number | null>(null);
   const active = context?.pullRequest;
+  const repository = listing?.repository ?? context?.repository;
   const normalized = query.trim().toLocaleLowerCase().replace(/^#/, "");
   const matches =
     listing?.pullRequests.filter((pr) =>
@@ -196,8 +197,7 @@ export function PrReview({ disabled = false }: { disabled?: boolean }) {
               {view === "selector" ? "Pull requests" : "PR review"}
             </h2>
             <p>
-              {listing?.repository.nameWithOwner ??
-                context?.repository?.nameWithOwner ??
+              {repository?.url.replace(/^https:\/\//, "") ??
                 "Current repository"}
             </p>
           </div>
@@ -219,7 +219,11 @@ export function PrReview({ disabled = false }: { disabled?: boolean }) {
                 <input
                   value={direct}
                   onChange={(event) => setDirect(event.target.value)}
-                  placeholder="#284 or https://github.com/owner/repo/pull/284"
+                  placeholder={
+                    repository
+                      ? `#284 or ${repository.url}/pull/284`
+                      : "#284 or a PR URL on your GitHub host"
+                  }
                   disabled={busy}
                   autoComplete="off"
                   spellCheck={false}

@@ -81,7 +81,7 @@ app.get("/api/pr/list", (_req, res) => {
 });
 app.post("/api/pr/open", (req, res) => {
   opens.push(req.body.input);
-  if (req.body.input !== "42")
+  if (!["42", `${repository.url}/pull/42`].includes(req.body.input))
     return res
       .status(400)
       .json({ error: "Use a PR in the current repository." });
@@ -141,6 +141,10 @@ try {
   ).toBeDisabled();
   await filter.fill("");
   const direct = page.getByLabel("Open a PR by number or URL");
+  await expect(direct).toHaveAttribute(
+    "placeholder",
+    `#284 or ${repository.url}/pull/284`,
+  );
   await direct.fill("https://github.com/other/repo/pull/42");
   await page.getByRole("button", { name: "Open directly" }).click();
   await expect(page.getByRole("alert")).toContainText("current repository");
@@ -196,10 +200,36 @@ try {
   await menu.getByRole("button", { name: "Open another PR…" }).click();
   await expect(selector).toBeVisible();
   assert.equal(opens.at(-1), "42");
+  await page.getByRole("button", { name: "Back to workspace" }).click();
+  active = null;
+  repository.url =
+    "https://source-control.github.enterprise.example/example/repo";
+  for (const pr of prs) pr.url = `${repository.url}/pull/${pr.number}`;
+  await page.reload();
+  await page.getByRole("button", { name: "Open PR…", exact: true }).click();
+  await expect(selector).toContainText(
+    "source-control.github.enterprise.example/example/repo",
+  );
+  await expect(direct).toHaveAttribute(
+    "placeholder",
+    `#284 or ${repository.url}/pull/284`,
+  );
+  await page.setViewportSize({ width: 390, height: 844 });
+  assert(
+    await selector.evaluate((el) => el.scrollWidth <= el.clientWidth),
+    "Enterprise repository identity must not overflow the mobile selector",
+  );
+  await direct.fill(`${repository.url}/pull/42`);
+  await Promise.all([
+    page.waitForEvent("load"),
+    page.getByRole("button", { name: "Open directly" }).click(),
+  ]);
+  await expect(prToolbar).toBeVisible();
+  assert.equal(opens.at(-1), `${repository.url}/pull/42`);
   assert.deepEqual(mutations, []);
   assert.deepEqual(errors, []);
   console.log(
-    "PASS: real PR picker UI, quiet non-PR state, safe navigation, errors, mobile and keyboard isolation",
+    "PASS: public/Enterprise PR picker UI, quiet non-PR state, safe navigation, errors, mobile and keyboard isolation",
   );
 } finally {
   router.closeEvents();

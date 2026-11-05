@@ -63,9 +63,13 @@
   border-bottom: 1px solid var(--border);
   flex-shrink: 0;
 }
+.pr-review-heading > div {
+  min-width: 0;
+}
 .pr-review-heading p {
   margin-top: 8px;
   color: var(--muted);
+  overflow-wrap: anywhere;
 }
 .pr-review-dialog.pr-review-selector {
   position: fixed;

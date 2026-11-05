@@ -43,6 +43,14 @@ list/open deliberately invoke `gh`. The core router returns `null` for context
 when embedded without a PR manager. There are no remote-refresh, consolidation,
 submission, discussion-import, or dismissal endpoints.
 
+GitHub.com and GitHub Enterprise use the canonical HTTPS repository URL returned
+by `gh repo view` in the original workspace. List/view calls explicitly pass
+`--repo HOST/OWNER/REPO`; the HTTPS fetch and gh credential helper use the same
+host. PR URLs must match both host and repository. Archive identities include
+the host, retaining the legacy github.com keys so existing reviews still resume.
+Metadata with a different host fails closed rather than reusing another host's
+review. No CLI PR-selection arguments are needed or accepted.
+
 - `GET /events`: a same-origin SSE stream backed only by native filesystem notifications. It sends named `ready` after all watchers are established, then coalesced named `change` events with `{workspace:boolean,heads:string[]|null}`. Workspace paths are never exposed. Operation heads are up to 64 sorted full IDs read directly from the repository metadata; `null` means they could not be read safely or exceeded that bound. A watcher failure sends `unavailable` with `{code,message}` and ends the stream so focus/manual refresh remain available. Codes distinguish the app's directory/event limits, unsupported or unsafe metadata, and OS errors such as `ENOSPC` or `EACCES`; unknown failures use `WATCH_UNAVAILABLE`. SSE diagnostics omit filesystem paths and raw error text. The owner’s terminal logs the original error once under `[jj-stamp watch]` (which may include paths), without a UI alert. Further subscribers receive the same cached failure instead of repeatedly attempting setup or printing warnings.
 - `GET /state`: selected source, mutable ancestors (`targets`, for the legacy preview API), exact `parent`, optional `squashUnavailable`, Git patches, native hunk IDs and one-based patch-body rows, operation/version, and `canUndo`. Falls back to the current `@` whenever the selected change is missing, with no pending recovery guard.
 - `POST /revision {version,changeId}`: select one visible, non-divergent change, including immutable or conflicted changes for viewing; returns `{state}`. The browser supplies a full change ID from the graph, or exactly `"@"` for the live working copy independent of graph visibility. Existing change-ID prefixes remain accepted. Other revision expressions (including `@-`, unions, bookmarks and whitespace-padded `@`) are rejected. The CLI accepts no revision arguments. The old source/version, candidate eligibility, operation checks, pending guard and rollback-on-validation-failure behavior apply equally to `@`.

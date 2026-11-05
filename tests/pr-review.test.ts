@@ -25,7 +25,8 @@ import type { PrReviewSummary } from "../src/pr-review-types.ts";
 import { startLocalServer } from "../server/http.ts";
 import { ReviewService } from "../server/service.ts";
 
-async function fixture() {
+async function fixture(host = "github.com") {
+  const repositoryUrl = `https://${host}/test-owner/test-repo`;
   const directory = await mkdtemp(path.join(os.tmpdir(), "jj-stamp-real-pr-"));
   const original = path.join(directory, "original");
   const remote = path.join(directory, "remote");
@@ -77,7 +78,7 @@ async function fixture() {
   const summary: PrReviewSummary = {
     number: 7,
     title: "Real local fixture",
-    url: "https://github.com/test-owner/test-repo/pull/7",
+    url: `${repositoryUrl}/pull/7`,
     state: "OPEN",
     isDraft: false,
     headRefName: "feature",
@@ -95,7 +96,8 @@ async function fixture() {
 const fs = require("node:fs");
 const args = process.argv.slice(3);
 const summary = JSON.parse(fs.readFileSync(process.argv[2],"utf8"));
-if (args[0] === "repo" && args[1] === "view") console.log(JSON.stringify({owner:{login:"test-owner"},name:"test-repo",nameWithOwner:"test-owner/test-repo",url:"https://github.com/test-owner/test-repo"}));
+if (args[0] === "pr" && args[args.indexOf("--repo") + 1] !== ${JSON.stringify(`${host}/test-owner/test-repo`)}) { console.error("Wrong GitHub host/repo", args); process.exit(99); }
+if (args[0] === "repo" && args[1] === "view") console.log(JSON.stringify({owner:{login:"test-owner"},name:"test-repo",nameWithOwner:"test-owner/test-repo",url:${JSON.stringify(repositoryUrl)}}));
 else if (args[0] === "pr" && args[1] === "list") console.log(JSON.stringify([summary]));
 else if (args[0] === "pr" && args[1] === "view" && args[2] === "7") console.log(JSON.stringify(summary));
 else { console.error("Forbidden fake gh invocation", args); process.exit(99); }
@@ -107,9 +109,7 @@ else { console.error("Forbidden fake gh invocation", args); process.exit(99); }
     if (command === "gh")
       return run(process.execPath, [fakeGh, data, ...args], cwd, limits);
     if (command === "git" && args.includes("fetch")) {
-      args = args.map((arg) =>
-        arg === "https://github.com/test-owner/test-repo" ? remote : arg,
-      );
+      args = args.map((arg) => (arg === repositoryUrl ? remote : arg));
     }
     return run(command, args, cwd, limits);
   };
@@ -123,6 +123,7 @@ else { console.error("Forbidden fake gh invocation", args); process.exit(99); }
     ...options,
     directory,
     remote,
+    repositoryUrl,
     mergeBase,
     head,
     base,
@@ -181,6 +182,73 @@ test("GitHub bot author logins remain supported as display-only values", () => {
   assert.throws(() =>
     summarySchema.shape.author.parse({ login: "unsafe\nidentity" }),
   );
+});
+
+test("Enterprise PRs list, open by URL, fetch the right host, and resume locally", async () => {
+  const f = await fixture("github.enterprise.example");
+  let manager = f.manager();
+  try {
+    const listed = await manager.list();
+    assert.equal(listed.repository.url, f.repositoryUrl);
+    assert.equal(listed.pullRequests[0]?.url, f.summary.url);
+    const beforeForeign = f.calls.length;
+    await assert.rejects(
+      manager.open("https://github.com/test-owner/test-repo/pull/7"),
+      /current repository/,
+    );
+    assert.equal(f.calls.length, beforeForeign, "foreign URLs run no commands");
+    const opened = await manager.open(f.summary.url);
+    const context = await (await fetch(`${opened.url}api/pr/context`)).json();
+    assert.equal(context.repository.url, f.repositoryUrl);
+    assert.equal(context.pullRequest.url, f.summary.url);
+    const fetches = f.calls.filter(
+      (call) => call.command === "git" && call.args.includes("fetch"),
+    );
+    assert.equal(fetches.length, 1);
+    assert.ok(fetches[0]!.args.includes(f.repositoryUrl));
+    assert.ok(
+      fetches[0]!.args.includes("credential.helper=!gh auth git-credential"),
+    );
+    const { metadata } = await f.archive();
+    assert.equal(metadata.repository.url, f.repositoryUrl);
+    assert.equal(
+      (
+        await jj(f.repoPath, [
+          "op",
+          "log",
+          "--ignore-working-copy",
+          "--no-graph",
+          "--limit",
+          "1",
+          "-T",
+          "id",
+        ])
+      ).stdout,
+      f.originalOperation,
+    );
+    await manager.close();
+    manager = f.manager();
+    const beforeResume = f.calls.length;
+    const resumed = await manager.open("#7");
+    assert.equal(
+      (await (await fetch(`${resumed.url}api/pr/context`)).json()).repository
+        .url,
+      f.repositoryUrl,
+    );
+    assert.equal(
+      f.calls
+        .slice(beforeResume)
+        .filter(
+          (call) =>
+            (call.command === "gh" && call.args[0] === "pr") ||
+            (call.command === "git" && call.args.includes("fetch")),
+        ).length,
+      0,
+      "resume uses local progress without PR lookup or fetch",
+    );
+  } finally {
+    await manager.close();
+  }
 });
 
 test("independent comments branches survive annotating, squashing the same code, and managed restart", async () => {
@@ -742,7 +810,7 @@ test("bundled CLI opens a managed review through the UI API and gracefully close
   );
   await writeFile(
     git,
-    `#!${process.execPath}\nconst {spawnSync}=require("node:child_process");const args=process.argv.slice(2).map(x=>x==="https://github.com/test-owner/test-repo"?${JSON.stringify(f.remote)}:x);const result=spawnSync(${JSON.stringify(realGit)},args,{stdio:"inherit"});process.exit(result.status??99);\n`,
+    `#!${process.execPath}\nconst {spawnSync}=require("node:child_process");const args=process.argv.slice(2).map(x=>x===${JSON.stringify(f.repositoryUrl)}?${JSON.stringify(f.remote)}:x);const result=spawnSync(${JSON.stringify(realGit)},args,{stdio:"inherit"});process.exit(result.status??99);\n`,
   );
   await chmod(gh, 0o755);
   await chmod(git, 0o755);
