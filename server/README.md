@@ -66,8 +66,8 @@ GitHub.com and GitHub Enterprise use the canonical HTTPS repository URL returned
 by `gh repo view` in the original workspace. PR CLI queries explicitly pass
 `--repo HOST/OWNER/REPO`; API queries use `--hostname HOST` and the pinned
 owner/repository. The HTTPS fetch and gh credential helper use the same
-host. PR URLs must match both host and repository. Archive identities include
-the host, retaining the legacy github.com keys so existing reviews still resume.
+host. PR URLs must match both host and repository. Archive identities distinguish
+hosts as well as repository and PR number.
 Metadata with a different host fails closed rather than reusing another host's
 review. No CLI PR-selection arguments are needed or accepted.
 
@@ -187,10 +187,9 @@ interpreted as a guard, or used to restore undo.
 The separate PR manager does persist schema-versioned identity metadata and
 cross-process locks under `$XDG_DATA_HOME/jj-stamp/pr-reviews/`. Schema 3 uses
 `workspaces/<shared-repository-hash>/<review-id>/`, binding the linked workspace
-to a canonical shared repository and deterministic workspace name. Independent
-schema-2 archives are detected before creating a linked review and resumed
-without migration on the same server; incomplete legacy archives fail closed
-rather than disappearing behind a fresh linked review. Bodies live in source-file trees of companion revisions,
+to a canonical shared repository and deterministic workspace name. This is the
+only supported format; old isolated archives are not discovered or migrated.
+Bodies live in source-file trees of companion revisions,
 not JSON metadata. Clean shutdown removes active locks. Crashed, missing,
 corrupt, incompatible, or incomplete archives require manual inspection; the
 manager never resets them or reimports remote changes on resume.

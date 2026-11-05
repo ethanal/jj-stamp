@@ -83,8 +83,7 @@ Ordinary startup and local refresh do not query GitHub; listing or explicitly
 opening a PR does.
 
 Saved linked reviews are scoped to the local jj repository as well as GitHub
-host, repository, and PR number. Existing isolated archives keep their original
-identity and remain resumable without discarding drafts.
+host, repository, and PR number.
 
 The CLI always starts at `@`; it accepts no positional change IDs, revsets, PR
 numbers/URLs, or PR-selection options. Choose revisions in the jj graph and PRs
@@ -145,12 +144,12 @@ To inspect stored drafts, select their COMMENTS revision in the graph or use
 `jj file show -r <comments-change-id> <path>` in the managed repository.
 
 Reviews live under `$XDG_DATA_HOME/jj-stamp/pr-reviews/` (by default
-`~/.local/share/jj-stamp/pr-reviews/`). New schema-3 reviews use
+`~/.local/share/jj-stamp/pr-reviews/`). Reviews use
 `workspaces/<local-repository-hash>/<review-id>/`; metadata binds the linked
 workspace to its canonical jj repository and workspace name, imported identities,
 and companion change IDs. Source files in jj history remain authoritative for
-bodies. Existing schema-2 independent repositories are resumed in place on the
-same server, not silently replaced or migrated. Clean shutdown releases the review lock.
+bodies. Only the linked-workspace format is supported; older isolated archives
+are ignored. Clean shutdown releases the review lock.
 Reopening resumes local progress without fetching or importing newer PR changes.
 After a crash, inspect the managed repository's `jj op log` and files before
 manually removing the `active.lock` identified by the error. Missing, corrupt,

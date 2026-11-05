@@ -25,7 +25,7 @@ import { run, jj } from "../server/process.ts";
 import type { PrReviewSummary } from "../src/pr-review-types.ts";
 import { startLocalServer } from "../server/http.ts";
 import { ReviewService } from "../server/service.ts";
-import { PrReviewStore, type PrMetadata } from "../server/pr-review-store.ts";
+import { PrReviewStore } from "../server/pr-review-store.ts";
 import { resolveRepoDirectory } from "../server/fs-events.ts";
 
 async function fixture(host = "github.com", colocate = true) {
@@ -173,8 +173,8 @@ else { console.error("Forbidden fake gh invocation", args); process.exit(99); }
     },
     async archive(number = 7) {
       const root = new PrReviewStore(
-        options.dataHome,
         await resolveRepoDirectory(original),
+        options.dataHome,
       ).root;
       const identity = `${host === "github.com" ? "" : `${host}/`}test-owner/test-repo#${number}`;
       const entry = createHash("sha256").update(identity).digest("hex");
@@ -764,7 +764,7 @@ test("archives fail closed after missing/corrupt metadata, without refetch or ov
   }
 });
 
-test("schema 1 archives require manual migration and are never reset or rewritten", async () => {
+test("unsupported metadata is rejected without resetting the linked workspace", async () => {
   const f = await fixture();
   let manager = await f.manager();
   try {
@@ -772,15 +772,13 @@ test("schema 1 archives require manual migration and are never reset or rewritte
     await manager.close();
     const archive = await f.archive();
     const metadata = path.join(archive.dir, "review.json");
-    const legacy = { ...archive.metadata, schema: 1 };
-    delete legacy.branches;
-    const bytes = JSON.stringify(legacy);
+    const bytes = JSON.stringify({ ...archive.metadata, schema: 2 });
     await writeFile(metadata, bytes);
     const before = f.calls.length;
     manager = await f.manager();
     await assert.rejects(
       manager.open("7"),
-      /schema 1.*Manual migration is required; no automatic migration or reset/,
+      /archive is missing, corrupt, or unsafe/,
     );
     assert.equal(await readFile(metadata, "utf8"), bytes);
     assert.equal(
@@ -1448,237 +1446,3 @@ for (const cached of ["head", "base"] as const) {
     }
   });
 }
-
-test("existing schema-2 isolated review resumes unchanged through the original server without remote refresh", async () => {
-  const f = await fixture();
-  const repository = {
-    owner: "test-owner",
-    name: "test-repo",
-    nameWithOwner: "test-owner/test-repo",
-    url: f.repositoryUrl,
-  };
-  const legacy = await new PrReviewStore(f.dataHome).acquire(repository, 7);
-  let metadata: Extract<PrMetadata, { schema: 2 }>;
-  let annotated: string;
-  try {
-    // Construct a real old-style isolated archive instead of relabeling a linked
-    // workspace. It has separate Git objects, independent jj history and drafts.
-    await jj(f.repoPath, ["git", "init", "--colocate", legacy.workspace]);
-    const gitDirectory = path.join(legacy.workspace, ".git");
-    await run(
-      "git",
-      [
-        `--git-dir=${gitDirectory}`,
-        "fetch",
-        "--no-tags",
-        "--no-write-fetch-head",
-        f.remote,
-        `${f.head}:refs/heads/pr-review-head`,
-        `${f.base}:refs/heads/pr-review-base`,
-      ],
-      legacy.workspace,
-    );
-    await jj(legacy.workspace, ["git", "import"]);
-    await jj(legacy.workspace, [
-      "new",
-      `commit_id("${f.mergeBase}")`,
-      "-m",
-      "Reviewed PR #7",
-    ]);
-    const change = async (revision: string) =>
-      (
-        await jj(legacy.workspace, [
-          "log",
-          "--ignore-working-copy",
-          "--no-graph",
-          "-r",
-          revision,
-          "-T",
-          "change_id",
-        ])
-      ).stdout.trim();
-    const reviewedChangeId = await change("@");
-    await jj(legacy.workspace, [
-      "new",
-      "@",
-      "-m",
-      "Remaining PR #7: legacy local review",
-    ]);
-    await jj(legacy.workspace, ["restore", "--from", `commit_id("${f.head}")`]);
-    const sourceChangeId = await change("@");
-    const branches = [];
-    for (const [codeChangeId, label] of [
-      [reviewedChangeId, "Reviewed"],
-      [sourceChangeId, "Remaining"],
-    ]) {
-      await jj(legacy.workspace, [
-        "new",
-        "--no-edit",
-        "-r",
-        `change_id("${codeChangeId}")`,
-        "-m",
-        `COMMENTS ${label} PR #7`,
-      ]);
-      branches.push({
-        codeChangeId,
-        commentsChangeId: await change(
-          `children(change_id("${codeChangeId}")) & description(substring:"COMMENTS ${label} PR #7")`,
-        ),
-      });
-    }
-    metadata = {
-      schema: 2,
-      repository,
-      pullRequest: f.summary,
-      mergeBaseOid: f.mergeBase,
-      headTreeOid: (
-        await run(
-          "git",
-          [`--git-dir=${gitDirectory}`, "rev-parse", `${f.head}^{tree}`],
-          legacy.workspace,
-        )
-      ).stdout.trim(),
-      sourceChangeId,
-      reviewedChangeId,
-      branches,
-    };
-    await legacy.create(metadata);
-    const service = new ReviewService({
-      repoPath: legacy.workspace,
-      revision: `change_id("${sourceChangeId}")`,
-      comments: metadata,
-    });
-    try {
-      const state = await service.getState();
-      await service.comment({
-        action: "add",
-        version: state.version,
-        path: "review.ts",
-        line: 1,
-        body: "Preserved schema-2 draft",
-      });
-    } finally {
-      await service.drain();
-    }
-    annotated = (
-      await jj(legacy.workspace, [
-        "file",
-        "show",
-        "--ignore-working-copy",
-        "-r",
-        `change_id("${branches[1]!.commentsChangeId}")`,
-        "--",
-        'root-file:"review.ts"',
-      ])
-    ).stdout;
-    assert.match(annotated, /Preserved schema-2 draft/);
-  } finally {
-    await legacy.release();
-  }
-  const metadataPath = path.join(legacy.directory, "review.json");
-  const metadataBytes = await readFile(metadataPath);
-  const legacyOperation = await latestOperation(legacy.workspace);
-  const original = await recordedWorkspace(f.repoPath);
-  const sharedRepository = await resolveRepoDirectory(f.repoPath);
-  const scopedRoot = new PrReviewStore(f.dataHome, sharedRepository).root;
-  assert.notEqual(
-    await resolveRepoDirectory(legacy.workspace),
-    sharedRepository,
-  );
-  await writeFile(
-    f.data,
-    JSON.stringify({
-      ...f.summary,
-      state: "MERGED",
-      headRefOid: "a".repeat(40),
-    }),
-  );
-  const callsBefore = f.calls.length;
-  const manager = await f.manager({
-    runner: async (command, args, cwd, limits) => {
-      assert.ok(
-        !(command === "git" && args.includes("fetch")),
-        "legacy resume never fetches",
-      );
-      assert.ok(
-        !(command === "gh" && args[0] === "pr"),
-        "legacy resume never revalidates remote PR state",
-      );
-      return f.runner(command, args, cwd, limits);
-    },
-  });
-  try {
-    const opened = await manager.open("7");
-    assert.equal(opened.url, `${manager.rootUrl}reviews/${legacy.key}/`);
-    assert.equal(new URL(opened.url).origin, new URL(manager.rootUrl).origin);
-    const context = await (await fetch(`${opened.url}api/pr/context`)).json();
-    assert.equal(context.mode, "pr");
-    assert.equal(
-      context.pullRequest.state,
-      "OPEN",
-      "use archived metadata, not the merged remote PR",
-    );
-    assert.equal(context.originalWorkspaceUrl, manager.rootUrl);
-    const stateResponse = await fetch(`${opened.url}api/state`);
-    assert.equal(stateResponse.status, 200, await stateResponse.clone().text());
-    const state = await stateResponse.json();
-    assert.equal(state.source.changeId, metadata.sourceChangeId);
-    assert.equal(state.canEditComments, true);
-    const overlayResponse = await fetch(`${opened.url}api/comments/file`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "X-Fold-Request": "1" },
-      body: JSON.stringify({ version: state.version, path: "review.ts" }),
-    });
-    assert.equal(
-      overlayResponse.status,
-      200,
-      await overlayResponse.clone().text(),
-    );
-    assert.equal(
-      (await overlayResponse.json()).comments[0].body,
-      "Preserved schema-2 draft",
-    );
-    assert.equal(
-      (
-        await jj(legacy.workspace, [
-          "file",
-          "show",
-          "--ignore-working-copy",
-          "-r",
-          `change_id("${metadata.branches[1]!.commentsChangeId}")`,
-          "--",
-          'root-file:"review.ts"',
-        ])
-      ).stdout,
-      annotated,
-    );
-    assert.deepEqual(await readFile(metadataPath), metadataBytes);
-    assert.equal(await latestOperation(legacy.workspace), legacyOperation);
-    assert.equal(await recordedWorkspace(f.repoPath), original);
-    assert.equal(
-      await readFile(path.join(f.repoPath, "untouched.txt"), "utf8"),
-      "unsnapshotted original bytes\n",
-    );
-    assert.equal(
-      (await lstat(path.join(legacy.workspace, ".jj", "repo"))).isDirectory(),
-      true,
-    );
-    await assert.rejects(lstat(scopedRoot), { code: "ENOENT" });
-    assert.equal(
-      f.calls
-        .slice(callsBefore)
-        .some(
-          (call) =>
-            call.args.includes("fetch") ||
-            (call.command === "gh" && call.args[0] === "pr"),
-        ),
-      false,
-    );
-  } finally {
-    await manager.close();
-  }
-  assert.deepEqual(await readFile(metadataPath), metadataBytes);
-  await assert.rejects(lstat(path.join(legacy.directory, "active.lock")), {
-    code: "ENOENT",
-  });
-});

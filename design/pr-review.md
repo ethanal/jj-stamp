@@ -383,7 +383,7 @@ selector directly and makes no GitHub queries until requested. PR reviews run in
 regular linked jj workspaces on the original server/port; the original files and
 working-copy change are not modified by PR initialization, while objects and
 history are shared. Local object reuse avoids re-fetching the same history.
-Legacy independent archives remain resumable in place. Remote refresh, submission,
+Only linked-workspace archives are supported. Remote refresh, submission,
 discussion import, and dismissal remain unimplemented.
 
 The original direct-marker prototype was superseded by independent COMMENTS

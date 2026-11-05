@@ -144,7 +144,7 @@ export class PrReviewManager implements PrHandlers {
       this.backend = {
         root,
         sharedRepository,
-        store: new PrReviewStore(this.options.dataHome, sharedRepository),
+        store: new PrReviewStore(sharedRepository, this.options.dataHome),
       };
     }
     return this.backend;
@@ -222,30 +222,28 @@ export class PrReviewManager implements PrHandlers {
               archive.workspaceName,
             )
           : await archive.read();
-        if (metadata.schema === 3) {
-          if (
-            metadata.sharedRepository !== backend.sharedRepository ||
-            (await resolveRepoDirectory(archive.workspace)) !==
-              backend.sharedRepository ||
-            metadata.workspaceName !== archive.workspaceName ||
-            (await realpath(
-              await this.jj(
-                archive.workspace,
-                [
-                  "workspace",
-                  "root",
-                  "--ignore-working-copy",
-                  "--name",
-                  metadata.workspaceName,
-                ],
-                true,
-              ),
-            )) !== archive.workspace
-          )
-            throw new Error(
-              "Managed review repository or workspace identity changed. The archive was not reset.",
-            );
-        }
+        if (
+          metadata.sharedRepository !== backend.sharedRepository ||
+          (await resolveRepoDirectory(archive.workspace)) !==
+            backend.sharedRepository ||
+          metadata.workspaceName !== archive.workspaceName ||
+          (await realpath(
+            await this.jj(
+              archive.workspace,
+              [
+                "workspace",
+                "root",
+                "--ignore-working-copy",
+                "--name",
+                metadata.workspaceName,
+              ],
+              true,
+            ),
+          )) !== archive.workspace
+        )
+          throw new Error(
+            "Managed review repository or workspace identity changed. The archive was not reset.",
+          );
         await this.validateProgress(
           archive.workspace,
           metadata,
@@ -561,7 +559,6 @@ export class PrReviewManager implements PrHandlers {
     // No working-copy snapshots or remote updates when validating an archive.
     // Rewrites retain both change IDs. Divergence, abandonment, parent changes,
     // or editing non-annotation bytes require manual inspection.
-    // Legacy schema-2 archives retain their own isolated backing Git store.
     const gitDirectory = await this.backingGitDirectory(workspace);
     const git = (args: string[]) =>
       this.command(
