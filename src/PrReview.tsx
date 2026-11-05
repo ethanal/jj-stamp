@@ -8,17 +8,15 @@ import type {
 } from "./pr-review-types";
 import "./pr-review.css";
 
-function navigateToWorkspace(value: string) {
+export function navigateToWorkspace(value: string) {
   const url = new URL(value);
   if (
-    url.protocol !== "http:" ||
-    url.hostname !== "127.0.0.1" ||
-    !url.port ||
+    url.origin !== window.location.origin ||
     url.username ||
     url.password ||
-    url.pathname !== "/" ||
-    url.search ||
-    url.hash
+    !/^(?:\/|\/reviews\/[0-9a-f]{64}\/)$/.test(url.pathname) ||
+    // Require a canonical absolute address, including no empty ?/# or userinfo.
+    value !== `${window.location.origin}${url.pathname}`
   )
     throw new Error("The server returned an invalid local workspace address.");
   window.location.assign(url.href);
@@ -317,10 +315,11 @@ export function PrReview({ disabled = false }: { disabled?: boolean }) {
                   <p>Select a PR to see its details.</p>
                 )}
                 <div className="pr-review-notice">
-                  <strong>Review in a separate local workspace</strong>
+                  <strong>Review in a regular jj workspace</strong>
                   <p>
-                    Opening creates or resumes a managed jj workspace and its
-                    review stack. Your original checkout stays untouched.
+                    Opening creates or resumes a linked jj workspace in this
+                    same UI. Workspaces share history but have separate files;
+                    your original checkout stays untouched.
                   </p>
                   <p>
                     Existing reviews resume local progress, not a newly imported
@@ -333,7 +332,7 @@ export function PrReview({ disabled = false }: { disabled?: boolean }) {
             <footer className="pr-review-footer">
               <p role="status">
                 {busy
-                  ? "Opening the managed workspace… Keep this window open."
+                  ? "Preparing the review workspace… Reusing local repository history."
                   : selected
                     ? identity(selected)
                     : "Choose a PR or enter its number or URL."}

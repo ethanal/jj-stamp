@@ -1,14 +1,15 @@
 import assert from "node:assert/strict";
 import {
   chmod,
+  lstat,
   mkdtemp,
   mkdir,
   readFile,
-  readdir,
   rename,
   writeFile,
 } from "node:fs/promises";
 import { spawn, execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { build } from "esbuild";
 import os from "node:os";
@@ -24,8 +25,10 @@ import { run, jj } from "../server/process.ts";
 import type { PrReviewSummary } from "../src/pr-review-types.ts";
 import { startLocalServer } from "../server/http.ts";
 import { ReviewService } from "../server/service.ts";
+import { PrReviewStore, type PrMetadata } from "../server/pr-review-store.ts";
+import { resolveRepoDirectory } from "../server/fs-events.ts";
 
-async function fixture(host = "github.com") {
+async function fixture(host = "github.com", colocate = true) {
   const repositoryUrl = `https://${host}/test-owner/test-repo`;
   const directory = await mkdtemp(path.join(os.tmpdir(), "jj-stamp-real-pr-"));
   const original = path.join(directory, "original");
@@ -35,7 +38,11 @@ async function fixture(host = "github.com") {
   await mkdir(remote);
   await mkdir(assetsDir);
   await writeFile(path.join(assetsDir, "index.html"), "PR fixture");
-  await jj(original, ["git", "init", "--colocate"]);
+  await jj(original, [
+    "git",
+    "init",
+    colocate ? "--colocate" : "--no-colocate",
+  ]);
   await writeFile(
     path.join(original, "untouched.txt"),
     "unsnapshotted original bytes\n",
@@ -50,6 +57,17 @@ async function fixture(host = "github.com") {
       "1",
       "-T",
       "id",
+    ])
+  ).stdout;
+  const originalChange = (
+    await jj(original, [
+      "log",
+      "--ignore-working-copy",
+      "--no-graph",
+      "-r",
+      "@",
+      "-T",
+      "change_id",
     ])
   ).stdout;
   const git = async (...args: string[]) =>
@@ -102,7 +120,7 @@ if (args[0] === "pr" && args[1] === "list" && (args[args.indexOf("--search") + 1
 if (args[0] === "repo" && args[1] === "view") console.log(JSON.stringify({owner:{login:"test-owner"},name:"test-repo",nameWithOwner:"test-owner/test-repo",url:${JSON.stringify(repositoryUrl)}}));
 else if (args[0] === "api" && args.at(-1) === "meta") console.log(JSON.stringify({installed_version:"3.23.0"}));
 else if (args[0] === "pr" && args[1] === "list") console.log(JSON.stringify([summary]));
-else if (args[0] === "pr" && args[1] === "view" && args[2] === "7") console.log(JSON.stringify(summary));
+else if (args[0] === "pr" && args[1] === "view" && args[2] === String(summary.number)) console.log(JSON.stringify(summary));
 else { console.error("Forbidden fake gh invocation", args); process.exit(99); }
 `,
   );
@@ -135,12 +153,31 @@ else { console.error("Forbidden fake gh invocation", args); process.exit(99); }
     data,
     fakeGh,
     originalOperation,
-    manager: () => new PrReviewManager(options),
-    async archive() {
-      const root = path.join(options.dataHome, "jj-stamp", "pr-reviews");
-      const entry = (await readdir(root)).find(
-        (entry) => !entry.startsWith("."),
-      )!;
+    originalChange,
+    async manager(
+      overrides: Partial<ConstructorParameters<typeof PrReviewManager>[0]> = {},
+    ) {
+      const manager = new PrReviewManager({ ...options, ...overrides });
+      const local = await startLocalServer({
+        service: new ReviewService({ repoPath: original }),
+        assetsDir,
+        port: 0,
+        pr: manager,
+      });
+      manager.setOriginalWorkspaceUrl(local.url);
+      const close = manager.close.bind(manager);
+      manager.close = async () => {
+        await Promise.all([local.close(), close()]);
+      };
+      return Object.assign(manager, { rootUrl: local.url });
+    },
+    async archive(number = 7) {
+      const root = new PrReviewStore(
+        options.dataHome,
+        await resolveRepoDirectory(original),
+      ).root;
+      const identity = `${host === "github.com" ? "" : `${host}/`}test-owner/test-repo#${number}`;
+      const entry = createHash("sha256").update(identity).digest("hex");
       const dir = path.join(root, entry);
       return {
         dir,
@@ -189,7 +226,7 @@ test("GitHub bot author logins remain supported as display-only values", () => {
 
 test("Enterprise PRs list, open by URL, fetch the right host, and resume locally", async () => {
   const f = await fixture("github.enterprise.example");
-  let manager = f.manager();
+  let manager = await f.manager();
   try {
     const listed = await manager.list();
     assert.equal(listed.repository.url, f.repositoryUrl);
@@ -214,7 +251,7 @@ test("Enterprise PRs list, open by URL, fetch the right host, and resume locally
     );
     const { metadata } = await f.archive();
     assert.equal(metadata.repository.url, f.repositoryUrl);
-    assert.equal(
+    assert.notEqual(
       (
         await jj(f.repoPath, [
           "op",
@@ -229,8 +266,22 @@ test("Enterprise PRs list, open by URL, fetch the right host, and resume locally
       ).stdout,
       f.originalOperation,
     );
+    assert.equal(
+      (
+        await jj(f.repoPath, [
+          "log",
+          "--ignore-working-copy",
+          "--no-graph",
+          "-r",
+          "@",
+          "-T",
+          "change_id",
+        ])
+      ).stdout,
+      f.originalChange,
+    );
     await manager.close();
-    manager = f.manager();
+    manager = await f.manager();
     const beforeResume = f.calls.length;
     const resumed = await manager.open("#7");
     assert.equal(
@@ -258,7 +309,7 @@ test("closed unmerged PRs can start a review, but merged PRs cannot", async () =
   for (const state of ["CLOSED", "MERGED"] as const) {
     const f = await fixture();
     await writeFile(f.data, JSON.stringify({ ...f.summary, state }));
-    const manager = f.manager();
+    const manager = await f.manager();
     try {
       const listed = await manager.list();
       assert.deepEqual(
@@ -288,8 +339,7 @@ test("closed unmerged PRs can start a review, but merged PRs cannot", async () =
 
 test("a PR merged during import is rejected after fetching without creating review metadata", async () => {
   const f = await fixture();
-  const manager = new PrReviewManager({
-    ...f,
+  const manager = await f.manager({
     runner: async (command, args, cwd, limits) => {
       const result = await f.runner(command, args, cwd, limits);
       if (command === "git" && args.includes("fetch"))
@@ -310,14 +360,14 @@ test("a PR merged during import is rejected after fetching without creating revi
 
 test("independent comments branches survive annotating, squashing the same code, and managed restart", async () => {
   const f = await fixture();
-  let manager = f.manager();
+  let manager = await f.manager();
   const headers = { "content-type": "application/json", "x-fold-request": "1" };
   try {
     const opened = await manager.open("#7");
     const state = await (await fetch(`${opened.url}api/state`)).json();
     assert.equal(state.canEditComments, true);
     const archive = await f.archive();
-    assert.equal(archive.metadata.schema, 2);
+    assert.equal(archive.metadata.schema, 3);
     assert.equal(archive.metadata.branches.length, 2);
     const branch = archive.metadata.branches.find(
       (branch: { codeChangeId: string }) =>
@@ -460,7 +510,7 @@ test("independent comments branches survive annotating, squashing the same code,
       f.data,
       JSON.stringify({ ...f.summary, headRefOid: "a".repeat(40) }),
     );
-    manager = f.manager();
+    manager = await f.manager();
     const resumed = await manager.open("7");
     const resumedState = await (await fetch(`${resumed.url}api/state`)).json();
     assert.equal(resumedState.canEditComments, true);
@@ -510,7 +560,7 @@ test("independent comments branches survive annotating, squashing the same code,
     );
     await jj(archive.workspace, ["status"]);
     await manager.close();
-    manager = f.manager();
+    manager = await f.manager();
     await assert.rejects(
       manager.open("7"),
       /Remaining tree differs from the exact pinned PR head/,
@@ -526,7 +576,7 @@ test("independent comments branches survive annotating, squashing the same code,
 
 test("resume rejects a working-copy move without silently retargeting edits", async () => {
   const f = await fixture();
-  let manager = f.manager();
+  let manager = await f.manager();
   try {
     await manager.open("7");
     const archive = await f.archive();
@@ -537,17 +587,17 @@ test("resume rejects a working-copy move without silently retargeting edits", as
       "unrelated workspace change",
     ]);
     await manager.close();
-    manager = f.manager();
+    manager = await f.manager();
     await assert.rejects(manager.open("7"), /working copy no longer edits/);
   } finally {
     await manager.close();
   }
 });
 
-test("real PR opens exact synthetic tree in isolated server and resumes local squash without remote imports", async () => {
+test("real PR opens a linked workspace on the same server and resumes local squash without remote imports", async () => {
   const f = await fixture();
-  let manager = f.manager();
-  manager.setOriginalWorkspaceUrl("http://127.0.0.1:9999/");
+  let manager = await f.manager();
+
   try {
     assert.equal(manager.context().mode, "workspace");
     assert.equal(manager.context().repository, null);
@@ -556,14 +606,15 @@ test("real PR opens exact synthetic tree in isolated server and resumes local sq
     assert.equal(list.scope, "review-involves");
     assert.deepEqual(list.pullRequests, [f.summary]);
     const opened = await manager.open("7");
-    assert.match(opened.url, /^http:\/\/127\.0\.0\.1:\d+\/$/);
+    assert.equal(new URL(opened.url).origin, new URL(manager.rootUrl).origin);
+    assert.match(new URL(opened.url).pathname, /^\/reviews\/[0-9a-f]{64}\/$/);
     assert.deepEqual(
       await manager.open("https://github.com/test-owner/test-repo/pull/7"),
       opened,
     );
     const context = await (await fetch(`${opened.url}api/pr/context`)).json();
     assert.equal(context.mode, "pr");
-    assert.equal(context.originalWorkspaceUrl, "http://127.0.0.1:9999/");
+    assert.equal(context.originalWorkspaceUrl, manager.rootUrl);
     assert.equal(context.pullRequest.number, 7);
     assert.equal(context.capabilities.refresh, false);
     const state = await (await fetch(`${opened.url}api/state`)).json();
@@ -621,7 +672,7 @@ test("real PR opens exact synthetic tree in isolated server and resumes local sq
       f.data,
       JSON.stringify({ ...f.summary, headRefOid: "a".repeat(40) }),
     );
-    manager = f.manager();
+    manager = await f.manager();
     const resumed = await manager.open("7");
     const resumedState = await (await fetch(`${resumed.url}api/state`)).json();
     assert.equal(resumedState.files.length, 0);
@@ -654,7 +705,7 @@ test("real PR opens exact synthetic tree in isolated server and resumes local sq
       await readFile(path.join(f.repoPath, "untouched.txt"), "utf8"),
       "unsnapshotted original bytes\n",
     );
-    assert.equal(
+    assert.notEqual(
       (
         await jj(f.repoPath, [
           "op",
@@ -669,6 +720,20 @@ test("real PR opens exact synthetic tree in isolated server and resumes local sq
       ).stdout,
       f.originalOperation,
     );
+    assert.equal(
+      (
+        await jj(f.repoPath, [
+          "log",
+          "--ignore-working-copy",
+          "--no-graph",
+          "-r",
+          "@",
+          "-T",
+          "change_id",
+        ])
+      ).stdout,
+      f.originalChange,
+    );
   } finally {
     await manager.close();
   }
@@ -676,7 +741,7 @@ test("real PR opens exact synthetic tree in isolated server and resumes local sq
 
 test("archives fail closed after missing/corrupt metadata, without refetch or overwriting progress", async () => {
   const f = await fixture();
-  let manager = f.manager();
+  let manager = await f.manager();
   try {
     await manager.open("7");
     await manager.close();
@@ -684,7 +749,7 @@ test("archives fail closed after missing/corrupt metadata, without refetch or ov
     const metadata = path.join(archive.dir, "review.json");
     await writeFile(metadata, "{broken");
     const before = f.calls.length;
-    manager = f.manager();
+    manager = await f.manager();
     await assert.rejects(
       manager.open("7"),
       /archive is missing, corrupt, or unsafe/,
@@ -701,7 +766,7 @@ test("archives fail closed after missing/corrupt metadata, without refetch or ov
 
 test("schema 1 archives require manual migration and are never reset or rewritten", async () => {
   const f = await fixture();
-  let manager = f.manager();
+  let manager = await f.manager();
   try {
     await manager.open("7");
     await manager.close();
@@ -712,7 +777,7 @@ test("schema 1 archives require manual migration and are never reset or rewritte
     const bytes = JSON.stringify(legacy);
     await writeFile(metadata, bytes);
     const before = f.calls.length;
-    manager = f.manager();
+    manager = await f.manager();
     await assert.rejects(
       manager.open("7"),
       /schema 1.*Manual migration is required; no automatic migration or reset/,
@@ -743,7 +808,7 @@ test("remote head move fails initialization, preserves partial archive, and does
     f.data,
     JSON.stringify({ ...f.summary, headRefOid: "b".repeat(40) }),
   );
-  const manager = f.manager();
+  const manager = await f.manager();
   try {
     await assert.rejects(manager.open("7"), /PR moved during fetch/);
     await assert.rejects(
@@ -761,13 +826,13 @@ test("remote head move fails initialization, preserves partial archive, and does
 
 test("separate reservation detects a missing whole archive without recreating it", async () => {
   const f = await fixture();
-  let manager = f.manager();
+  let manager = await f.manager();
   try {
     await manager.open("7");
     await manager.close();
     const archive = await f.archive();
     await rename(archive.dir, `${archive.dir}-saved`);
-    manager = f.manager();
+    manager = await f.manager();
     await assert.rejects(manager.open("7"), /archive is missing or unsafe/);
     await assert.rejects(readFile(path.join(archive.dir, "review.json")));
   } finally {
@@ -777,7 +842,7 @@ test("separate reservation detects a missing whole archive without recreating it
 
 test("PR HTTP handlers enforce loopback mutations and leave the original service/server in place", async () => {
   const f = await fixture();
-  const manager = f.manager();
+  const manager = new PrReviewManager(f);
   const original = await startLocalServer({
     service: new ReviewService({ repoPath: f.repoPath }),
     assetsDir: f.assetsDir,
@@ -817,7 +882,8 @@ test("PR HTTP handlers enforce loopback mutations and leave the original service
     assert.equal(opened.status, 200);
     const child = (await opened.json()).url as string;
     assert.notEqual(child, original.url);
-    const second = f.manager();
+    assert.equal(new URL(child).origin, new URL(original.url).origin);
+    const second = await f.manager();
     try {
       await assert.rejects(second.open("7"), /review is locked/);
     } finally {
@@ -832,14 +898,14 @@ test("PR HTTP handlers enforce loopback mutations and leave the original service
       "pr",
     );
     await manager.close();
-    await assert.rejects(fetch(`${child}api/pr/context`));
+    assert.equal((await fetch(`${child}api/pr/context`)).status, 404);
     assert.equal((await fetch(`${original.url}api/pr/context`)).status, 200);
   } finally {
     await Promise.all([manager.close(), original.close()]);
   }
 });
 
-test("bundled CLI opens a managed review through the UI API and gracefully closes both servers", async () => {
+test("bundled CLI opens a linked review through the same server and gracefully closes all routes", async () => {
   const f = await fixture();
   const executable = path.join(f.directory, "cli.cjs");
   const client = path.join(f.directory, "client");
@@ -920,8 +986,7 @@ test("bundled CLI opens a managed review through the UI API and gracefully close
       (await (await fetch(`${root}api/pr/context`)).json()).mode,
       "workspace",
     );
-    // Ordinary startup snapshots @; opening the PR through the UI must not
-    // change that original workspace any further.
+    // Shared repository operations change history, not the original files or @.
     const originalOperation = (
       await jj(f.repoPath, [
         "op",
@@ -942,6 +1007,7 @@ test("bundled CLI opens a managed review through the UI API and gracefully close
     assert.equal(opened.status, 200, await opened.clone().text());
     const { url } = await opened.json();
     assert.notEqual(root, url);
+    assert.equal(new URL(url).origin, new URL(root).origin);
     assert.equal(
       (await (await fetch(`${url}api/pr/context`)).json()).mode,
       "pr",
@@ -950,7 +1016,7 @@ test("bundled CLI opens a managed review through the UI API and gracefully close
       (await (await fetch(`${root}api/pr/context`)).json()).mode,
       "workspace",
     );
-    assert.equal(
+    assert.notEqual(
       (
         await jj(f.repoPath, [
           "op",
@@ -978,4 +1044,641 @@ test("bundled CLI opens a managed review through the UI API and gracefully close
       await exited;
     }
   }
+});
+
+type PrFixture = Awaited<ReturnType<typeof fixture>>;
+
+async function fixtureGitDirectory(f: PrFixture) {
+  return path.resolve(
+    f.repoPath,
+    (
+      await jj(f.repoPath, ["git", "root", "--ignore-working-copy"])
+    ).stdout.trim(),
+  );
+}
+
+async function recordedWorkspace(workspace: string) {
+  return (
+    await jj(workspace, [
+      "log",
+      "--ignore-working-copy",
+      "--no-graph",
+      "-r",
+      "@",
+      "-T",
+      'change_id ++ "\\t" ++ commit_id',
+    ])
+  ).stdout;
+}
+
+async function latestOperation(workspace: string) {
+  return (
+    await jj(workspace, [
+      "op",
+      "log",
+      "--ignore-working-copy",
+      "--no-graph",
+      "--limit",
+      "1",
+      "-T",
+      "id",
+    ])
+  ).stdout;
+}
+
+async function assertLinkedWorkspace(f: PrFixture, number = 7) {
+  const archive = await f.archive(number);
+  const sharedRepository = await resolveRepoDirectory(f.repoPath);
+  const id = path.basename(archive.dir);
+  assert.equal(
+    (await lstat(path.join(archive.workspace, ".jj", "repo"))).isFile(),
+    true,
+  );
+  assert.equal(await resolveRepoDirectory(archive.workspace), sharedRepository);
+  assert.equal(archive.metadata.schema, 3);
+  assert.equal(archive.metadata.sharedRepository, sharedRepository);
+  assert.equal(archive.metadata.workspaceName, `jj-stamp-pr-${id}`);
+  const names = (
+    await jj(f.repoPath, [
+      "workspace",
+      "list",
+      "--ignore-working-copy",
+      "-T",
+      'name ++ "\\n"',
+    ])
+  ).stdout
+    .trim()
+    .split("\n");
+  assert.ok(names.includes(archive.metadata.workspaceName));
+  await assert.rejects(lstat(path.join(archive.workspace, ".git")), {
+    code: "ENOENT",
+  });
+  return archive;
+}
+
+for (const colocate of [true, false]) {
+  test(`cached shared Git objects open without fetching (${colocate ? "colocated" : "noncolocated"} original)`, async () => {
+    const f = await fixture("github.com", colocate);
+    const gitDirectory = await fixtureGitDirectory(f);
+    // Seed dangling objects, not jj-visible bookmarks: initialization must make
+    // cached commits visible to jj without a fetch or a colocated review .git.
+    await run(
+      "git",
+      [
+        `--git-dir=${gitDirectory}`,
+        "fetch",
+        "--no-tags",
+        "--no-write-fetch-head",
+        f.remote,
+        f.head,
+        f.base,
+      ],
+      f.repoPath,
+    );
+    const before = await recordedWorkspace(f.repoPath);
+    const gitHead = await readFile(path.join(gitDirectory, "HEAD"));
+    const manager = await f.manager();
+    try {
+      const opened = await manager.open("7");
+      const archive = await assertLinkedWorkspace(f);
+      assert.equal(new URL(opened.url).origin, new URL(manager.rootUrl).origin);
+      assert.equal(
+        new URL(opened.url).pathname,
+        `/reviews/${path.basename(archive.dir)}/`,
+      );
+      assert.equal(
+        f.calls.filter(
+          (call) => call.command === "git" && call.args.includes("fetch"),
+        ).length,
+        0,
+      );
+      assert.equal(
+        f.calls.filter(
+          (call) =>
+            call.command === "gh" &&
+            call.args[0] === "pr" &&
+            call.args[1] === "view",
+        ).length,
+        2,
+      );
+      const response = await fetch(`${opened.url}api/state`);
+      assert.equal(response.status, 200, await response.clone().text());
+      assert.equal(
+        (await response.json()).source.changeId,
+        archive.metadata.sourceChangeId,
+      );
+      assert.equal(await recordedWorkspace(f.repoPath), before);
+      assert.deepEqual(
+        await readFile(path.join(gitDirectory, "HEAD")),
+        gitHead,
+      );
+      assert.equal(
+        await readFile(path.join(f.repoPath, "untouched.txt"), "utf8"),
+        "unsnapshotted original bytes\n",
+      );
+      await assert.rejects(lstat(path.join(f.repoPath, "review.ts")), {
+        code: "ENOENT",
+      });
+      assert.notEqual(await latestOperation(f.repoPath), f.originalOperation);
+      assert.ok(
+        f.calls
+          .filter((call) => call.command === "jj" && call.cwd === f.repoPath)
+          .every((call) => call.args.includes("--ignore-working-copy")),
+      );
+      assert.ok(
+        f.calls
+          .filter((call) => call.command === "git")
+          .every((call) => call.args.includes(`--git-dir=${gitDirectory}`)),
+      );
+      if (!colocate)
+        await assert.rejects(lstat(path.join(f.repoPath, ".git")), {
+          code: "ENOENT",
+        });
+    } finally {
+      await manager.close();
+    }
+  });
+}
+
+test("two PR workspaces reuse shared objects, keep unique refs and route independent services on one origin", async () => {
+  const f = await fixture();
+  const gitDirectory = await fixtureGitDirectory(f);
+  const before = await recordedWorkspace(f.repoPath);
+  const gitHead = await readFile(path.join(gitDirectory, "HEAD"));
+  const originalCommit = before.trim().split("\t")[1]!;
+  const userRefs = [
+    "refs/heads/pr-review-base",
+    "refs/heads/pr-review-head",
+    "refs/heads/user-owned",
+  ];
+  for (const ref of userRefs)
+    await run(
+      "git",
+      [`--git-dir=${gitDirectory}`, "update-ref", ref, originalCommit],
+      f.repoPath,
+    );
+  const manager = await f.manager();
+  try {
+    const first = await manager.open("7");
+    const firstArchive = await assertLinkedWorkspace(f);
+    assert.equal(
+      f.calls.filter(
+        (call) => call.command === "git" && call.args.includes("fetch"),
+      ).length,
+      1,
+    );
+    await writeFile(
+      f.data,
+      JSON.stringify({
+        ...f.summary,
+        number: 8,
+        url: `${f.repositoryUrl}/pull/8`,
+        title: "Same objects, independent review",
+      }),
+    );
+    // There is deliberately no remote refs/pull/8/head: the object cache alone
+    // suffices, while gh still revalidates PR #8 twice.
+    const second = await manager.open("8");
+    const secondArchive = await assertLinkedWorkspace(f, 8);
+    assert.equal(
+      f.calls.filter(
+        (call) => call.command === "git" && call.args.includes("fetch"),
+      ).length,
+      1,
+    );
+    assert.equal(
+      f.calls.filter(
+        (call) =>
+          call.command === "gh" &&
+          call.args[0] === "pr" &&
+          call.args[1] === "view" &&
+          call.args[2] === "8",
+      ).length,
+      2,
+    );
+    assert.notEqual(first.url, second.url);
+    assert.equal(new URL(first.url).origin, new URL(manager.rootUrl).origin);
+    assert.equal(new URL(second.url).origin, new URL(manager.rootUrl).origin);
+    assert.notEqual(
+      firstArchive.metadata.workspaceName,
+      secondArchive.metadata.workspaceName,
+    );
+    assert.notEqual(
+      firstArchive.metadata.sourceChangeId,
+      secondArchive.metadata.sourceChangeId,
+    );
+    assert.notEqual(
+      manager.workspace(path.basename(firstArchive.dir))!.service,
+      manager.workspace(path.basename(secondArchive.dir))!.service,
+    );
+    const getState = async (url: string) => {
+      const response = await fetch(`${url}api/state`);
+      assert.equal(response.status, 200, await response.clone().text());
+      return response.json();
+    };
+    const firstState = await getState(first.url);
+    const secondState = await getState(second.url);
+    assert.equal(
+      firstState.source.changeId,
+      firstArchive.metadata.sourceChangeId,
+    );
+    assert.equal(
+      secondState.source.changeId,
+      secondArchive.metadata.sourceChangeId,
+    );
+    assert.equal(firstState.parent.description, "Reviewed PR #7");
+    assert.equal(secondState.parent.description, "Reviewed PR #8");
+    for (const [opened, number] of [
+      [first, 7],
+      [second, 8],
+    ] as const)
+      assert.equal(
+        (await (await fetch(`${opened.url}api/pr/context`)).json()).pullRequest
+          .number,
+        number,
+      );
+    const selected = await fetch(`${first.url}api/revision`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Fold-Request": "1" },
+      body: JSON.stringify({
+        version: firstState.version,
+        changeId: firstArchive.metadata.reviewedChangeId,
+      }),
+    });
+    assert.equal(selected.status, 200, await selected.clone().text());
+    assert.equal(
+      (await getState(first.url)).source.changeId,
+      firstArchive.metadata.reviewedChangeId,
+    );
+    assert.equal(
+      (await getState(second.url)).source.changeId,
+      secondState.source.changeId,
+    );
+    const refs = (
+      await run(
+        "git",
+        [
+          `--git-dir=${gitDirectory}`,
+          "for-each-ref",
+          "--format=%(refname)%09%(objectname)",
+          "refs/heads/jj-stamp/",
+        ],
+        f.repoPath,
+      )
+    ).stdout
+      .trim()
+      .split("\n");
+    for (const archive of [firstArchive, secondArchive]) {
+      const ownRefs = refs.filter((ref) =>
+        ref.startsWith(`refs/heads/jj-stamp/${path.basename(archive.dir)}/`),
+      );
+      assert.equal(ownRefs.length, 2);
+      assert.ok(ownRefs.some((ref) => ref.endsWith(`/base\t${f.base}`)));
+      assert.ok(ownRefs.some((ref) => ref.endsWith(`/head\t${f.head}`)));
+    }
+    for (const ref of userRefs)
+      assert.equal(
+        (
+          await run(
+            "git",
+            [`--git-dir=${gitDirectory}`, "rev-parse", ref],
+            f.repoPath,
+          )
+        ).stdout.trim(),
+        originalCommit,
+      );
+    assert.deepEqual(await readFile(path.join(gitDirectory, "HEAD")), gitHead);
+    assert.equal(await recordedWorkspace(f.repoPath), before);
+    assert.equal(
+      await readFile(path.join(f.repoPath, "untouched.txt"), "utf8"),
+      "unsnapshotted original bytes\n",
+    );
+  } finally {
+    await manager.close();
+  }
+});
+
+for (const cached of ["head", "base"] as const) {
+  test(`only the missing PR ${cached === "head" ? "base" : "head"} is fetched into a unique namespaced ref`, async () => {
+    const f = await fixture();
+    const gitDirectory = await fixtureGitDirectory(f);
+    await run(
+      "git",
+      [
+        `--git-dir=${gitDirectory}`,
+        "fetch",
+        "--no-tags",
+        "--no-write-fetch-head",
+        f.remote,
+        cached === "head" ? f.head : f.base,
+      ],
+      f.repoPath,
+    );
+    const userRefs = [
+      "refs/heads/pr-review-base",
+      "refs/heads/pr-review-head",
+      "refs/heads/user-owned",
+    ];
+    for (const ref of userRefs)
+      await run(
+        "git",
+        [`--git-dir=${gitDirectory}`, "update-ref", ref, f.mergeBase],
+        f.repoPath,
+      );
+    const gitHead = await readFile(path.join(gitDirectory, "HEAD"));
+    const before = await recordedWorkspace(f.repoPath);
+    const manager = await f.manager();
+    try {
+      await manager.open("7");
+      const archive = await f.archive();
+      const fetches = f.calls.filter(
+        (call) => call.command === "git" && call.args.includes("fetch"),
+      );
+      assert.equal(fetches.length, 1);
+      const refspecs = fetches[0]!.args.filter((arg) =>
+        arg.includes(":refs/heads/"),
+      );
+      assert.equal(
+        refspecs.length,
+        1,
+        "do not fetch the already cached commit",
+      );
+      const [source, destination] = refspecs[0]!.split(":");
+      assert.equal(source, cached === "head" ? f.base : "refs/pull/7/head");
+      assert.ok(
+        destination!.startsWith(
+          `refs/heads/jj-stamp/${path.basename(archive.dir)}/`,
+        ),
+      );
+      assert.ok(destination!.endsWith(cached === "head" ? "/base" : "/head"));
+      assert.ok(fetches[0]!.args.includes(`--git-dir=${gitDirectory}`));
+      assert.ok(fetches[0]!.args.includes("--no-write-fetch-head"));
+      assert.equal(
+        (
+          await run(
+            "git",
+            [`--git-dir=${gitDirectory}`, "rev-parse", destination!],
+            f.repoPath,
+          )
+        ).stdout.trim(),
+        cached === "head" ? f.base : f.head,
+      );
+      for (const ref of userRefs)
+        assert.equal(
+          (
+            await run(
+              "git",
+              [`--git-dir=${gitDirectory}`, "rev-parse", ref],
+              f.repoPath,
+            )
+          ).stdout.trim(),
+          f.mergeBase,
+        );
+      assert.deepEqual(
+        await readFile(path.join(gitDirectory, "HEAD")),
+        gitHead,
+      );
+      assert.equal(await recordedWorkspace(f.repoPath), before);
+      assert.equal(
+        await readFile(path.join(f.repoPath, "untouched.txt"), "utf8"),
+        "unsnapshotted original bytes\n",
+      );
+    } finally {
+      await manager.close();
+    }
+  });
+}
+
+test("existing schema-2 isolated review resumes unchanged through the original server without remote refresh", async () => {
+  const f = await fixture();
+  const repository = {
+    owner: "test-owner",
+    name: "test-repo",
+    nameWithOwner: "test-owner/test-repo",
+    url: f.repositoryUrl,
+  };
+  const legacy = await new PrReviewStore(f.dataHome).acquire(repository, 7);
+  let metadata: Extract<PrMetadata, { schema: 2 }>;
+  let annotated: string;
+  try {
+    // Construct a real old-style isolated archive instead of relabeling a linked
+    // workspace. It has separate Git objects, independent jj history and drafts.
+    await jj(f.repoPath, ["git", "init", "--colocate", legacy.workspace]);
+    const gitDirectory = path.join(legacy.workspace, ".git");
+    await run(
+      "git",
+      [
+        `--git-dir=${gitDirectory}`,
+        "fetch",
+        "--no-tags",
+        "--no-write-fetch-head",
+        f.remote,
+        `${f.head}:refs/heads/pr-review-head`,
+        `${f.base}:refs/heads/pr-review-base`,
+      ],
+      legacy.workspace,
+    );
+    await jj(legacy.workspace, ["git", "import"]);
+    await jj(legacy.workspace, [
+      "new",
+      `commit_id("${f.mergeBase}")`,
+      "-m",
+      "Reviewed PR #7",
+    ]);
+    const change = async (revision: string) =>
+      (
+        await jj(legacy.workspace, [
+          "log",
+          "--ignore-working-copy",
+          "--no-graph",
+          "-r",
+          revision,
+          "-T",
+          "change_id",
+        ])
+      ).stdout.trim();
+    const reviewedChangeId = await change("@");
+    await jj(legacy.workspace, [
+      "new",
+      "@",
+      "-m",
+      "Remaining PR #7: legacy local review",
+    ]);
+    await jj(legacy.workspace, ["restore", "--from", `commit_id("${f.head}")`]);
+    const sourceChangeId = await change("@");
+    const branches = [];
+    for (const [codeChangeId, label] of [
+      [reviewedChangeId, "Reviewed"],
+      [sourceChangeId, "Remaining"],
+    ]) {
+      await jj(legacy.workspace, [
+        "new",
+        "--no-edit",
+        "-r",
+        `change_id("${codeChangeId}")`,
+        "-m",
+        `COMMENTS ${label} PR #7`,
+      ]);
+      branches.push({
+        codeChangeId,
+        commentsChangeId: await change(
+          `children(change_id("${codeChangeId}")) & description(substring:"COMMENTS ${label} PR #7")`,
+        ),
+      });
+    }
+    metadata = {
+      schema: 2,
+      repository,
+      pullRequest: f.summary,
+      mergeBaseOid: f.mergeBase,
+      headTreeOid: (
+        await run(
+          "git",
+          [`--git-dir=${gitDirectory}`, "rev-parse", `${f.head}^{tree}`],
+          legacy.workspace,
+        )
+      ).stdout.trim(),
+      sourceChangeId,
+      reviewedChangeId,
+      branches,
+    };
+    await legacy.create(metadata);
+    const service = new ReviewService({
+      repoPath: legacy.workspace,
+      revision: `change_id("${sourceChangeId}")`,
+      comments: metadata,
+    });
+    try {
+      const state = await service.getState();
+      await service.comment({
+        action: "add",
+        version: state.version,
+        path: "review.ts",
+        line: 1,
+        body: "Preserved schema-2 draft",
+      });
+    } finally {
+      await service.drain();
+    }
+    annotated = (
+      await jj(legacy.workspace, [
+        "file",
+        "show",
+        "--ignore-working-copy",
+        "-r",
+        `change_id("${branches[1]!.commentsChangeId}")`,
+        "--",
+        'root-file:"review.ts"',
+      ])
+    ).stdout;
+    assert.match(annotated, /Preserved schema-2 draft/);
+  } finally {
+    await legacy.release();
+  }
+  const metadataPath = path.join(legacy.directory, "review.json");
+  const metadataBytes = await readFile(metadataPath);
+  const legacyOperation = await latestOperation(legacy.workspace);
+  const original = await recordedWorkspace(f.repoPath);
+  const sharedRepository = await resolveRepoDirectory(f.repoPath);
+  const scopedRoot = new PrReviewStore(f.dataHome, sharedRepository).root;
+  assert.notEqual(
+    await resolveRepoDirectory(legacy.workspace),
+    sharedRepository,
+  );
+  await writeFile(
+    f.data,
+    JSON.stringify({
+      ...f.summary,
+      state: "MERGED",
+      headRefOid: "a".repeat(40),
+    }),
+  );
+  const callsBefore = f.calls.length;
+  const manager = await f.manager({
+    runner: async (command, args, cwd, limits) => {
+      assert.ok(
+        !(command === "git" && args.includes("fetch")),
+        "legacy resume never fetches",
+      );
+      assert.ok(
+        !(command === "gh" && args[0] === "pr"),
+        "legacy resume never revalidates remote PR state",
+      );
+      return f.runner(command, args, cwd, limits);
+    },
+  });
+  try {
+    const opened = await manager.open("7");
+    assert.equal(opened.url, `${manager.rootUrl}reviews/${legacy.key}/`);
+    assert.equal(new URL(opened.url).origin, new URL(manager.rootUrl).origin);
+    const context = await (await fetch(`${opened.url}api/pr/context`)).json();
+    assert.equal(context.mode, "pr");
+    assert.equal(
+      context.pullRequest.state,
+      "OPEN",
+      "use archived metadata, not the merged remote PR",
+    );
+    assert.equal(context.originalWorkspaceUrl, manager.rootUrl);
+    const stateResponse = await fetch(`${opened.url}api/state`);
+    assert.equal(stateResponse.status, 200, await stateResponse.clone().text());
+    const state = await stateResponse.json();
+    assert.equal(state.source.changeId, metadata.sourceChangeId);
+    assert.equal(state.canEditComments, true);
+    const overlayResponse = await fetch(`${opened.url}api/comments/file`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Fold-Request": "1" },
+      body: JSON.stringify({ version: state.version, path: "review.ts" }),
+    });
+    assert.equal(
+      overlayResponse.status,
+      200,
+      await overlayResponse.clone().text(),
+    );
+    assert.equal(
+      (await overlayResponse.json()).comments[0].body,
+      "Preserved schema-2 draft",
+    );
+    assert.equal(
+      (
+        await jj(legacy.workspace, [
+          "file",
+          "show",
+          "--ignore-working-copy",
+          "-r",
+          `change_id("${metadata.branches[1]!.commentsChangeId}")`,
+          "--",
+          'root-file:"review.ts"',
+        ])
+      ).stdout,
+      annotated,
+    );
+    assert.deepEqual(await readFile(metadataPath), metadataBytes);
+    assert.equal(await latestOperation(legacy.workspace), legacyOperation);
+    assert.equal(await recordedWorkspace(f.repoPath), original);
+    assert.equal(
+      await readFile(path.join(f.repoPath, "untouched.txt"), "utf8"),
+      "unsnapshotted original bytes\n",
+    );
+    assert.equal(
+      (await lstat(path.join(legacy.workspace, ".jj", "repo"))).isDirectory(),
+      true,
+    );
+    await assert.rejects(lstat(scopedRoot), { code: "ENOENT" });
+    assert.equal(
+      f.calls
+        .slice(callsBefore)
+        .some(
+          (call) =>
+            call.args.includes("fetch") ||
+            (call.command === "gh" && call.args[0] === "pr"),
+        ),
+      false,
+    );
+  } finally {
+    await manager.close();
+  }
+  assert.deepEqual(await readFile(metadataPath), metadataBytes);
+  await assert.rejects(lstat(path.join(legacy.directory, "active.lock")), {
+    code: "ENOENT",
+  });
 });

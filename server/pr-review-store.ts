@@ -19,7 +19,7 @@ import {
 import type { PrRepository } from "../src/pr-review-types.ts";
 
 const changeId = z.string().regex(/^[k-z]{32}$/);
-export const metadataSchema = z
+const legacyMetadataSchema = z
   .object({
     schema: z.literal(2),
     repository: repositorySchema,
@@ -40,7 +40,36 @@ export const metadataSchema = z
       .length(2),
   })
   .strict();
+const canonicalRepositoryPath = z
+  .string()
+  .refine(
+    (value) =>
+      !value.includes("\0") &&
+      path.isAbsolute(value) &&
+      path.resolve(value) === value,
+    "Shared repository must be a canonical absolute path.",
+  );
+const linkedMetadataSchema = legacyMetadataSchema.extend({
+  schema: z.literal(3),
+  sharedRepository: canonicalRepositoryPath,
+  workspaceName: z.string().regex(/^jj-stamp-pr-[0-9a-f]{64}$/),
+});
+export const metadataSchema = z.discriminatedUnion("schema", [
+  legacyMetadataSchema,
+  linkedMetadataSchema,
+]);
 export type PrMetadata = z.infer<typeof metadataSchema>;
+
+interface PrReviewArchive {
+  key: string;
+  workspaceName: string;
+  fresh: boolean;
+  directory: string;
+  workspace: string;
+  release(): Promise<void>;
+  read(): Promise<PrMetadata>;
+  create(metadata: PrMetadata): Promise<void>;
+}
 
 class UnsupportedArchiveSchema extends Error {}
 
@@ -57,23 +86,72 @@ export async function safeDirectory(directory: string): Promise<void> {
 /** Missing/corrupt archives are never silently reinitialized or overwritten. */
 export class PrReviewStore {
   readonly root: string;
+  readonly sharedRepository?: string;
+  private readonly legacyRoot: string;
+  private readonly dataHome: string;
+
   constructor(
     dataHome = process.env.XDG_DATA_HOME ||
       path.join(homedir(), ".local", "share"),
+    sharedRepository?: string,
   ) {
     if (!path.isAbsolute(dataHome))
       throw new Error("XDG_DATA_HOME must be absolute.");
-    this.root = path.join(dataHome, "jj-stamp", "pr-reviews");
+    this.dataHome = dataHome;
+    this.legacyRoot = path.join(dataHome, "jj-stamp", "pr-reviews");
+    this.sharedRepository =
+      sharedRepository === undefined
+        ? undefined
+        : canonicalRepositoryPath.parse(sharedRepository);
+    this.root =
+      this.sharedRepository === undefined
+        ? this.legacyRoot
+        : path.join(
+            this.legacyRoot,
+            "workspaces",
+            createHash("sha256").update(this.sharedRepository).digest("hex"),
+          );
   }
 
-  async acquire(repo: PrRepository, number: number) {
+  async acquire(repo: PrRepository, number: number): Promise<PrReviewArchive> {
     repo = repositorySchema.parse(repo);
     const host = new URL(repo.url).host;
     // Preserve public GitHub's existing archive keys and reservation contents.
     const identity = `${host === "github.com" ? "" : `${host}/`}${repo.nameWithOwner.toLowerCase()}#${number}`;
+    const key = createHash("sha256").update(identity).digest("hex");
+    const workspaceName = `jj-stamp-pr-${key}`;
+    const sharedRepository = this.sharedRepository;
+    if (sharedRepository !== undefined) {
+      await mkdir(this.legacyRoot, { recursive: true, mode: 0o700 });
+      await safeDirectory(this.legacyRoot);
+      const legacyKnown = path.join(this.legacyRoot, ".known");
+      let legacyReservation = false;
+      let legacyArchive = false;
+      try {
+        await safeDirectory(legacyKnown);
+        try {
+          await lstat(path.join(legacyKnown, key));
+          legacyReservation = true;
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+        }
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      }
+      try {
+        await lstat(path.join(this.legacyRoot, key));
+        legacyArchive = true;
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      }
+      // Even incomplete legacy reservations take precedence: never hide
+      // existing drafts (or damaged archives) behind a new linked workspace.
+      if (legacyReservation || legacyArchive)
+        return new PrReviewStore(this.dataHome).acquire(repo, number);
+      await safeDirectory(sharedRepository);
+    }
     await mkdir(this.root, { recursive: true, mode: 0o700 });
     await safeDirectory(this.root);
-    const key = createHash("sha256").update(identity).digest("hex");
     const directory = path.join(this.root, key);
     // Keep identity reservations separate from the workspace directory. A
     // deleted/moved archive is not mistaken for a never-opened PR.
@@ -144,7 +222,19 @@ export class PrReviewStore {
     };
     const metadataPath = path.join(directory, "review.json");
     const workspace = path.join(directory, "workspace");
+    const validateBinding = (metadata: PrMetadata) => {
+      if (
+        sharedRepository === undefined
+          ? metadata.schema !== 2
+          : metadata.schema !== 3 ||
+            metadata.sharedRepository !== sharedRepository ||
+            metadata.workspaceName !== workspaceName
+      )
+        throw new Error("Archive linked workspace binding mismatch.");
+    };
     return {
+      key,
+      workspaceName,
       fresh,
       directory,
       workspace,
@@ -165,12 +255,14 @@ export class PrReviewStore {
             raw !== null &&
             typeof raw === "object" &&
             "schema" in raw &&
-            raw.schema !== 2
+            raw.schema !== 2 &&
+            raw.schema !== 3
           )
             throw new UnsupportedArchiveSchema(
-              `Managed review archive schema ${String(raw.schema)} is incompatible with independent COMMENTS branches (schema 2). Manual migration is required; no automatic migration or reset was attempted.`,
+              `Managed review archive schema ${String(raw.schema)} is incompatible with independent COMMENTS branches (schemas 2 and 3). Manual migration is required; no automatic migration or reset was attempted.`,
             );
           const metadata = metadataSchema.parse(raw);
+          validateBinding(metadata);
           if (
             new URL(metadata.repository.url).host !== host ||
             metadata.repository.nameWithOwner.toLowerCase() !==
@@ -189,6 +281,7 @@ export class PrReviewStore {
       },
       async create(metadata: PrMetadata) {
         metadataSchema.parse(metadata);
+        validateBinding(metadata);
         const output = await open(metadataPath, "wx", 0o600);
         try {
           await output.writeFile(`${JSON.stringify(metadata, null, 2)}\n`);

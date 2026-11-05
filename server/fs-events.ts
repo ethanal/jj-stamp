@@ -112,7 +112,9 @@ async function requireDirectoryWithoutSymlinks(directory: string) {
   return absolute;
 }
 
-async function resolveRepoDirectory(workspaceRoot: string): Promise<string> {
+export async function resolveRepoDirectory(
+  workspaceRoot: string,
+): Promise<string> {
   const jjDirectory = path.join(workspaceRoot, ".jj");
   const jjEntry = await lstat(jjDirectory);
   if (!jjEntry.isDirectory() || jjEntry.isSymbolicLink())

@@ -26,9 +26,18 @@ export function errorDetails(error: unknown, label = "Request"): ErrorDetail[] {
     : [];
 }
 
+/** A tab's URL, not mutable global state, determines its workspace. */
+export function apiUrl(route: string): string {
+  const scope =
+    typeof window === "undefined"
+      ? null
+      : /^\/reviews\/[0-9a-f]{64}\//.exec(window.location.pathname);
+  return `${scope?.[0] ?? "/"}api/${route}`;
+}
+
 export async function api<T>(route: string, body?: unknown): Promise<T> {
   const response = await fetch(
-    `/api/${route}`,
+    apiUrl(route),
     body === undefined
       ? { cache: "no-store" }
       : {

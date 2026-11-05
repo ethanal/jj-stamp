@@ -4,8 +4,12 @@ The CLI constructs `ReviewService({ repoPath })` and passes it to `createApi(ser
 
 `server/http.ts` serves the bundled UI and router on `127.0.0.1`. It validates Host and Origin before any route, rejects cross-site requests, and requires JSON plus `X-Fold-Request: 1` for mutations. Browser launch and graceful shutdown live in `cli.ts`.
 
-The experimental PR manager additionally creates isolated managed repositories
-and one local server per open review. It passes
+The PR manager creates regular linked `jj workspace`s sharing the original
+repository's object store and operation history. One loopback server serves
+the original UI at `/` and each loaded review at `/reviews/<id>/`, with API and
+SSE routes scoped to that path. Original files and the original working-copy
+change stay in place, but review operations intentionally change shared history.
+It passes
 `comments: {sourceChangeId, reviewedChangeId, branches:
 [{codeChangeId, commentsChangeId}, ...]}` to the service. Each of the two partial
 code revisions has an independent comment-only leaf child. Neither is inserted
@@ -42,6 +46,21 @@ The outer HTTP server mounts `GET /pr/context`, `GET /pr/list`, and
 list/open deliberately invoke `gh`. The core router returns `null` for context
 when embedded without a PR manager. There are no remote-refresh, consolidation,
 submission, discussion-import, or dismissal endpoints.
+
+Loaded reviews expose the same routes under `/reviews/<id>/api/`; the browser's
+API and EventSource URLs derive from its workspace path. Each tab keeps its own
+service/selection. Unknown or malformed workspace IDs never fall back to the
+original service. Scoped routes share all loopback, same-origin, and mutation
+header checks; shutdown closes every workspace's SSE streams before draining.
+
+Fresh review setup discovers the shared jj repository and explicit backing Git
+directory, reuses existing head/base objects, fetches only missing targets into
+per-review refs, and creates a full linked workspace with `jj workspace add`.
+Original-workspace commands use `--ignore-working-copy`. The never-exposed
+fresh workspace's initial checkout is finalized before constructing Remaining
+and the independent COMMENTS branches. Resume never updates a stale or moved
+workspace automatically. Other shared-workspace history activity is subject to
+the existing stale-version/operation guards; serialize mutations across tabs.
 
 GitHub.com and GitHub Enterprise use the canonical HTTPS repository URL returned
 by `gh repo view` in the original workspace. PR CLI queries explicitly pass
@@ -102,7 +121,7 @@ The expression passes a literal filename to `bufadd`/`bufload` and positions the
 
 ## Safety
 
-All existing mutable-state requests, including reads which may snapshot jj, share one serial queue (at most 64 accepted active/waiting tasks; overload returns `503 BUSY`). Immutable `/commit` and `/commit-file` display requests use an independent bounded lane: two active tasks and at most sixteen waiting tasks, with `503 BUSY` on overload. They never wait on or enter the serial queue, and never alter session history, preview tokens, selection, initialization or the demand diff cache. All their jj subprocesses use `--ignore-working-copy`, including root/metadata lookup and both file sides. They share an isolated display-only descriptor LRU (ten commits, at most 8 MiB estimated retained bytes) with in-flight deduplication by exact commit ID; caller-side speculation cannot populate or evict the existing demand cache. Warm file reads launch only the existing file-side `show` commands, without repeating root, metadata, or diff reads. Public commit results are cloned so callers cannot change cached paths or parent identities. Errors and unsupported interpretations are not retained; oversized descriptors bypass the cache without evicting useful entries. Response and retention bounds are checked before insertion. No full file bytes are cached. Cache/in-flight access happens only within the bounded read lane, and shared subprocess timing belongs to the initiating task. These reads may overlap mutations but remain pinned to exact immutable commit/parent IDs. Missing/pruned commits fail without changing mutation state. The root lookup, metadata, raw diff and each file-side capture are bounded to 64 KiB, 64 KiB, 2 MiB and 4 MiB respectively; serialized responses are capped at 16 MiB. Oversized reads return `413 CONTENT_TOO_LARGE`. Only these opt-in read subprocesses may be killed for exceeding their output budget; mutation runners retain their existing behavior and process budgets. For diff reads and mutations, one metadata query snapshots the workspace and reads the source, conflicts, parent and mutability; a second query revalidates them after the requested work, followed by an operation-head check. Revision selection batches the old and candidate views into the same two queries. Graph and editor reads use metadata queries with `--ignore-working-copy` (including cold initialization); graph reads never load diffs or prepare selected file contents, and render with `--at-operation` at the captured operation. Showing the log never snapshots the working copy: it reflects recorded repository history, not unsnapshotted edits. External recorded operations and relevant eligibility/configuration changes during graph reads still invalidate the response. Execution uses full pinned commit IDs and argument arrays, with `--use-destination-message --keep-emptied`. There is no shell interpolation, interactive editor, mutation timeout, or automatic retry.
+Within each workspace service, mutable-state requests, including reads which may snapshot jj, share one serial queue (at most 64 accepted active/waiting tasks; overload returns `503 BUSY`). Immutable `/commit` and `/commit-file` display requests use an independent bounded lane: two active tasks and at most sixteen waiting tasks, with `503 BUSY` on overload. They never wait on or enter the serial queue, and never alter session history, preview tokens, selection, initialization or the demand diff cache. All their jj subprocesses use `--ignore-working-copy`, including root/metadata lookup and both file sides. They share an isolated display-only descriptor LRU (ten commits, at most 8 MiB estimated retained bytes) with in-flight deduplication by exact commit ID; caller-side speculation cannot populate or evict the existing demand cache. Warm file reads launch only the existing file-side `show` commands, without repeating root, metadata, or diff reads. Public commit results are cloned so callers cannot change cached paths or parent identities. Errors and unsupported interpretations are not retained; oversized descriptors bypass the cache without evicting useful entries. Response and retention bounds are checked before insertion. No full file bytes are cached. Cache/in-flight access happens only within the bounded read lane, and shared subprocess timing belongs to the initiating task. These reads may overlap mutations but remain pinned to exact immutable commit/parent IDs. Missing/pruned commits fail without changing mutation state. The root lookup, metadata, raw diff and each file-side capture are bounded to 64 KiB, 64 KiB, 2 MiB and 4 MiB respectively; serialized responses are capped at 16 MiB. Oversized reads return `413 CONTENT_TOO_LARGE`. Only these opt-in read subprocesses may be killed for exceeding their output budget; mutation runners retain their existing behavior and process budgets. For diff reads and mutations, one metadata query snapshots the workspace and reads the source, conflicts, parent and mutability; a second query revalidates them after the requested work, followed by an operation-head check. Revision selection batches the old and candidate views into the same two queries. Graph and editor reads use metadata queries with `--ignore-working-copy` (including cold initialization); graph reads never load diffs or prepare selected file contents, and render with `--at-operation` at the captured operation. Showing the log never snapshots the working copy: it reflects recorded repository history, not unsnapshotted edits. External recorded operations and relevant eligibility/configuration changes during graph reads still invalidate the response. Execution uses full pinned commit IDs and argument arrays, with `--use-destination-message --keep-emptied`. There is no shell interpolation, interactive editor, mutation timeout, or automatic retry.
 
 Filesystem event watching is lazy and shared by at most 32 SSE clients. It uses no periodic scans and runs no jj command after a warm service exposes its canonical workspace root. Native non-recursive watchers cover only immediate directories containing files changed in the selected revision, plus ancestor guards filtered to the path components leading to those directories. They never enumerate unrelated trees or recurse below a modified directory; even a root-level changed file does not cause `node_modules` or build directories to be walked. Missing/deleted scoped directories keep their nearest existing ancestor guards so recreation is detected. Empty scopes watch only operation heads. A fixed bound still applies to selected directories plus their guards, and `.jj`/`.git` workspace paths and observed symlink directories are rejected. Before/after identity checks reduce replacement races, but native `fs.watch` has no no-follow directory-handle API; this is not atomic against a malicious concurrent path replacement. The resolved shared repository's operation-head storage is watched separately, including linked workspaces. Raw events are coalesced briefly, but no file contents or workspace snapshots are retained. The last disconnect releases every watcher and scope subscription; graceful HTTP shutdown closes event streams before waiting on the server.
 
@@ -166,8 +185,12 @@ from older versions are ignored and left untouched; they are never deleted,
 interpreted as a guard, or used to restore undo.
 
 The separate PR manager does persist schema-versioned identity metadata and
-cross-process locks under `$XDG_DATA_HOME/jj-stamp/pr-reviews/`, plus the managed
-jj repository itself. Bodies live in source-file trees of companion revisions,
+cross-process locks under `$XDG_DATA_HOME/jj-stamp/pr-reviews/`. Schema 3 uses
+`workspaces/<shared-repository-hash>/<review-id>/`, binding the linked workspace
+to a canonical shared repository and deterministic workspace name. Independent
+schema-2 archives are detected before creating a linked review and resumed
+without migration on the same server; incomplete legacy archives fail closed
+rather than disappearing behind a fresh linked review. Bodies live in source-file trees of companion revisions,
 not JSON metadata. Clean shutdown removes active locks. Crashed, missing,
 corrupt, incompatible, or incomplete archives require manual inspection; the
 manager never resets them or reimports remote changes on resume.

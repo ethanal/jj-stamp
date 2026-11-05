@@ -57,7 +57,7 @@ export async function startLocalServer({
     );
     next();
   });
-  app.use("/api", (req, res, next) => {
+  const mutationProtection: express.RequestHandler = (req, res, next) => {
     if (
       req.method !== "GET" &&
       req.method !== "HEAD" &&
@@ -70,34 +70,79 @@ export async function startLocalServer({
       return;
     }
     next();
-  });
-  const api = createApi(service);
-  if (pr) app.use("/api", createPrRouter(pr));
-  app.use("/api", api);
-  app.use("/api", (_req, res) => {
+  };
+  const apiNotFound: express.RequestHandler = (_req, res) => {
     res.status(404).json({ error: "API route not found.", code: "NOT_FOUND" });
-  });
-  const clientDir = path.resolve(assetsDir);
-  // Content-hashed build assets can retain normal conditional caching.
-  app.use("/assets", express.static(path.join(clientDir, "assets")));
-  // Nix builds normalize mtimes, and successive index files often have the
-  // same size. Stat-based ETags / Last-Modified can therefore falsely validate
-  // an old page whose hashed assets no longer exist. Do not cache or revalidate
-  // unversioned files, including validators sent by browsers on older builds.
-  app.use(
-    express.static(clientDir, {
-      etag: false,
-      lastModified: false,
-      setHeaders: (res) => res.setHeader("Cache-Control", "no-store"),
-    }),
-  );
-  app.use((_req, res) =>
+  };
+  const staticNotFound: express.RequestHandler = (_req, res) =>
     res
       .status(404)
       .set("Cache-Control", "no-store")
       .type("text")
-      .send("Not found"),
-  );
+      .send("Not found");
+  const contexts = new Map<string, ReturnType<typeof createContext>>();
+  const services = new Set([service]);
+  function createContext(service: ReviewService, pr?: PrHandlers) {
+    const router = express.Router({ strict: true });
+    const api = createApi(service);
+    services.add(service);
+    router.use("/api", mutationProtection);
+    if (pr) router.use("/api", createPrRouter(pr));
+    router.use("/api", api, apiNotFound);
+    return { router, api };
+  }
+  const root = createContext(service, pr);
+  app.use(root.router);
+  const clientDir = path.resolve(assetsDir);
+  // Nix builds normalize mtimes, and successive index files often have the
+  // same size. Never revalidate unversioned files against stat-based validators.
+  const unversionedFiles = express.static(clientDir, {
+    etag: false,
+    lastModified: false,
+    setHeaders: (res) => res.setHeader("Cache-Control", "no-store"),
+  });
+  app.use((req, res, next) => {
+    let decodedPath = req.path;
+    try {
+      decodedPath = decodeURIComponent(req.path);
+    } catch {
+      // Malformed escapes under the reserved prefix still fail closed below.
+    }
+    if (!/^\/reviews(?:\/|$)/i.test(decodedPath)) {
+      next();
+      return;
+    }
+    // Match the raw path, not decoded route parameters: encoded, uppercase,
+    // partial and unloaded IDs must never reach the original workspace.
+    const match = /^\/reviews\/([0-9a-f]{64})\/.*$/.exec(req.path);
+    const workspace = match && pr?.workspace?.(match[1]);
+    if (!match || !workspace) {
+      staticNotFound(req, res, next);
+      return;
+    }
+    let context = contexts.get(match[1]);
+    if (!context) {
+      context = createContext(workspace.service, workspace.pr);
+      contexts.set(match[1], context);
+    }
+    // Keep query strings intact while routing this request in its own context.
+    req.url = req.url.slice("/reviews/".length + match[1].length);
+    if ((req.method === "GET" || req.method === "HEAD") && req.path === "/") {
+      unversionedFiles(req, res, (error?: unknown) => {
+        if (error) next(error);
+        else staticNotFound(req, res, next);
+      });
+      return;
+    }
+    context.router(req, res, (error?: unknown) => {
+      if (error) next(error);
+      else staticNotFound(req, res, next);
+    });
+  });
+  // Content-hashed build assets can retain normal conditional caching.
+  app.use("/assets", express.static(path.join(clientDir, "assets")));
+  app.use(unversionedFiles);
+  app.use(staticNotFound);
 
   const listen = (requestedPort: number) =>
     new Promise<void>((resolve, reject) => {
@@ -137,11 +182,14 @@ export async function startLocalServer({
         closing = true;
         // End long-lived SSE responses before server.close(), otherwise they
         // would keep graceful shutdown open indefinitely.
-        api.closeEvents();
+        root.api.closeEvents();
+        for (const context of contexts.values()) context.api.closeEvents();
         shutdown = new Promise<void>((resolve, reject) => {
           server.close((error) => (error ? reject(error) : resolve()));
           server.closeIdleConnections();
-        }).then(() => service.drain());
+        }).then(async () => {
+          await Promise.all([...services].map((service) => service.drain()));
+        });
       }
       return shutdown;
     },

@@ -19,6 +19,9 @@ remain future work.
 - Use `gh` for GitHub access.
 - Create an automatically located jj workspace without changing the invoking
   workspace's checkout or files.
+- Use a regular linked jj workspace sharing repository objects/history, and the
+  normal jj-stamp UI on the same server/port, with a workspace-scoped URL.
+- Keep team-requested unmerged PRs in the picker even after a teammate reviews.
 - Start with the PR's merge-base, an empty reviewed commit, and one synthetic
   commit containing the PR's effective change.
 - The reviewed commit accumulates reviewed changes. Updates append an interdiff
@@ -125,9 +128,11 @@ Multiple merge-bases, missing/divergent managed changes, unexpected local edits,
 or an externally rearranged stack require a diagnostic rather than guessing.
 Ordinary squash rewrites are expected and tracked by jj change ID.
 
-The initial implementation uses an independent managed jj repository rather than
-a linked workspace sharing the invoking repository. Its fetched objects and
-review history therefore do not modify the original repository either.
+The initial independent-repository/per-port implementation has been superseded
+by regular linked jj workspaces and a single server. Existing Git objects are
+reused and missing ones fetched into the shared store. Original working-copy
+files and its selected change remain in place; shared repository history changes
+normally. Workspace-scoped API/SSE paths keep different tabs independent.
 
 ## Local persistence (proposed)
 
@@ -375,8 +380,10 @@ published. It does not modify the source checkout's jj history or workspace.
 The `feature/pr-review-local` branch now has real PR list/open/resume and
 file-backed inline comment editing. Normal workspace mode opens the full-screen
 selector directly and makes no GitHub queries until requested. PR reviews run in
-independent, managed jj repositories with separate loopback servers; the original
-checkout is not modified by PR initialization. Remote refresh, submission,
+regular linked jj workspaces on the original server/port; the original files and
+working-copy change are not modified by PR initialization, while objects and
+history are shared. Local object reuse avoids re-fetching the same history.
+Legacy independent archives remain resumable in place. Remote refresh, submission,
 discussion import, and dismissal remain unimplemented.
 
 The original direct-marker prototype was superseded by independent COMMENTS

@@ -15,6 +15,10 @@ const repoPath = await createDemo(
 );
 const service = new ReviewService({ repoPath });
 const router = createApi(service);
+const reviewService = new ReviewService({ repoPath });
+const reviewRouter = createApi(reviewService);
+const reviewId = "a".repeat(64);
+const reviewPath = `/reviews/${reviewId}/`;
 const app = express();
 app.use(express.json());
 const repository = {
@@ -49,75 +53,93 @@ const prs: PrReviewSummary[] = [
     author: { login: "mira" },
   },
 ];
-let active: PrReviewSummary | null = null;
 let listRequests = 0;
 let listError = false;
-let invalidDestination = false;
+let invalidDestination: string | null = null;
 const opens: string[] = [];
 let destination = "";
-app.get("/api/pr/context", (_req, res) =>
-  res.json({
-    mode: active ? "pr" : "workspace",
-    repository: active ? repository : null,
-    originalWorkspaceUrl: active ? destination : null,
-    pullRequest: active,
-    capabilities: {
-      list: true,
-      open: true,
-      refresh: false,
-      submit: false,
-      dismiss: false,
-      threads: false,
-    },
-  } satisfies PrContext),
-);
-app.get("/api/pr/list", (_req, res) => {
-  listRequests++;
-  if (listError)
-    return res
-      .status(503)
-      .json({ error: "Sign in with gh auth login before opening a PR." });
-  res.json({
-    repository,
-    pullRequests: prs,
-    scope: "review-involves",
-    limit: 50,
-  });
-});
-app.post("/api/pr/open", (req, res) => {
-  opens.push(req.body.input);
-  if (!["42", `${repository.url}/pull/42`].includes(req.body.input))
-    return res
-      .status(400)
-      .json({ error: "Use a PR in the current repository." });
-  if (!invalidDestination) active = prs[0];
-  res.json({
-    url: invalidDestination ? "https://evil.example/" : destination,
-  });
-});
+let originalUrl = "";
 const mutations: string[] = [];
-app.use("/api", (req, _res, next) => {
-  if (
-    req.method === "POST" &&
-    /^\/(?:revision|squash|squash-lines|preview|undo|editor|comments)$/.test(
-      req.path,
+const rootRequests: string[] = [];
+const scopedRequests: string[] = [];
+function prRouter(scoped: boolean) {
+  const pr = express.Router();
+  pr.use((req, _res, next) => {
+    (scoped ? scopedRequests : rootRequests).push(req.path);
+    if (
+      req.method === "POST" &&
+      /^\/(?:revision|squash|squash-lines|preview|undo|editor|comments)$/.test(
+        req.path,
+      )
     )
+      mutations.push(req.path);
+    next();
+  });
+  pr.get("/pr/context", (_req, res) =>
+    res.json({
+      mode: scoped ? "pr" : "workspace",
+      repository: scoped ? repository : null,
+      originalWorkspaceUrl: scoped ? originalUrl : null,
+      pullRequest: scoped ? prs[0] : null,
+      capabilities: {
+        list: true,
+        open: true,
+        refresh: false,
+        submit: false,
+        dismiss: false,
+        threads: false,
+      },
+    } satisfies PrContext),
+  );
+  pr.get("/pr/list", (_req, res) => {
+    listRequests++;
+    if (listError)
+      return res
+        .status(503)
+        .json({ error: "Sign in with gh auth login before opening a PR." });
+    res.json({
+      repository,
+      pullRequests: prs,
+      scope: "review-involves",
+      limit: 50,
+    });
+  });
+  pr.post("/pr/open", (req, res) => {
+    opens.push(req.body.input);
+    if (!["42", `${repository.url}/pull/42`].includes(req.body.input))
+      return res
+        .status(400)
+        .json({ error: "Use a PR in the current repository." });
+    res.json({
+      url: invalidDestination ?? destination,
+    });
+  });
+  return pr;
+}
+app.use("/api", prRouter(false), router);
+app.use(`${reviewPath}api`, prRouter(true), reviewRouter);
+// Vite serves the same ordinary UI only at the loaded review's entry path.
+app.use("/reviews", (req, res, next) => {
+  if (
+    (req.method === "GET" || req.method === "HEAD") &&
+    req.path === `/${reviewId}/`
   )
-    mutations.push(req.path);
-  next();
+    next();
+  else res.status(404).type("text").send("Unknown review");
 });
-app.use("/api", router);
 const fixture = await createBrowserFixture({ app });
-destination = `${fixture.url}/`;
+originalUrl = `${fixture.url}/`;
+destination = `${fixture.url}${reviewPath}`;
 try {
   const { page, url, errors } = fixture;
   await page.addInitScript(() => {
-    document.hasFocus = () => false;
+    document.hasFocus = () => true;
   });
   await page.goto(url);
   const toolbar = page.getByRole("button", { name: "Open PR…", exact: true });
   await expect(toolbar).toBeEnabled();
   await expect(page.locator(".jj-log .log-row").first()).toBeVisible();
+  await expect.poll(() => rootRequests.includes("/events")).toBe(true);
   assert.equal(listRequests, 0, "ordinary review must not query GitHub");
   await expect(page.getByText("Submit review", { exact: true })).toHaveCount(0);
   await toolbar.click();
@@ -132,9 +154,9 @@ try {
   const filter = page.getByLabel("Filter by title, author, or number");
   await expect(filter).toBeFocused();
   await expect(page.locator(".pr-review-choice")).toHaveCount(2);
-  await expect(selector.getByRole("status")).toContainText(
-    "unmerged PRs for you and your teams",
-  );
+  await expect(
+    selector.locator(".pr-review-list-status [role=status]"),
+  ).toContainText("unmerged PRs for you and your teams");
   await filter.pressSequentially("mira");
   await expect(filter).toBeFocused();
   await expect(page.locator(".pr-review-choice")).toHaveCount(1);
@@ -156,13 +178,28 @@ try {
   await direct.fill("https://github.com/other/repo/pull/42");
   await page.getByRole("button", { name: "Open directly" }).click();
   await expect(page.getByRole("alert")).toContainText("current repository");
-  invalidDestination = true;
   await direct.fill("42");
-  await page.getByRole("button", { name: "Open directly" }).click();
-  await expect(page.getByRole("alert")).toContainText(
-    "invalid local workspace address",
+  const otherPort = new URL(originalUrl);
+  otherPort.port =
+    otherPort.port === "65535" ? "1" : String(Number(otherPort.port) + 1);
+  for (const invalid of [
+    "https://evil.example/",
+    `${fixture.url}/not-a-review/`,
+    otherPort.href,
+  ]) {
+    invalidDestination = invalid;
+    await page.getByRole("button", { name: "Open directly" }).click();
+    await expect(page.getByRole("alert")).toContainText(
+      "invalid local workspace address",
+    );
+    assert.equal(page.url(), originalUrl);
+  }
+  assert.equal(
+    (
+      await page.request.get(`${fixture.url}/reviews/${"b".repeat(64)}/`)
+    ).status(),
+    404,
   );
-  assert.equal(page.url(), destination);
   await page.getByRole("button", { name: "Back to workspace" }).focus();
   await page.keyboard.press("s");
   await page.keyboard.press("u");
@@ -190,7 +227,7 @@ try {
     "mobile selector must not overflow horizontally",
   );
   await page.setViewportSize({ width: 1440, height: 900 });
-  invalidDestination = false;
+  invalidDestination = null;
   await page.getByRole("button", { name: /#42 · Improve queue/ }).click();
   await Promise.all([
     page.waitForEvent("load"),
@@ -198,6 +235,12 @@ try {
   ]);
   const prToolbar = page.getByRole("button", { name: "PR #42 ▾" });
   await expect(prToolbar).toBeVisible();
+  assert.equal(page.url(), destination);
+  await expect(page.locator(".jj-log .log-row").first()).toBeVisible();
+  await expect(page.locator("[data-line]").first()).toBeVisible();
+  await expect.poll(() => scopedRequests.includes("/state")).toBe(true);
+  await expect.poll(() => scopedRequests.includes("/graph")).toBe(true);
+  await expect.poll(() => scopedRequests.includes("/events")).toBe(true);
   await prToolbar.click();
   const menu = page.getByRole("dialog", { name: "PR review", exact: true });
   await expect(menu).toContainText("Imported head: aaaaaaaaaaaa");
@@ -209,7 +252,13 @@ try {
   await expect(selector).toBeVisible();
   assert.equal(opens.at(-1), "42");
   await page.getByRole("button", { name: "Back to workspace" }).click();
-  active = null;
+  await prToolbar.click();
+  await Promise.all([
+    page.waitForEvent("load"),
+    page.getByRole("button", { name: "Return to original workspace" }).click(),
+  ]);
+  assert.equal(page.url(), originalUrl);
+  await expect(toolbar).toBeVisible();
   repository.url =
     "https://source-control.github.enterprise.example/example/repo";
   for (const pr of prs) pr.url = `${repository.url}/pull/${pr.number}`;
@@ -233,14 +282,16 @@ try {
     page.getByRole("button", { name: "Open directly" }).click(),
   ]);
   await expect(prToolbar).toBeVisible();
+  assert.equal(page.url(), destination);
   assert.equal(opens.at(-1), `${repository.url}/pull/42`);
   assert.deepEqual(mutations, []);
   assert.deepEqual(errors, []);
   console.log(
-    "PASS: public/Enterprise PR picker UI, quiet non-PR state, safe navigation, errors, mobile and keyboard isolation",
+    "PASS: same-origin scoped PR UI/API/events, return to original workspace, public/Enterprise picker, safe navigation, mobile and keyboard isolation",
   );
 } finally {
   router.closeEvents();
+  reviewRouter.closeEvents();
   await fixture.close();
-  await service.drain();
+  await Promise.all([service.drain(), reviewService.drain()]);
 }

@@ -7,12 +7,17 @@ import {
   readFile,
   readdir,
   rm,
+  symlink,
   writeFile,
 } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
-import { PrReviewStore, type PrMetadata } from "../server/pr-review-store.ts";
+import {
+  metadataSchema,
+  PrReviewStore,
+  type PrMetadata,
+} from "../server/pr-review-store.ts";
 import type { PrRepository } from "../src/pr-review-types.ts";
 
 function repository(host = "github.com"): PrRepository {
@@ -24,7 +29,7 @@ function repository(host = "github.com"): PrRepository {
   };
 }
 
-function metadata(repo: PrRepository): PrMetadata {
+function metadata(repo: PrRepository): Extract<PrMetadata, { schema: 2 }> {
   const sourceChangeId = "k".repeat(32);
   const reviewedChangeId = "l".repeat(32);
   return {
@@ -55,6 +60,20 @@ function metadata(repo: PrRepository): PrMetadata {
 
 function key(identity: string) {
   return createHash("sha256").update(identity).digest("hex");
+}
+
+function linkedMetadata(
+  repo: PrRepository,
+  sharedRepository: string,
+  workspaceName: string,
+): Extract<PrMetadata, { schema: 3 }> {
+  return { ...metadata(repo), schema: 3, sharedRepository, workspaceName };
+}
+
+async function sharedRepo(dataHome: string, clone = "clone") {
+  const directory = path.join(dataHome, clone, ".jj", "repo");
+  await mkdir(directory, { recursive: true });
+  return directory;
 }
 
 test("legacy github.com archives retain their exact keys and reservation filenames", async (t) => {
@@ -226,4 +245,314 @@ test("invalid repository identities are rejected before creating storage or rese
     await assert.rejects(store.acquire(repo, 7));
     await assert.rejects(lstat(store.root), { code: "ENOENT" });
   }
+});
+
+test("linked stores scope the same GitHub PR to the canonical local repository", async (t) => {
+  const dataHome = await mkdtemp(path.join(os.tmpdir(), "jj-stamp-pr-store-"));
+  t.after(() => rm(dataHome, { recursive: true, force: true }));
+  const repo = repository();
+  const legacyRoot = new PrReviewStore(dataHome).root;
+  const archiveKey = key("test-owner/test-repo#7");
+  const workspaceName = `jj-stamp-pr-${archiveKey}`;
+  const sharedRepositories = await Promise.all([
+    sharedRepo(dataHome, "first-clone"),
+    sharedRepo(dataHome, "second-clone"),
+  ]);
+  const archives = [];
+  try {
+    for (const sharedRepository of sharedRepositories) {
+      const store = new PrReviewStore(dataHome, sharedRepository);
+      assert.equal(
+        store.root,
+        path.join(legacyRoot, "workspaces", key(sharedRepository)),
+      );
+      const archive = await store.acquire(repo, 7);
+      archives.push(archive);
+      assert.equal(archive.key, archiveKey);
+      assert.equal(archive.workspaceName, workspaceName);
+      assert.equal(archive.fresh, true);
+      assert.equal(archive.directory, path.join(store.root, archiveKey));
+      await mkdir(archive.workspace);
+      const original = linkedMetadata(repo, sharedRepository, workspaceName);
+      await archive.create(original);
+      assert.deepEqual(await archive.read(), original);
+      await writeFile(
+        path.join(archive.workspace, "comments.txt"),
+        sharedRepository,
+      );
+      assert.equal(
+        await readFile(path.join(store.root, ".known", archiveKey), "utf8"),
+        "test-owner/test-repo#7\n",
+      );
+      for (const file of [
+        path.join(store.root, ".known", archiveKey),
+        path.join(archive.directory, "review.json"),
+        path.join(archive.directory, "active.lock"),
+      ])
+        assert.equal((await lstat(file)).mode & 0o777, 0o600);
+      assert.equal((await lstat(store.root)).mode & 0o777, 0o700);
+      await assert.rejects(
+        new PrReviewStore(dataHome, sharedRepository).acquire(repo, 7),
+        /locked/,
+      );
+    }
+    assert.notEqual(archives[0].directory, archives[1].directory);
+    await assert.rejects(lstat(path.join(legacyRoot, ".known")), {
+      code: "ENOENT",
+    });
+  } finally {
+    for (const archive of archives) await archive.release();
+  }
+  for (const sharedRepository of sharedRepositories) {
+    const archive = await new PrReviewStore(dataHome, sharedRepository).acquire(
+      repo,
+      7,
+    );
+    try {
+      assert.equal(archive.fresh, false);
+      assert.deepEqual(
+        await archive.read(),
+        linkedMetadata(repo, sharedRepository, workspaceName),
+      );
+      assert.equal(
+        await readFile(path.join(archive.workspace, "comments.txt"), "utf8"),
+        sharedRepository,
+      );
+    } finally {
+      await archive.release();
+    }
+  }
+});
+
+test("schema 3 create/read require the exact linked repository and deterministic workspace binding", async (t) => {
+  const dataHome = await mkdtemp(path.join(os.tmpdir(), "jj-stamp-pr-store-"));
+  const sharedRepository = await sharedRepo(dataHome);
+  const store = new PrReviewStore(dataHome, sharedRepository);
+  const repo = repository();
+  const archive = await store.acquire(repo, 7);
+  t.after(async () => {
+    await archive.release();
+    await rm(dataHome, { recursive: true, force: true });
+  });
+  await mkdir(archive.workspace);
+  const original = linkedMetadata(
+    repo,
+    sharedRepository,
+    archive.workspaceName,
+  );
+  assert.deepEqual(metadataSchema.parse(metadata(repo)), metadata(repo));
+  assert.deepEqual(metadataSchema.parse(original), original);
+  const invalid = [
+    { ...original, sharedRepository: await sharedRepo(dataHome, "other") },
+    { ...original, workspaceName: `jj-stamp-pr-${"f".repeat(64)}` },
+    { ...original, sharedRepository: "relative/.jj/repo" },
+    metadata(repo),
+  ];
+  const metadataPath = path.join(archive.directory, "review.json");
+  for (const candidate of invalid) {
+    await assert.rejects(archive.create(candidate));
+    await assert.rejects(lstat(metadataPath), { code: "ENOENT" });
+  }
+  await archive.create(original);
+  for (const candidate of invalid) {
+    const bytes = `${JSON.stringify(candidate)}\n`;
+    await writeFile(metadataPath, bytes);
+    await assert.rejects(archive.read(), /corrupt.*not recreated/);
+    assert.equal(await readFile(metadataPath, "utf8"), bytes);
+  }
+  const foreignHost = linkedMetadata(
+    repository("other.example.com"),
+    sharedRepository,
+    archive.workspaceName,
+  );
+  await writeFile(metadataPath, JSON.stringify(foreignHost));
+  await assert.rejects(archive.read(), /corrupt.*not recreated/);
+  await writeFile(metadataPath, JSON.stringify(original));
+  assert.deepEqual(await archive.read(), original);
+
+  const legacy = await new PrReviewStore(dataHome).acquire(repo, 8);
+  try {
+    await mkdir(legacy.workspace);
+    await assert.rejects(legacy.create(original), /binding mismatch/);
+    await writeFile(
+      path.join(legacy.directory, "review.json"),
+      JSON.stringify(original),
+    );
+    await assert.rejects(legacy.read(), /corrupt.*not recreated/);
+  } finally {
+    await legacy.release();
+  }
+});
+
+test("linked stores resume legacy archives unchanged rather than hiding existing drafts", async (t) => {
+  const dataHome = await mkdtemp(path.join(os.tmpdir(), "jj-stamp-pr-store-"));
+  t.after(() => rm(dataHome, { recursive: true, force: true }));
+  const sharedRepository = await sharedRepo(dataHome);
+  for (const host of ["github.com", "enterprise.example.com"]) {
+    const repo = repository(host);
+    const legacyStore = new PrReviewStore(dataHome);
+    const legacy = await legacyStore.acquire(repo, 7);
+    await mkdir(legacy.workspace);
+    await legacy.create(metadata(repo));
+    const comments = path.join(legacy.workspace, "comments.txt");
+    await writeFile(comments, "never discard this draft\n");
+    const metadataPath = path.join(legacy.directory, "review.json");
+    const archived = await readFile(metadataPath, "utf8");
+    await legacy.release();
+    const store = new PrReviewStore(dataHome, sharedRepository);
+    const resumed = await store.acquire(repo, 7);
+    try {
+      assert.equal(resumed.fresh, false);
+      assert.equal(resumed.directory, legacy.directory);
+      assert.equal(resumed.key, legacy.key);
+      assert.equal(resumed.workspaceName, `jj-stamp-pr-${legacy.key}`);
+      assert.deepEqual(await resumed.read(), metadata(repo));
+      assert.equal(await readFile(metadataPath, "utf8"), archived);
+      assert.equal(
+        await readFile(comments, "utf8"),
+        "never discard this draft\n",
+      );
+      await assert.rejects(lstat(store.root), { code: "ENOENT" });
+      await assert.rejects(legacyStore.acquire(repo, 7), /locked/);
+      await assert.rejects(store.acquire(repo, 7), /locked/);
+    } finally {
+      await resumed.release();
+    }
+  }
+});
+
+test("legacy identity takes precedence even when a linked archive also exists", async (t) => {
+  const dataHome = await mkdtemp(path.join(os.tmpdir(), "jj-stamp-pr-store-"));
+  t.after(() => rm(dataHome, { recursive: true, force: true }));
+  const sharedRepository = await sharedRepo(dataHome);
+  const repo = repository();
+  const store = new PrReviewStore(dataHome, sharedRepository);
+  const linked = await store.acquire(repo, 7);
+  await mkdir(linked.workspace);
+  await linked.create(
+    linkedMetadata(repo, sharedRepository, linked.workspaceName),
+  );
+  await linked.release();
+  const linkedBytes = await readFile(
+    path.join(linked.directory, "review.json"),
+    "utf8",
+  );
+  const legacy = await new PrReviewStore(dataHome).acquire(repo, 7);
+  await mkdir(legacy.workspace);
+  await legacy.create(metadata(repo));
+  await legacy.release();
+  const resumed = await store.acquire(repo, 7);
+  try {
+    assert.equal(resumed.directory, legacy.directory);
+    assert.equal((await resumed.read()).schema, 2);
+  } finally {
+    await resumed.release();
+  }
+  await writeFile(path.join(legacy.directory, "review.json"), "corrupt");
+  const damaged = await store.acquire(repo, 7);
+  try {
+    assert.equal(damaged.directory, legacy.directory);
+    await assert.rejects(damaged.read(), /corrupt.*not recreated/);
+    assert.equal(
+      await readFile(path.join(linked.directory, "review.json"), "utf8"),
+      linkedBytes,
+    );
+  } finally {
+    await damaged.release();
+  }
+});
+
+test("damaged legacy archives and reservations fail closed before creating linked storage", async (t) => {
+  for (const damage of [
+    "missing-archive",
+    "missing-reservation",
+    "corrupt-reservation",
+    "corrupt-metadata",
+    "missing-metadata",
+    "missing-workspace",
+    "unsupported-schema",
+    "oversize-metadata",
+  ]) {
+    await t.test(damage, async (t) => {
+      const dataHome = await mkdtemp(
+        path.join(os.tmpdir(), "jj-stamp-pr-store-"),
+      );
+      t.after(() => rm(dataHome, { recursive: true, force: true }));
+      const sharedRepository = await sharedRepo(dataHome);
+      const repo = repository();
+      const legacyStore = new PrReviewStore(dataHome);
+      const legacy = await legacyStore.acquire(repo, 7);
+      await mkdir(legacy.workspace);
+      await legacy.create(metadata(repo));
+      await legacy.release();
+      const metadataPath = path.join(legacy.directory, "review.json");
+      const reservation = path.join(legacyStore.root, ".known", legacy.key);
+      if (damage === "missing-archive")
+        await rm(legacy.directory, { recursive: true });
+      if (damage === "missing-reservation") await rm(reservation);
+      if (damage === "corrupt-reservation")
+        await writeFile(reservation, "another PR\n");
+      if (damage === "corrupt-metadata") await writeFile(metadataPath, "{");
+      if (damage === "missing-metadata") await rm(metadataPath);
+      if (damage === "missing-workspace")
+        await rm(legacy.workspace, { recursive: true });
+      if (damage === "unsupported-schema")
+        await writeFile(
+          metadataPath,
+          JSON.stringify({ ...metadata(repo), schema: 1 }),
+        );
+      if (damage === "oversize-metadata")
+        await writeFile(metadataPath, " ".repeat(65537));
+      const store = new PrReviewStore(dataHome, sharedRepository);
+      await assert.rejects(async () => {
+        const archive = await store.acquire(repo, 7);
+        try {
+          assert.equal(archive.fresh, false);
+          await archive.read();
+        } finally {
+          await archive.release();
+        }
+      });
+      await assert.rejects(lstat(store.root), { code: "ENOENT" });
+      if (damage === "missing-archive")
+        await assert.rejects(lstat(legacy.directory), { code: "ENOENT" });
+    });
+  }
+});
+
+test("linked storage requires canonical absolute repository paths, not symlink aliases", async (t) => {
+  const dataHome = await mkdtemp(path.join(os.tmpdir(), "jj-stamp-pr-store-"));
+  t.after(() => rm(dataHome, { recursive: true, force: true }));
+  for (const sharedRepository of [
+    "relative/.jj/repo",
+    `${dataHome}/clone/../clone/.jj/repo`,
+    `${dataHome}/clone/.jj/repo/`,
+    `${dataHome}/\0`,
+  ])
+    assert.throws(() => new PrReviewStore(dataHome, sharedRepository));
+  const sharedRepository = await sharedRepo(dataHome);
+  const alias = path.join(dataHome, "alias");
+  await symlink(sharedRepository, alias);
+  const store = new PrReviewStore(dataHome, alias);
+  await assert.rejects(store.acquire(repository(), 7), /unsafe directory/);
+  await assert.rejects(lstat(store.root), { code: "ENOENT" });
+});
+
+test("a missing linked archive is never recreated after reserving its identity", async (t) => {
+  const dataHome = await mkdtemp(path.join(os.tmpdir(), "jj-stamp-pr-store-"));
+  t.after(() => rm(dataHome, { recursive: true, force: true }));
+  const sharedRepository = await sharedRepo(dataHome);
+  const store = new PrReviewStore(dataHome, sharedRepository);
+  const archive = await store.acquire(repository(), 7);
+  await archive.release();
+  await rm(archive.directory, { recursive: true });
+  await assert.rejects(
+    store.acquire(repository(), 7),
+    /missing.*not recreated/,
+  );
+  await assert.rejects(lstat(archive.directory), { code: "ENOENT" });
+  assert.equal(
+    await readFile(path.join(store.root, ".known", archive.key), "utf8"),
+    "test-owner/test-repo#7\n",
+  );
 });

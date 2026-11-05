@@ -82,18 +82,30 @@ URLs must be canonical HTTPS URLs, without credentials, queries, or fragments.
 Ordinary startup and local refresh do not query GitHub; listing or explicitly
 opening a PR does.
 
-Saved reviews are isolated by GitHub host, repository, and PR number. Existing
-github.com archives keep their original identity and remain resumable.
+Saved linked reviews are scoped to the local jj repository as well as GitHub
+host, repository, and PR number. Existing isolated archives keep their original
+identity and remain resumable without discarding drafts.
 
 The CLI always starts at `@`; it accepts no positional change IDs, revsets, PR
 numbers/URLs, or PR-selection options. Choose revisions in the jj graph and PRs
 in the browser selector.
 
-A PR opens in an isolated, managed jj repository, served by its own loopback
-server. The invoking checkout's files and history are not changed by opening the
-PR. New reviews require an unmerged PR; an existing local review can still be
-resumed without refreshing its remote status. Its menu can return you to the
-original workspace. The initial code stack is
+A new PR opens in a regular **`jj workspace` sharing your repository**, using
+the **same jj-stamp UI, server, and port** at `/reviews/<id>/`. The original
+workspace's files and working-copy change stay in place; objects, commits, and
+the operation history are shared, as with any jj workspace. Separate tabs stay
+bound to their own workspace rather than changing a server-wide selection.
+
+Opening reuses local head/base objects when available; otherwise it fetches
+missing objects into the shared Git store, reusing existing history rather than
+cloning an empty repository per PR. It then creates the review commits, checks
+their invariants, and loads the normal review UI. A first fetch of unseen history
+can still take time. Changes elsewhere in the shared repository can invalidate
+stale operations/Undo; avoid concurrent mutations across workspaces.
+
+New reviews require an unmerged PR; an existing local review can still be
+resumed without refreshing its remote status. Its menu returns to the original
+workspace on the same port. The initial code stack is
 merge-base → **Reviewed** → **Remaining** (`@`), with Remaining's complete tree
 equal to the captured PR head. Squash/Undo/Clear, the file tree, diff controls,
 and jj graph remain available.
@@ -133,9 +145,12 @@ To inspect stored drafts, select their COMMENTS revision in the graph or use
 `jj file show -r <comments-change-id> <path>` in the managed repository.
 
 Reviews live under `$XDG_DATA_HOME/jj-stamp/pr-reviews/` (by default
-`~/.local/share/jj-stamp/pr-reviews/`), keyed by repository and PR. Metadata records
-the imported identities and companion change IDs; source files in jj history
-remain authoritative for bodies. Clean shutdown releases the review lock.
+`~/.local/share/jj-stamp/pr-reviews/`). New schema-3 reviews use
+`workspaces/<local-repository-hash>/<review-id>/`; metadata binds the linked
+workspace to its canonical jj repository and workspace name, imported identities,
+and companion change IDs. Source files in jj history remain authoritative for
+bodies. Existing schema-2 independent repositories are resumed in place on the
+same server, not silently replaced or migrated. Clean shutdown releases the review lock.
 Reopening resumes local progress without fetching or importing newer PR changes.
 After a crash, inspect the managed repository's `jj op log` and files before
 manually removing the `active.lock` identified by the error. Missing, corrupt,

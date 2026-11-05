@@ -30,7 +30,13 @@ import { ContentStore } from "./content-store";
 import { RevisionNavigation } from "./revision-navigation";
 import { FilesystemRefresh, parseRepositoryChange } from "./filesystem-refresh";
 import { SquashQueue } from "./squash-queue";
-import { api, errorMessage, errorDetails, type ErrorDetail } from "./api";
+import {
+  api,
+  apiUrl,
+  errorMessage,
+  errorDetails,
+  type ErrorDetail,
+} from "./api";
 import { DiffFontSizeContext } from "./DiffRuntime";
 import { useAppearancePreferences } from "./preferences";
 import {
@@ -498,7 +504,7 @@ function App() {
   }, [focused, visible, busy, dragging, focusRefreshPending, queued]);
   useEffect(() => {
     if (!focused || !visible || !queued.confirmed) return;
-    const events = new EventSource("/api/events");
+    const events = new EventSource(apiUrl("events"));
     // Establishing/re-establishing observation needs one catch-up check: changes
     // may have happened between the last state read and attaching the watcher.
     events.addEventListener("ready", () => {

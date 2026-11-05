@@ -1,9 +1,12 @@
 import express from "express";
 import type { ErrorRequestHandler } from "express";
+import { randomUUID } from "node:crypto";
+import { realpath } from "node:fs/promises";
+import path from "node:path";
 import { z } from "zod";
 import { run } from "./process.ts";
 import { ReviewService } from "./service.ts";
-import { startLocalServer } from "./http.ts";
+import { resolveRepoDirectory } from "./fs-events.ts";
 import {
   PrGithub,
   oid,
@@ -23,6 +26,9 @@ export interface PrHandlers {
   context(): PrContext;
   list(): Promise<PrListResult>;
   open(input: string): Promise<PrOpenResult>;
+  workspace?(
+    id: string,
+  ): { service: ReviewService; pr: PrHandlers } | undefined;
 }
 
 export function createPrRouter(handlers: PrHandlers) {
@@ -76,14 +82,21 @@ export function createPrRouter(handlers: PrHandlers) {
 
 interface ManagedReview {
   metadata: PrMetadata;
-  local: Awaited<ReturnType<typeof startLocalServer>>;
+  service: ReviewService;
+  pr: PrHandlers;
+  id: string;
+  url: string;
   release(): Promise<void>;
 }
 
 /** Owns child services for the lifetime of the original workspace server. */
 export class PrReviewManager implements PrHandlers {
   private github: PrGithub;
-  private store: PrReviewStore;
+  private backend?: {
+    root: string;
+    sharedRepository: string;
+    store: PrReviewStore;
+  };
   private repository: PrRepository | null = null;
   private reviews = new Map<number, ManagedReview>();
   private originalUrl: string | null = null;
@@ -104,11 +117,37 @@ export class PrReviewManager implements PrHandlers {
   ) {
     this.runner = options.runner ?? run;
     this.github = new PrGithub(options.repoPath, this.runner);
-    this.store = new PrReviewStore(options.dataHome);
   }
 
   setOriginalWorkspaceUrl(url: string) {
-    this.originalUrl = url;
+    this.originalUrl = url.endsWith("/") ? url : `${url}/`;
+  }
+
+  workspace(id: string) {
+    if (this.closing || !/^[0-9a-f]{64}$/.test(id)) return undefined;
+    const review = [...this.reviews.values()].find(
+      (review) => review.id === id,
+    );
+    return review ? { service: review.service, pr: review.pr } : undefined;
+  }
+
+  private async currentRepository() {
+    if (!this.backend) {
+      const root = await realpath(
+        await this.jj(
+          this.options.repoPath,
+          ["root", "--ignore-working-copy"],
+          true,
+        ),
+      );
+      const sharedRepository = await resolveRepoDirectory(root);
+      this.backend = {
+        root,
+        sharedRepository,
+        store: new PrReviewStore(this.options.dataHome, sharedRepository),
+      };
+    }
+    return this.backend;
   }
 
   context(metadata?: PrMetadata): PrContext {
@@ -156,28 +195,64 @@ export class PrReviewManager implements PrHandlers {
   open(input: string): Promise<PrOpenResult> {
     parsePrInput(input);
     return this.enqueue(async () => {
+      if (!this.originalUrl)
+        throw new Error(
+          "Start the original workspace server before opening a PR.",
+        );
       this.repository ??= await this.github.repository();
       const number = parsePrInput(input, this.repository);
       const existing = this.reviews.get(number);
-      if (existing) return { url: existing.local.url };
+      if (existing) return { url: existing.url };
       // Each managed service can expose a workspace editor and arbitrary local
       // review operations, so cap live workspaces as well as queued requests.
       if (this.reviews.size >= 8)
         throw new Error(
-          "At most eight managed PR servers can be open. Restart to close them.",
+          "At most eight managed PR workspaces can be open. Restart to close them.",
         );
-      const archive = await this.store.acquire(this.repository, number);
+      const backend = await this.currentRepository();
+      const archive = await backend.store.acquire(this.repository, number);
+      let service: ReviewService | undefined;
       try {
         const metadata = archive.fresh
-          ? await this.initialize(this.repository, number, archive.workspace)
+          ? await this.initialize(
+              this.repository,
+              number,
+              archive.workspace,
+              archive.key,
+              archive.workspaceName,
+            )
           : await archive.read();
+        if (metadata.schema === 3) {
+          if (
+            metadata.sharedRepository !== backend.sharedRepository ||
+            (await resolveRepoDirectory(archive.workspace)) !==
+              backend.sharedRepository ||
+            metadata.workspaceName !== archive.workspaceName ||
+            (await realpath(
+              await this.jj(
+                archive.workspace,
+                [
+                  "workspace",
+                  "root",
+                  "--ignore-working-copy",
+                  "--name",
+                  metadata.workspaceName,
+                ],
+                true,
+              ),
+            )) !== archive.workspace
+          )
+            throw new Error(
+              "Managed review repository or workspace identity changed. The archive was not reset.",
+            );
+        }
         await this.validateProgress(
           archive.workspace,
           metadata,
           !archive.fresh,
         );
         if (archive.fresh) await archive.create(metadata);
-        const service = new ReviewService({
+        service = new ReviewService({
           repoPath: archive.workspace,
           revision: `change_id("${metadata.sourceChangeId}")`,
           comments: {
@@ -188,20 +263,28 @@ export class PrReviewManager implements PrHandlers {
           onTiming: this.options.onTiming,
         });
         await service.getState();
-        const local = await startLocalServer({
+        const pr: PrHandlers = {
+          context: () => this.context(metadata),
+          list: () => this.list(),
+          open: (next) => this.open(next),
+          workspace: (id) => this.workspace(id),
+        };
+        const url = `${this.originalUrl}reviews/${archive.key}/`;
+        this.reviews.set(number, {
+          metadata,
           service,
-          assetsDir: this.options.assetsDir,
-          port: 0,
-          pr: {
-            context: () => this.context(metadata),
-            list: () => this.list(),
-            open: (next) => this.open(next),
-          },
+          pr,
+          id: archive.key,
+          url,
+          release: archive.release,
         });
-        this.reviews.set(number, { metadata, local, release: archive.release });
-        return { url: local.url };
+        return { url };
       } catch (error) {
-        await archive.release();
+        try {
+          await service?.drain();
+        } finally {
+          await archive.release();
+        }
         throw error;
       }
     });
@@ -232,25 +315,76 @@ export class PrReviewManager implements PrHandlers {
     );
   }
 
+  private async backingGitDirectory(workspace: string) {
+    return realpath(
+      path.resolve(
+        workspace,
+        await this.jj(
+          workspace,
+          ["git", "root", "--ignore-working-copy"],
+          true,
+        ),
+      ),
+    );
+  }
+
   private async initialize(
     repository: PrRepository,
     number: number,
     workspace: string,
+    key: string,
+    workspaceName: string,
   ): Promise<PrMetadata> {
     const pullRequest = await this.github.view(repository, number);
     if (pullRequest.state === "MERGED")
       throw new Error("Merged pull requests cannot start a new review.");
-    await this.jj(this.options.repoPath, [
-      "git",
-      "init",
-      "--colocate",
-      workspace,
-    ]);
+    const backend = await this.currentRepository();
+    const gitDirectory = await this.backingGitDirectory(backend.root);
+    const git = (args: string[], read = false) =>
+      this.command(
+        "git",
+        [`--git-dir=${gitDirectory}`, ...args],
+        backend.root,
+        read,
+      );
+    // The archive key separates PRs, and the attempt suffix avoids touching even
+    // an existing ref under our namespace. Cached objects still need refs so
+    // jj's import can discover objects not already visible in its commit graph.
+    const namespace = `refs/heads/jj-stamp/${key}/${randomUUID()}`;
+    const refs = [
+      {
+        oid: pullRequest.baseRefOid,
+        ref: `${namespace}/base`,
+        source: pullRequest.baseRefOid,
+      },
+      {
+        oid: pullRequest.headRefOid,
+        ref: `${namespace}/head`,
+        source: `refs/pull/${number}/head`,
+      },
+    ];
+    const missing: string[] = [];
+    for (const object of refs) {
+      let present = false;
+      try {
+        await git(["cat-file", "-e", `${object.oid}^{commit}`], true);
+        present = true;
+      } catch {
+        // Fetch below fails visibly if the object is missing for another reason.
+      }
+      if (present)
+        await git([
+          "update-ref",
+          object.ref,
+          object.oid,
+          "0".repeat(object.oid.length),
+        ]);
+      else missing.push(`${object.source}:${object.ref}`);
+    }
     // Explicit credentials helper is static, never built from user input. No
     // setup-git/global config, checkout, GitHub write API, or inherited origin.
-    await this.command(
-      "git",
-      [
+    if (missing.length)
+      await git([
         "-c",
         "credential.helper=",
         "-c",
@@ -264,21 +398,14 @@ export class PrReviewManager implements PrHandlers {
         "--no-tags",
         "--no-write-fetch-head",
         repository.url,
-        `${pullRequest.baseRefOid}:refs/heads/pr-review-base`,
-        `refs/pull/${number}/head:refs/heads/pr-review-head`,
-      ],
-      workspace,
-    );
-    const head = await this.command(
-      "git",
-      ["rev-parse", "--verify", "refs/heads/pr-review-head^{commit}"],
-      workspace,
+        ...missing,
+      ]);
+    const head = await git(
+      ["rev-parse", "--verify", `${namespace}/head^{commit}`],
       true,
     );
-    const base = await this.command(
-      "git",
-      ["rev-parse", "--verify", "refs/heads/pr-review-base^{commit}"],
-      workspace,
+    const base = await git(
+      ["rev-parse", "--verify", `${namespace}/base^{commit}`],
       true,
     );
     if (head !== pullRequest.headRefOid || base !== pullRequest.baseRefOid)
@@ -295,27 +422,27 @@ export class PrReviewManager implements PrHandlers {
         "PR changed during initialization. No review was initialized.",
       );
     const mergeBaseOid = oid.parse(
-      await this.command(
-        "git",
-        ["merge-base", "--all", head, base],
-        workspace,
-        true,
-      ),
+      await git(["merge-base", "--all", head, base], true),
     );
     const headTreeOid = oid.parse(
-      await this.command(
-        "git",
-        ["rev-parse", `${head}^{tree}`],
-        workspace,
-        true,
-      ),
+      await git(["rev-parse", `${head}^{tree}`], true),
     );
-    await this.jj(workspace, ["git", "import"]);
-    await this.jj(workspace, [
-      "new",
+    // Import and workspace creation operate from the original workspace without
+    // snapshotting its files or moving its working-copy change.
+    await this.jj(backend.root, ["git", "import", "--ignore-working-copy"]);
+    await this.jj(backend.root, [
+      "workspace",
+      "add",
+      "--ignore-working-copy",
+      "--name",
+      workspaceName,
+      "--sparse-patterns",
+      "full",
+      "-r",
       `commit_id("${mergeBaseOid}")`,
       "-m",
       `Reviewed PR #${number}`,
+      workspace,
     ]);
     const reviewedChangeId = await this.jj(
       workspace,
@@ -330,6 +457,25 @@ export class PrReviewManager implements PrHandlers {
       ],
       true,
     );
+    // --ignore-working-copy also skips the new workspace's initial checkout.
+    // Finish that checkout only here, while this workspace is freshly created
+    // and has never been exposed to a reviewer. Never do this on archive resume.
+    await this.jj(workspace, ["workspace", "update-stale"]);
+    const checkedOutChangeId = await this.jj(
+      workspace,
+      [
+        "log",
+        "--ignore-working-copy",
+        "--no-graph",
+        "-r",
+        "@",
+        "-T",
+        "change_id",
+      ],
+      true,
+    );
+    if (checkedOutChangeId !== reviewedChangeId)
+      throw new Error("The new review workspace moved during initialization.");
     await this.jj(workspace, [
       "new",
       "@",
@@ -394,7 +540,9 @@ export class PrReviewManager implements PrHandlers {
       branches.push({ codeChangeId, commentsChangeId: matches[0]![0] });
     }
     return {
-      schema: 2,
+      schema: 3,
+      sharedRepository: backend.sharedRepository,
+      workspaceName,
       repository,
       pullRequest,
       mergeBaseOid,
@@ -413,6 +561,15 @@ export class PrReviewManager implements PrHandlers {
     // No working-copy snapshots or remote updates when validating an archive.
     // Rewrites retain both change IDs. Divergence, abandonment, parent changes,
     // or editing non-annotation bytes require manual inspection.
+    // Legacy schema-2 archives retain their own isolated backing Git store.
+    const gitDirectory = await this.backingGitDirectory(workspace);
+    const git = (args: string[]) =>
+      this.command(
+        "git",
+        [`--git-dir=${gitDirectory}`, ...args],
+        workspace,
+        true,
+      );
     const inspect = async (id: string) => {
       const text = await this.jj(
         workspace,
@@ -469,12 +626,7 @@ export class PrReviewManager implements PrHandlers {
       throw new Error(
         "Managed review ancestry changed. The archive was not reset.",
       );
-    const tree = await this.command(
-      "git",
-      ["rev-parse", `${source.commit}^{tree}`],
-      workspace,
-      true,
-    );
+    const tree = await git(["rev-parse", `${source.commit}^{tree}`]);
     if (tree !== metadata.headTreeOid)
       throw new Error(
         "Managed Remaining tree differs from the exact pinned PR head. The archive was not reset.",
@@ -504,20 +656,10 @@ export class PrReviewManager implements PrHandlers {
           "Managed COMMENTS branch parent changed. The archive was not reset.",
         );
       const codeTree = oid.parse(
-        await this.command(
-          "git",
-          ["rev-parse", `${code.commit}^{tree}`],
-          workspace,
-          true,
-        ),
+        await git(["rev-parse", `${code.commit}^{tree}`]),
       );
       const commentsTree = oid.parse(
-        await this.command(
-          "git",
-          ["rev-parse", `${comments.commit}^{tree}`],
-          workspace,
-          true,
-        ),
+        await git(["rev-parse", `${comments.commit}^{tree}`]),
       );
       if (!allowComments && commentsTree !== codeTree)
         throw new Error("Managed initial COMMENTS branch is not empty.");
@@ -540,10 +682,14 @@ export class PrReviewManager implements PrHandlers {
         await this.queue;
         const results = await Promise.allSettled(
           [...this.reviews.values()].map(async (review) => {
-            await review.local.close();
-            await review.release();
+            try {
+              await review.service.drain();
+            } finally {
+              await review.release();
+            }
           }),
         );
+        this.reviews.clear();
         const failed = results.find((result) => result.status === "rejected");
         if (failed?.status === "rejected") throw failed.reason;
       })();
