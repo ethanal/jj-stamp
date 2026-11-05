@@ -147,7 +147,7 @@ export class PrReviewManager implements PrHandlers {
       return {
         repository: this.repository,
         pullRequests: await this.github.list(this.repository),
-        scope: "all-open",
+        scope: "review-involves",
         limit: 50,
       };
     });
@@ -238,8 +238,8 @@ export class PrReviewManager implements PrHandlers {
     workspace: string,
   ): Promise<PrMetadata> {
     const pullRequest = await this.github.view(repository, number);
-    if (pullRequest.state !== "OPEN")
-      throw new Error("Only open pull requests can start a new review.");
+    if (pullRequest.state === "MERGED")
+      throw new Error("Merged pull requests cannot start a new review.");
     await this.jj(this.options.repoPath, [
       "git",
       "init",
@@ -289,7 +289,7 @@ export class PrReviewManager implements PrHandlers {
     if (
       revalidated.headRefOid !== head ||
       revalidated.baseRefOid !== base ||
-      revalidated.state !== "OPEN"
+      revalidated.state === "MERGED"
     )
       throw new Error(
         "PR changed during initialization. No review was initialized.",

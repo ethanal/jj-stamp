@@ -77,7 +77,12 @@ app.get("/api/pr/list", (_req, res) => {
     return res
       .status(503)
       .json({ error: "Sign in with gh auth login before opening a PR." });
-  res.json({ repository, pullRequests: prs, scope: "all-open", limit: 50 });
+  res.json({
+    repository,
+    pullRequests: prs,
+    scope: "review-involves",
+    limit: 50,
+  });
 });
 app.post("/api/pr/open", (req, res) => {
   opens.push(req.body.input);
@@ -127,6 +132,9 @@ try {
   const filter = page.getByLabel("Filter by title, author, or number");
   await expect(filter).toBeFocused();
   await expect(page.locator(".pr-review-choice")).toHaveCount(2);
+  await expect(selector.getByRole("status")).toContainText(
+    "unmerged PRs for you and your teams",
+  );
   await filter.pressSequentially("mira");
   await expect(filter).toBeFocused();
   await expect(page.locator(".pr-review-choice")).toHaveCount(1);

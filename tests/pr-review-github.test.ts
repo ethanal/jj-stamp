@@ -150,9 +150,11 @@ for (const host of [
       const result =
         args[0] === "repo"
           ? { ...repo, owner: { login: repo.owner } }
-          : args[1] === "list"
-            ? [pr]
-            : pr;
+          : args[0] === "api"
+            ? { installed_version: "3.23.0" }
+            : args[1] === "list"
+              ? [pr]
+              : pr;
       return { stdout: JSON.stringify(result), stderr: "" };
     };
     const github = new PrGithub("/original/workspace", runner);
@@ -165,27 +167,119 @@ for (const host of [
       "--json",
       "owner,name,nameWithOwner,url",
     ]);
-    for (const call of calls.slice(1))
+    const prCalls = calls.filter((call) => call[0] === "pr");
+    for (const call of prCalls)
       assert.equal(call[call.indexOf("--repo") + 1], `${host}/owner/repo`);
-    assert.deepEqual(calls[1]!.slice(0, 8), [
+    assert.deepEqual(prCalls[0]!.slice(0, 10), [
       "pr",
       "list",
       "--repo",
       `${host}/owner/repo`,
       "--state",
-      "open",
+      "all",
+      "--search",
+      "review-involves:@me -is:merged",
       "--limit",
       "50",
     ]);
-    assert.deepEqual(calls[2]!.slice(0, 5), [
+    assert.deepEqual(prCalls[1]!.slice(0, 5), [
       "pr",
       "view",
       "7",
       "--repo",
       `${host}/owner/repo`,
     ]);
+    assert.deepEqual(
+      calls.filter((call) => call[0] === "api"),
+      host === "github.enterprise.example"
+        ? [["api", "--hostname", host, "--method", "GET", "meta"]]
+        : [],
+    );
   });
 }
+
+test("native review queue keeps completed reviews and closed unmerged PRs, never merged PRs", async () => {
+  const repo = repository("github.com");
+  const candidates = (["OPEN", "CLOSED", "MERGED"] as const).map(
+    (state, index) => ({
+      ...summary(repo),
+      number: index + 7,
+      url: `${repo.url}/pull/${index + 7}`,
+      state,
+      reviewDecision: "APPROVED",
+    }),
+  );
+  const github = new PrGithub("/workspace", async (_command, args) => {
+    assert.equal(
+      args[args.indexOf("--search") + 1],
+      "review-involves:@me -is:merged",
+    );
+    assert.equal(args[args.indexOf("--state") + 1], "all");
+    assert.equal(args[args.indexOf("--limit") + 1], "50");
+    assert.ok(!args.includes("--review-requested"));
+    return { stdout: JSON.stringify(candidates), stderr: "" };
+  });
+  assert.deepEqual(
+    (await github.list(repo)).map((pr) => [pr.number, pr.state]),
+    [
+      [7, "OPEN"],
+      [8, "CLOSED"],
+    ],
+  );
+});
+
+test("old or unknown Enterprise versions use request history instead of an unsupported search qualifier", async () => {
+  for (const [version, native] of [
+    ["3.9.0", false],
+    ["3.22.9", false],
+    ["3.23.0", true],
+    ["3.100.0", true],
+    ["4.0.0", true],
+    ["unknown", false],
+    [undefined, false],
+  ] as const) {
+    const calls: string[][] = [];
+    const github = new PrGithub("/workspace", async (command, args) => {
+      assert.equal(command, "gh");
+      calls.push([...args]);
+      if (args[0] === "pr") return { stdout: "[]", stderr: "" };
+      assert.equal(args[0], "api");
+      assert.equal(
+        args[args.indexOf("--hostname") + 1],
+        "github.enterprise.example",
+      );
+      if (args.at(-1) === "meta")
+        return {
+          stdout: JSON.stringify({ installed_version: version }),
+          stderr: "",
+        };
+      throw new Error("legacy request-history lookup reached");
+    });
+    if (native) assert.deepEqual(await github.list(repository()), []);
+    else
+      await assert.rejects(
+        github.list(repository()),
+        /legacy request-history lookup reached/,
+      );
+    assert.equal(
+      calls.some((args) => args[0] === "pr"),
+      native,
+      String(version),
+    );
+  }
+});
+
+test("failed Enterprise version discovery never falls back to an unfiltered PR list", async () => {
+  const github = new PrGithub("/workspace", async (_command, args) => {
+    assert.equal(args[0], "api");
+    if (args.at(-1) === "meta") throw new Error("metadata unavailable");
+    throw new Error("legacy request-history lookup reached");
+  });
+  await assert.rejects(
+    github.list(repository()),
+    /legacy request-history lookup reached/,
+  );
+});
 
 test("gh errors provide authentication guidance for the selected Enterprise host", async () => {
   const github = new PrGithub("/workspace", async () => {

@@ -37,7 +37,7 @@ export interface PrContext {
 export interface PrListResult {
   repository: PrRepository;
   pullRequests: PrReviewSummary[];
-  scope: "all-open";
+  scope: "review-involves";
   limit: 50;
 }
 

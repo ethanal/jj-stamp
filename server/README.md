@@ -44,12 +44,28 @@ when embedded without a PR manager. There are no remote-refresh, consolidation,
 submission, discussion-import, or dismissal endpoints.
 
 GitHub.com and GitHub Enterprise use the canonical HTTPS repository URL returned
-by `gh repo view` in the original workspace. List/view calls explicitly pass
-`--repo HOST/OWNER/REPO`; the HTTPS fetch and gh credential helper use the same
+by `gh repo view` in the original workspace. PR CLI queries explicitly pass
+`--repo HOST/OWNER/REPO`; API queries use `--hostname HOST` and the pinned
+owner/repository. The HTTPS fetch and gh credential helper use the same
 host. PR URLs must match both host and repository. Archive identities include
 the host, retaining the legacy github.com keys so existing reviews still resume.
 Metadata with a different host fails closed rather than reusing another host's
 review. No CLI PR-selection arguments are needed or accepted.
+
+The picker has scope `review-involves`: first 50 matching unmerged PRs, including
+closed-but-unmerged PRs. GitHub.com/GHEC and GHES >=3.23 use
+`gh pr list --state all --search 'review-involves:@me -is:merged' --limit 50`.
+This retains team-requested PRs after a teammate reviews; it does not filter by
+pending review status or `reviewDecision`. Other/unknown hosts use bounded,
+paginated team membership and current/historical request queries, stopping
+after 50 matches rather than truncating unrelated candidate PRs first.
+Historical requests are intentionally retained even after removal because
+automatic fulfillment/reassignment cannot reliably be distinguished from
+manual withdrawal. API failures, malformed pagination, and exhausted safety
+budgets fail visibly rather than silently returning partial results.
+New opens accept OPEN or CLOSED, never MERGED; remote revalidation rejects
+a PR merged during import. Existing local archives still resume without fetching
+remote PR state.
 
 - `GET /events`: a same-origin SSE stream backed only by native filesystem notifications. It sends named `ready` after all watchers are established, then coalesced named `change` events with `{workspace:boolean,heads:string[]|null}`. Workspace paths are never exposed. Operation heads are up to 64 sorted full IDs read directly from the repository metadata; `null` means they could not be read safely or exceeded that bound. A watcher failure sends `unavailable` with `{code,message}` and ends the stream so focus/manual refresh remain available. Codes distinguish the app's directory/event limits, unsupported or unsafe metadata, and OS errors such as `ENOSPC` or `EACCES`; unknown failures use `WATCH_UNAVAILABLE`. SSE diagnostics omit filesystem paths and raw error text. The owner’s terminal logs the original error once under `[jj-stamp watch]` (which may include paths), without a UI alert. Further subscribers receive the same cached failure instead of repeatedly attempting setup or printing warnings.
 - `GET /state`: selected source, mutable ancestors (`targets`, for the legacy preview API), exact `parent`, optional `squashUnavailable`, Git patches, native hunk IDs and one-based patch-body rows, operation/version, and `canUndo`. Falls back to the current `@` whenever the selected change is missing, with no pending recovery guard.

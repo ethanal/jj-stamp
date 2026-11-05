@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { run, type ProcessResult } from "./process.ts";
 import type { PrRepository, PrReviewSummary } from "../src/pr-review-types.ts";
+import { listRequestedReviews } from "./pr-review-requests.ts";
 
 export type PrRunner = (
   command: string,
@@ -182,6 +183,14 @@ export class PrGithub {
 
   async list(repo: PrRepository): Promise<PrReviewSummary[]> {
     const host = repositoryHost(repo);
+    if (!(await this.supportsReviewInvolves(host)))
+      return listRequestedReviews(
+        repo,
+        (args) => this.json(["api", "--hostname", host, ...args], host),
+        validateSummary,
+      );
+    // Unlike review-requested, this retains a team-requested PR after a
+    // teammate has reviewed. Apply the search before the result limit.
     return z
       .array(z.unknown())
       .max(50)
@@ -193,7 +202,9 @@ export class PrGithub {
             "--repo",
             `${host}/${repo.nameWithOwner}`,
             "--state",
-            "open",
+            "all",
+            "--search",
+            "review-involves:@me -is:merged",
             "--limit",
             "50",
             "--json",
@@ -202,7 +213,37 @@ export class PrGithub {
           host,
         ),
       )
-      .map((item) => validateSummary(item, repo));
+      .map((item) => validateSummary(item, repo))
+      .filter((pr) => pr.state !== "MERGED");
+  }
+
+  private async supportsReviewInvolves(host: string): Promise<boolean> {
+    if (host === "github.com" || host.endsWith(".ghe.com")) return true;
+    // GitHub documents review-involves for GHES >=3.23. Unknown/older hosts
+    // must not silently return an empty or unfiltered queue for this qualifier.
+    try {
+      const meta = z
+        .object({ installed_version: z.string() })
+        .parse(
+          await this.json(
+            ["api", "--hostname", host, "--method", "GET", "meta"],
+            host,
+          ),
+        );
+      const version = /^(\d+)\.(\d+)\.\d+(?:[-+][\w.-]+)?$/.exec(
+        meta.installed_version,
+      );
+      if (!version) return false;
+      const major = Number(version[1]);
+      const minor = Number(version[2]);
+      return (
+        Number.isSafeInteger(major) &&
+        Number.isSafeInteger(minor) &&
+        (major > 3 || (major === 3 && minor >= 23))
+      );
+    } catch {
+      return false;
+    }
   }
 
   async view(repo: PrRepository, number: number): Promise<PrReviewSummary> {

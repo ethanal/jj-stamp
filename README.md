@@ -57,10 +57,24 @@ jj-stamp
 nix run 'git+ssh://git@github.com/ethanal/jj-stamp?ref=feature/pr-review-local' --refresh --
 ```
 
-The full-screen selector lists the first 50 open PRs in the current repository,
-with title/author/number filtering and direct number/URL entry. This is an
-**all-open** list, not a review-requested filter. GitHub.com and GitHub Enterprise
-repositories are supported. The host is discovered through `gh repo view` in
+The full-screen selector lists the first 50 **unmerged PRs involving your review
+or your teams' reviews** in the current repository, with title/author/number
+filtering and direct number/URL entry. A teammate completing a review does not
+remove a team-requested PR from this list. Closed-but-unmerged PRs are included;
+merged PRs are excluded. The limit applies after review filtering.
+
+GitHub.com and newer Enterprise servers use GitHub's
+`review-involves:@me -is:merged` search, which also retains completed reviews.
+Older or unrecognized Enterprise servers use paginated current requests and
+request history for you and your current teams instead. That compatibility
+path requires access to your team memberships (typically the `read:org` scope)
+and retains historical requests, including withdrawn ones: GitHub does not
+reliably distinguish automatic team-request removal from manual withdrawal.
+Failures or safety limits are reported rather than displaying an incomplete
+or unfiltered list.
+
+GitHub.com and GitHub Enterprise repositories are supported.
+The host is discovered through `gh repo view` in
 the current workspace; PR lookups explicitly target that host. Authenticate
 Enterprise hosts with `gh auth login --hostname github.your-company.example`.
 Only PRs on the current repository's host and in that repository can be opened.
@@ -77,7 +91,9 @@ in the browser selector.
 
 A PR opens in an isolated, managed jj repository, served by its own loopback
 server. The invoking checkout's files and history are not changed by opening the
-PR. Its menu can return you to the original workspace. The initial code stack is
+PR. New reviews require an unmerged PR; an existing local review can still be
+resumed without refreshing its remote status. Its menu can return you to the
+original workspace. The initial code stack is
 merge-base → **Reviewed** → **Remaining** (`@`), with Remaining's complete tree
 equal to the captured PR head. Squash/Undo/Clear, the file tree, diff controls,
 and jj graph remain available.

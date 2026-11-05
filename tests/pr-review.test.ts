@@ -97,7 +97,10 @@ const fs = require("node:fs");
 const args = process.argv.slice(3);
 const summary = JSON.parse(fs.readFileSync(process.argv[2],"utf8"));
 if (args[0] === "pr" && args[args.indexOf("--repo") + 1] !== ${JSON.stringify(`${host}/test-owner/test-repo`)}) { console.error("Wrong GitHub host/repo", args); process.exit(99); }
+if (args[0] === "api" && args[args.indexOf("--hostname") + 1] !== ${JSON.stringify(host)}) { console.error("Wrong GitHub API host", args); process.exit(99); }
+if (args[0] === "pr" && args[1] === "list" && (args[args.indexOf("--search") + 1] !== "review-involves:@me -is:merged" || args[args.indexOf("--state") + 1] !== "all")) { console.error("Wrong review queue filter", args); process.exit(99); }
 if (args[0] === "repo" && args[1] === "view") console.log(JSON.stringify({owner:{login:"test-owner"},name:"test-repo",nameWithOwner:"test-owner/test-repo",url:${JSON.stringify(repositoryUrl)}}));
+else if (args[0] === "api" && args.at(-1) === "meta") console.log(JSON.stringify({installed_version:"3.23.0"}));
 else if (args[0] === "pr" && args[1] === "list") console.log(JSON.stringify([summary]));
 else if (args[0] === "pr" && args[1] === "view" && args[2] === "7") console.log(JSON.stringify(summary));
 else { console.error("Forbidden fake gh invocation", args); process.exit(99); }
@@ -246,6 +249,60 @@ test("Enterprise PRs list, open by URL, fetch the right host, and resume locally
       0,
       "resume uses local progress without PR lookup or fetch",
     );
+  } finally {
+    await manager.close();
+  }
+});
+
+test("closed unmerged PRs can start a review, but merged PRs cannot", async () => {
+  for (const state of ["CLOSED", "MERGED"] as const) {
+    const f = await fixture();
+    await writeFile(f.data, JSON.stringify({ ...f.summary, state }));
+    const manager = f.manager();
+    try {
+      const listed = await manager.list();
+      assert.deepEqual(
+        listed.pullRequests.map((pr) => pr.state),
+        state === "MERGED" ? [] : ["CLOSED"],
+      );
+      if (state === "MERGED") {
+        await assert.rejects(manager.open("7"), /Merged pull requests/);
+        assert.equal(
+          f.calls.some(
+            (call) => call.command === "git" && call.args.includes("fetch"),
+          ),
+          false,
+        );
+      } else {
+        const opened = await manager.open("7");
+        const context = await (
+          await fetch(`${opened.url}api/pr/context`)
+        ).json();
+        assert.equal(context.pullRequest.state, "CLOSED");
+      }
+    } finally {
+      await manager.close();
+    }
+  }
+});
+
+test("a PR merged during import is rejected after fetching without creating review metadata", async () => {
+  const f = await fixture();
+  const manager = new PrReviewManager({
+    ...f,
+    runner: async (command, args, cwd, limits) => {
+      const result = await f.runner(command, args, cwd, limits);
+      if (command === "git" && args.includes("fetch"))
+        await writeFile(
+          f.data,
+          JSON.stringify({ ...f.summary, state: "MERGED" }),
+        );
+      return result;
+    },
+  });
+  try {
+    await assert.rejects(manager.open("7"), /PR changed during initialization/);
+    await assert.rejects(f.archive(), /ENOENT/);
   } finally {
     await manager.close();
   }
@@ -496,7 +553,7 @@ test("real PR opens exact synthetic tree in isolated server and resumes local sq
     assert.equal(manager.context().repository, null);
     assert.equal(f.calls.length, 0, "workspace context does not invoke gh");
     const list = await manager.list();
-    assert.equal(list.scope, "all-open");
+    assert.equal(list.scope, "review-involves");
     assert.deepEqual(list.pullRequests, [f.summary]);
     const opened = await manager.open("7");
     assert.match(opened.url, /^http:\/\/127\.0\.0\.1:\d+\/$/);

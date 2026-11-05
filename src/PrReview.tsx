@@ -239,10 +239,7 @@ export function PrReview({ disabled = false }: { disabled?: boolean }) {
               </p>
             )}
             <div className="pr-review-body">
-              <section
-                className="pr-review-list"
-                aria-label="Open pull requests"
-              >
+              <section className="pr-review-list" aria-label="Review requests">
                 <div className="pr-review-search">
                   <label>
                     Filter by title, author, or number
@@ -258,8 +255,8 @@ export function PrReview({ disabled = false }: { disabled?: boolean }) {
                   <div className="pr-review-list-status">
                     <span role="status">
                       {loading
-                        ? "Reading open PRs through gh…"
-                        : `${matches.length} shown · first ${listing?.limit ?? 50} open PRs`}
+                        ? "Finding review requests for you and your teams…"
+                        : `${matches.length} shown · first ${listing?.limit ?? 50} unmerged PRs for you and your teams`}
                     </span>
                     <button
                       disabled={loading || busy}
@@ -289,7 +286,7 @@ export function PrReview({ disabled = false }: { disabled?: boolean }) {
                   {!matches.length && !loading && (
                     <p className="pr-review-empty">
                       {listing
-                        ? "No open PRs match. You can still enter a number or URL."
+                        ? "No review requests match. You can still enter a number or URL."
                         : "Use Reload list or enter a PR number or URL above."}
                     </p>
                   )}
