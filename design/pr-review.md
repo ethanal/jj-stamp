@@ -186,11 +186,12 @@ before implementing either behavior.
 
 Confirmed representation:
 
-- A comment starts with a source-comment marker such as
+- A comment starts with a reserved whole-line annotation marker such as
   `// JJ-STAMP(uuid): What does this do?`.
 - A matching `// JJ-STAMP(uuid)` may delimit its end. Exact single-line,
-  multiline-body, and code-range grammar is defined in the README for the initial
-  supported `//` source-language subset.
+  multiline-body, and code-range grammar is defined in the README. The protocol
+  is independent of source-language syntax and file extension because annotations
+  live only in independent COMMENTS branches.
 - The diff renders recognized markers as real inline UI elements, not literal
   source lines. Clean code diffs use projected overlays from companion branches;
   the older prototype's detached sample list is separate.

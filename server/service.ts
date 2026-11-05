@@ -1437,7 +1437,7 @@ export class ReviewService {
         issues: [],
         editable: true,
       };
-      // Parsing the clean file also validates lexical/newline eligibility.
+      // Projection validates byte/newline eligibility and reserved markers.
       if (!parsed.clean.equals(clean))
         throw new ApiError(
           409,

@@ -47,7 +47,6 @@ import { moveVimLine, vimLines, type VimCursorRequest } from "./vim-navigation";
 import { SplitDiffResize } from "./SplitDiffLayout";
 import { remapVimCursor } from "./vim-refresh";
 import {
-  commentSyntax,
   containsReviewMarkers,
   type ReviewCommentOverlay,
 } from "./review-comments";
@@ -818,8 +817,7 @@ export function CodeDiff({
     return promise;
   }, [contextLoadKey, file.hunks, file.path, fileLoadKey, getLoadedFile]);
   useEffect(() => {
-    if (contextDisabled || (!commentSyntax(file.path) && !hasCommentMarkers))
-      return;
+    if (contextDisabled) return;
     let active = true;
     setCommentLoadError("");
     void getLoadedFile()
@@ -1731,48 +1729,46 @@ export function CodeDiff({
             {[...commentFile.old.issues, ...commentFile.new.issues].join(" ")}
           </div>
         )}
-      {commentSyntax(file.path) && (
-        <div
-          className="inline-comment-tools"
-          onPointerDown={(event) => event.stopPropagation()}
-          onKeyDown={(event) => event.stopPropagation()}
-        >
-          {commentEditable ? (
-            <>
-              <button
-                disabled={
-                  disabled ||
-                  commentBusy ||
-                  contextDisabled ||
-                  !selectedCommentRange ||
-                  compose?.key === fileLoadKey
-                }
-                onClick={() => {
-                  if (selectedCommentRange)
-                    setCompose({ key: fileLoadKey, ...selectedCommentRange });
-                }}
-              >
-                Add comment
-              </button>
-              <span className="inline-comment-notice">
-                Select new-side code lines to comment. Source annotations are
-                stored in an independent COMMENTS revision, not the code
-                revision or live workspace. Nothing is sent to GitHub.
-              </span>
-            </>
-          ) : (
+      <div
+        className="inline-comment-tools"
+        onPointerDown={(event) => event.stopPropagation()}
+        onKeyDown={(event) => event.stopPropagation()}
+      >
+        {commentEditable ? (
+          <>
+            <button
+              disabled={
+                disabled ||
+                commentBusy ||
+                contextDisabled ||
+                !selectedCommentRange ||
+                compose?.key === fileLoadKey
+              }
+              onClick={() => {
+                if (selectedCommentRange)
+                  setCompose({ key: fileLoadKey, ...selectedCommentRange });
+              }}
+            >
+              Add comment
+            </button>
             <span className="inline-comment-notice">
-              {commentUnavailable ||
-                (loadComments && !overlay
-                  ? "Loading independent COMMENTS revision…"
-                  : overlay?.reason ||
-                    (hasCommentMarkers
-                      ? "Source-marker comments are read-only."
-                      : "Comment editing requires a managed PR review with an independent COMMENTS revision."))}
+              Select new-side code lines to comment. Source annotations are
+              stored in an independent COMMENTS revision, not the code revision
+              or live workspace. Nothing is sent to GitHub.
             </span>
-          )}
-        </div>
-      )}
+          </>
+        ) : (
+          <span className="inline-comment-notice">
+            {commentUnavailable ||
+              (loadComments && !overlay
+                ? "Loading independent COMMENTS revision…"
+                : overlay?.reason ||
+                  (hasCommentMarkers
+                    ? "Source-marker comments are read-only."
+                    : "Comment editing requires a managed PR review with an independent COMMENTS revision."))}
+          </span>
+        )}
+      </div>
       {overlay?.unmapped.map((comment) => (
         <InlineReviewComment
           key={`${fileLoadKey}:unmapped:${comment.id}`}

@@ -17,19 +17,19 @@ const directory = await mkdtemp(path.join(tmpdir(), "jj-stamp-inline-"));
 await using resources = new AsyncDisposableStack();
 resources.defer(() => rm(directory, { recursive: true, force: true }));
 const repoPath = await createDemo(directory);
-const commentPath = "src/inline-sample.ts";
+const commentPath = "src/inline-sample.rs";
 const diskPath = path.join(repoPath, commentPath);
 const reviewedCode = [
-  "export const threshold = 3;",
-  "export const low = 1;",
-  "export const high = 9;",
-  "export const tail = 6;",
-  "export const extra = 7;",
+  'const MESSAGE: &str = r###"raw "quotes" /* // source syntax',
+  'still raw"###;',
+  "fn keep<'a>(value: &'a str) -> &'a str { value }",
+  "const RATIO: i32 = 6 / 2;",
+  "const EXTRA: i32 = 7;",
   "",
 ].join("\n");
 const remainingCode = reviewedCode
-  .replace("threshold = 3", "threshold = 30")
-  .replace("tail = 6", "tail = 60");
+  .replace('raw "quotes"', 'changed raw "quotes"')
+  .replace("6 / 2", "60 / 2");
 await writeFile(diskPath, reviewedCode);
 await jj(repoPath, ["commit", "-m", "Reviewed sample code"]);
 await writeFile(diskPath, remainingCode);
@@ -156,7 +156,7 @@ await expect(firstCard()).toContainText(
 await expect(firstCard().locator("img")).toHaveCount(0);
 await expect(page.locator("[data-fold-comment-marker]")).toHaveCount(0);
 await expect(newLine(1)).toBeVisible();
-await expect(newLine(1)).toHaveText("export const threshold = 30;");
+await expect(newLine(1)).toHaveText(remainingCode.split("\n")[0]);
 await expect(
   page.getByRole("button", {
     name: `Squash file ${commentPath}`,
@@ -315,5 +315,5 @@ await expect(
 ).toHaveCount(0);
 assert.deepEqual(ordinaryFixture.errors, []);
 console.log(
-  "real-jj independent comment branches, clean overlays, squash/undo and reload: ok",
+  "real-jj Rust raw syntax, independent comment branches, squash/undo and reload: ok",
 );

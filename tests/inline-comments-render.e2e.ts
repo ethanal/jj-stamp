@@ -69,6 +69,56 @@ try {
     0,
   );
   await expect(page.locator("#loads")).toHaveText("2");
+  // Whole physical marker lines are reserved even inside raw/template/triple
+  // strings, block comments or arbitrary text. Surrounding syntax must not
+  // suppress historical annotations or weaken malformed-marker protection.
+  for (const source of [
+    "rust",
+    "template",
+    "block",
+    "python",
+    "markdown",
+    "extensionless",
+  ]) {
+    await page.goto(`${url}?source=${source}`);
+    await expect(previous).toBeVisible();
+    await expect(current).toBeVisible();
+    await expect(
+      page.locator("[data-line][data-fold-comment-marker]"),
+    ).toHaveCount(2);
+    await expect(page.getByRole("alert")).toHaveCount(0);
+    await expect(current.getByRole("button")).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Add comment" })).toHaveCount(
+      0,
+    );
+    await expect(
+      page.getByText("Files containing JJ-STAMP review markers", {
+        exact: false,
+      }),
+    ).toBeVisible();
+    await page
+      .locator('[data-line="3"]:not([data-line-type="change-deletion"])')
+      .last()
+      .click();
+    await expect(page.locator("#selection")).toHaveText("{}");
+    await page.getByRole("button", { name: "Historical revision" }).click();
+    await expect(previous).toBeVisible();
+    await expect(current).toBeVisible();
+    await expect(current.getByRole("button")).toHaveCount(0);
+    await page.getByRole("button", { name: "Malformed markers" }).click();
+    await expect(page.getByRole("alert")).toContainText(
+      "Some review markers are malformed",
+    );
+    await expect(
+      page
+        .locator('[data-line="2"]:not([data-line-type="change-deletion"])')
+        .last(),
+    ).toContainText("JJ-STAMP(invalid)");
+    await expect(current).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Add comment" })).toHaveCount(
+      0,
+    );
+  }
   assert.deepEqual(errors, []);
   console.log(
     "inline comment rendering, historical and malformed coverage: ok",

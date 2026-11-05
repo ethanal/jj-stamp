@@ -1,11 +1,14 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  commentSyntax,
   containsReviewMarkers,
   parseReviewComments,
 } from "../src/review-comments.ts";
-import { mutateReviewComments } from "../server/review-comments.ts";
+import {
+  mutateReviewComments,
+  validateCommentMutation,
+} from "../server/review-comments.ts";
+import { projectCommentsFile } from "../server/comments-layer.ts";
 
 const id = "12345678-1234-1234-1234-123456789abc";
 const other = "12345678-1234-1234-1234-123456789abd";
@@ -68,11 +71,12 @@ test("malformed, duplicate, noncontiguous UUID, empty-anchor and unmatched end f
   }
 });
 
-test("only whole-line canonical opt-in markers outside strings/blocks are cards", () => {
+test("reserved whole-line markers are parsed regardless of surrounding source syntax", () => {
   const contents = [
     `const x = "${start()}";`,
     "/*",
-    start(),
+    start("Inside block", other),
+    "block contents",
     "*/",
     `const y = 1; ${start()}`,
     "// Ordinary JJ-STAMP text is not reserved.",
@@ -82,12 +86,20 @@ test("only whole-line canonical opt-in markers outside strings/blocks are cards"
   ].join("\n");
   const result = parseReviewComments("main.ts", contents);
   assert.equal(result.editable, true);
-  assert.equal(result.comments.length, 1);
-  assert.equal(result.comments[0].startLine, 7);
+  assert.deepEqual(
+    result.comments.map((comment) => comment.startLine),
+    [3, 8],
+  );
   assert.equal(containsReviewMarkers(contents), true);
   assert.equal(containsReviewMarkers("ordinary source"), false);
   assert.equal(containsReviewMarkers("const name = 'JJ-STAMP';\n"), false);
   assert.equal(containsReviewMarkers("// Ordinary JJ-STAMP prose\n"), false);
+  for (const separator of ["\u2028", "\u2029"])
+    assert.equal(
+      containsReviewMarkers(`text${separator}// JJ-STAMP(bad)\n`),
+      false,
+      "Unicode separators do not introduce a physical annotation line",
+    );
   assert.equal(containsReviewMarkers("  //JJ-STAMP(bad): reserved\n"), true);
   assert.equal(
     containsReviewMarkers("const x = `example\n// JJ-STAMP(bad)\n`;\n"),
@@ -95,39 +107,93 @@ test("only whole-line canonical opt-in markers outside strings/blocks are cards"
   );
 });
 
-test("uncertain lexical constructs and unsupported languages disable editing rather than guessing", () => {
-  for (const contents of [
-    "const x = `template\ntext`;\n",
-    "const x = /regex/;\n",
-    "const x = 2 / 3;\n",
-    'const x = "unterminated\n',
-    "// continued\\\ncode\n",
-    'const x = R"(raw\nstring)";\n',
-    'let x = r#"raw"#;\n',
-    "/* unterminated\n",
-    "// C trigraph ??/\ncode\n",
-    "const x = 1;\u2028code\n",
-  ]) {
-    const result = parseReviewComments("main.ts", contents);
-    assert.equal(result.lexicalSafe, false, contents);
-    assert.equal(result.editable, false);
-    assert.deepEqual(result.comments, []);
-  }
-  assert.equal(
-    parseReviewComments("main.tsx", "<div>text</div>\n").lexicalSafe,
-    false,
-  );
-  for (const file of ["file.py", "script.sh", "data.json", "README.md"])
-    assert.equal(commentSyntax(file), null);
-  for (const file of [
-    "file.ts",
-    "file.mjs",
-    "file.go",
-    "file.rs",
-    "file.cpp",
-    "file.java",
+const syntaxCases = [
+  [
+    "main.rs",
+    `fn borrow<'a>(value: &'a str) -> &'a str {\n    let raw = r##"first\nsecond"##;\n    /* nested /* comment */ contents */\n    let half = 2 / 3;\n    value\n}\n`,
+  ],
+  [
+    "main.ts",
+    "const x = `template\ntext`;\nconst pattern = /regex/;\nconst half = 2 / 3;\n",
+  ],
+  ["main.tsx", "<div>\n  text\n</div>\n"],
+  [
+    "main.cpp",
+    'auto x = R"(raw\nstring)";\n// continued\\\ncode\n// C trigraph ??/\n',
+  ],
+  ["main.py", 'text = """first\nsecond\n"""\n# comment\n'],
+  ["script.sh", "cat <<EOF\nheredoc contents\nEOF\n"],
+  ["data.json", '{\n  "key": "value"\n}\n'],
+  ["README.md", "# Markdown\n```rust\nlet value = 1;\n```\n"],
+  ["Makefile", "target:\n\tprintf 'hello'\n"],
+  ["no-extension", "text with \u2028 and \u2029 separators\n"],
+  ["unknown.xyz", '"unterminated\n/* unterminated\n'],
+];
+
+for (const [file, contents] of syntaxCases) {
+  test(`annotation CRUD and projection are source-syntax agnostic: ${file}`, () => {
+    const original = Buffer.from(contents);
+    const body =
+      '```rust\n\tlet raw = r#"*/\u2028\u2029"#; // ??/\ntrailing \\\n```';
+    assert.equal(parseReviewComments(file, contents).editable, true);
+    // Exercise insertion inside literals, block comments and every other line,
+    // not just at a syntax-neutral file boundary.
+    for (let line = 1; line <= contents.split("\n").length - 1; line++) {
+      const mutation = {
+        ...input,
+        path: file,
+        action: "add" as const,
+        line,
+        body,
+      };
+      validateCommentMutation(mutation);
+      const added = mutateReviewComments(file, original, mutation);
+      const projected = projectCommentsFile(file, added);
+      assert.deepEqual(projected.clean, original);
+      assert.equal(projected.cleanComments[0].body, body);
+      assert.equal(projected.cleanComments[0].startLine, line);
+      const id = projected.cleanComments[0].id;
+      const edited = mutateReviewComments(file, added, {
+        ...input,
+        path: file,
+        action: "edit",
+        id,
+        body: "Changed \\",
+      });
+      assert.equal(
+        projectCommentsFile(file, edited).cleanComments[0].body,
+        "Changed \\",
+      );
+      const removed = mutateReviewComments(file, edited, {
+        ...input,
+        path: file,
+        action: "remove",
+        id,
+      });
+      assert.deepEqual(removed, original);
+    }
+  });
+}
+
+test("comment bodies accept tabs and Unicode text but reject controls and lossy surrogate encoding", () => {
+  for (const body of [
+    "",
+    " \t\n",
+    "nul\0",
+    "control\b",
+    "CR\r\n",
+    "\ud800",
+    "\udc00",
   ])
-    assert.equal(commentSyntax(file), "//");
+    assert.throws(() =>
+      validateCommentMutation({ ...input, action: "add", line: 1, body }),
+    );
+  validateCommentMutation({
+    ...input,
+    action: "add",
+    line: 1,
+    body: "Tabs\tand Unicode\u2028\u2029 😀",
+  });
 });
 
 test("CRUD preserves source bytes, CRLF, body lines, indentation and paired range end", () => {
@@ -161,20 +227,19 @@ test("CRUD preserves source bytes, CRLF, body lines, indentation and paired rang
   assert.deepEqual(removed, original);
 });
 
-test("mutation rejects lossy bytes, mixed newlines, marker targets, overlap and invisible block annotations", () => {
+test("mutation rejects lossy bytes, mixed newlines, marker targets and overlapping annotations", () => {
   for (const bytes of [
     Buffer.from([0xff, 0x0a]),
     Buffer.from("code\0\n"),
     Buffer.from("\ufeffcode\n"),
     Buffer.from("code"),
     Buffer.from("code\r\ncode\n"),
-    Buffer.from("/*\ninside\n*/\n"),
   ]) {
     assert.throws(() =>
       mutateReviewComments(input.path, bytes, {
         ...input,
         action: "add",
-        line: bytes.toString().startsWith("/*") ? 2 : 1,
+        line: 1,
         body: "Review",
       }),
     );

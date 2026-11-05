@@ -13,7 +13,8 @@ const body = z
   .refine(
     (text) =>
       text.trim().length > 0 &&
-      !/[\u0000-\u0009\u000b-\u001f\u007f\u2028\u2029]/.test(text),
+      Buffer.from(text, "utf8").toString("utf8") === text &&
+      !/[\u0000-\u0008\u000b-\u001f\u007f]/.test(text),
     "Use nonempty plain text with LF-separated body lines.",
   );
 const common = {
@@ -135,8 +136,8 @@ export function mutateReviewComments(
       );
     }
   }
-  // In particular, a target inside a block comment cannot create an invisible
-  // annotation; newly inserted text must round-trip as exactly one real card.
+  // Source syntax is irrelevant, but marker identity and body must round-trip
+  // exactly, including when placed inside a source string or block comment.
   const result = lines.join(newline) + (lines.length ? newline : "");
   const verified = parseReviewComments(file, result);
   if (

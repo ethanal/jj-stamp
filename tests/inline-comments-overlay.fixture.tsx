@@ -12,9 +12,42 @@ import "../src/styles.css";
 
 const id = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
 const missingId = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
-const path = "clean-code.ts";
-const oldLines = ["export const value = 1;", "export const tail = 2;"];
-const newLines = ["export const value = 10;", "export const tail = 20;"];
+const scenario = new URLSearchParams(location.search).get("source") ?? "ts";
+const sources: Record<string, { path: string; lines: string[] }> = {
+  ts: {
+    path: "clean-code.ts",
+    lines: ["export const value = 10;", "export const tail = 20;"],
+  },
+  rust: {
+    path: "raw-syntax.rs",
+    lines: [
+      'const TEXT: &str = r###"raw "quotes" /* //',
+      'still raw"###;',
+      "fn keep<'a>(value: &'a str) -> &'a str { value }",
+      "const RATIO: i32 = 20 / 2;",
+    ],
+  },
+  python: {
+    path: "source.py",
+    lines: ['text = """triple quotes', 'still text"""', "value = 20 // 2"],
+  },
+  json: {
+    path: "source.json",
+    lines: ['{"url": "https://example.test",', '"value": 20}'],
+  },
+  markdown: {
+    path: "source.md",
+    lines: ["# Review notes", "Text with `//` and an unmatched apostrophe'"],
+  },
+  extensionless: {
+    path: "SOURCE",
+    lines: ["arbitrary source syntax /*", '20 / 2 "'],
+  },
+};
+const { path, lines: newLines } = sources[scenario];
+const oldLines = newLines.map((text) => text.replace("20", "2"));
+const storageKey = `overlay-comments:${path}`;
+const header = `@@ -1,${oldLines.length} +1,${newLines.length} @@`;
 const rows = [
   ...oldLines.map((text, i) => ({
     raw: `-${text}`,
@@ -24,22 +57,22 @@ const rows = [
   ...newLines.map((text, i) => ({
     raw: `+${text}`,
     newLine: i + 1,
-    index: i + 3,
+    index: i + oldLines.length + 1,
   })),
 ];
 const file: DiffFile = {
   path,
-  additions: 2,
-  deletions: 2,
+  additions: newLines.length,
+  deletions: oldLines.length,
   patch: [
     `diff --git a/${path} b/${path}`,
     `--- a/${path}`,
     `+++ b/${path}`,
-    "@@ -1,2 +1,2 @@",
+    header,
     ...rows.map((row) => row.raw),
     "",
   ].join("\n"),
-  hunks: [{ id: "clean-code-hunk", header: "@@ -1,2 +1,2 @@", rows }],
+  hunks: [{ id: "clean-code-hunk", header, rows }],
 };
 const initial: ProjectedReviewComment[] = [
   { id, body: "A companion <b>comment</b>", startLine: 1, endLine: 2 },
@@ -48,9 +81,7 @@ function Fixture() {
   const [style, setStyle] = useState<"split" | "unified">("unified");
   const [commentEpoch, setCommentEpoch] = useState(0);
   const [comments, setComments] = useState<ProjectedReviewComment[]>(() =>
-    JSON.parse(
-      localStorage.getItem("overlay-comments") ?? JSON.stringify(initial),
-    ),
+    JSON.parse(localStorage.getItem(storageKey) ?? JSON.stringify(initial)),
   );
   const [fileLoads, setFileLoads] = useState(0);
   const [commentLoads, setCommentLoads] = useState(0);
@@ -60,7 +91,7 @@ function Fixture() {
   const [range, setRange] = useState<SelectedLineRange | null>(null);
   const [mutations, setMutations] = useState<ReviewCommentMutation[]>([]);
   const update = (next: ProjectedReviewComment[]) => {
-    localStorage.setItem("overlay-comments", JSON.stringify(next));
+    localStorage.setItem(storageKey, JSON.stringify(next));
     setComments(next);
     setCommentEpoch((epoch) => epoch + 1);
   };

@@ -12,8 +12,6 @@ export interface ReviewComment {
 export interface ReviewCommentsParseResult {
   comments: ReviewComment[];
   issues: string[];
-  supported: boolean;
-  lexicalSafe: boolean;
   editable: boolean;
   reason?: string;
 }
@@ -43,18 +41,9 @@ export type ReviewCommentMutation = { version: string; path: string } & (
 export const REVIEW_COMMENT_ID =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
-/** Deliberately no # languages: multiline/embedded string rules differ. */
-export function commentSyntax(path: string): "//" | null {
-  return /\.(?:[cm]?[jt]sx?|go|rs|c|h|cc|hh|cpp|hpp|cxx|hxx|java)$/.test(
-    path.toLowerCase(),
-  )
-    ? "//"
-    : null;
-}
-
 /** Broader than parsing: malformed reserved lines and multiline examples count. */
 export function containsReviewMarkers(contents: string): boolean {
-  return /^[ \t]*\/\/[ \t]*JJ-STAMP/m.test(contents);
+  return /(?:^|\n)[ \t]*\/\/[ \t]*JJ-STAMP/.test(contents);
 }
 
 interface Marker {
@@ -63,127 +52,30 @@ interface Marker {
   body?: string;
 }
 
-/**
- * Small fail-closed lexical filter, NOT a language parser. Multiline literals,
- * template/Go raw strings, C++ raw strings, regex/division ambiguity and source
- * line continuations disable editing for the entire file. Block/string contents
- * are never interpreted as annotations. Rust nested block comments are tracked.
- */
-function wholeLineComments(contents: string): {
-  lines: Map<number, string>;
-  safe: boolean;
-} {
-  const lines = new Map<number, string>();
-  let block = 0;
-  let line = 1;
-  let onlyWhitespace = true;
-  for (let i = 0; i < contents.length; i++) {
-    const c = contents[i];
-    const n = contents[i + 1];
-    if (c === "\n") {
-      line++;
-      onlyWhitespace = true;
-      continue;
-    }
-    if (block) {
-      if (c === "/" && n === "*") {
-        block++;
-        i++;
-      } else if (c === "*" && n === "/") {
-        block--;
-        i++;
-      }
-      onlyWhitespace = false;
-      continue;
-    }
-    if (c === "/" && n === "/") {
-      const end = contents.indexOf("\n", i);
-      const text = contents
-        .slice(i, end < 0 ? undefined : end)
-        .replace(/\r$/, "");
-      if (onlyWhitespace) lines.set(line, text);
-      if (text.endsWith("\\")) return { lines, safe: false };
-      if (end < 0) break;
-      i = end - 1;
-      continue;
-    }
-    if (c === "/" && n === "*") {
-      block++;
-      i++;
-      onlyWhitespace = false;
-      continue;
-    }
-    if (
-      c === "`" ||
-      c === "/" ||
-      c === "\\" ||
-      (c === "R" && n === '"') ||
-      (c === "r" && (n === "#" || n === '"'))
-    )
-      return { lines, safe: false };
-    if (c === "'" || c === '"') {
-      const quote = c;
-      let closed = false;
-      for (i++; i < contents.length; i++) {
-        if (contents[i] === "\n" || contents[i] === "\r")
-          return { lines, safe: false };
-        if (contents[i] === "\\") {
-          i++;
-          if (contents[i] === "\n" || contents[i] === "\r")
-            return { lines, safe: false };
-        } else if (contents[i] === quote) {
-          closed = true;
-          break;
-        }
-      }
-      if (!closed) return { lines, safe: false };
-    }
-    if (!/[ \t\r]/.test(c)) onlyWhitespace = false;
-  }
-  return { lines, safe: block === 0 };
-}
-
+/** Parse reserved physical lines, not the surrounding source language. */
 export function parseReviewComments(
-  path: string,
+  _path: string,
   contents: string,
 ): ReviewCommentsParseResult {
-  const supported = commentSyntax(path) !== null;
   const result: ReviewCommentsParseResult = {
     comments: [],
     issues: [],
-    supported,
-    lexicalSafe: false,
     editable: false,
   };
-  if (!supported) {
-    result.reason =
-      "Review comments currently support only // source languages.";
-    return result;
-  }
-  const lexed =
-    /[\u2028\u2029]/.test(contents) ||
-    contents.includes("??/") ||
-    (/\.[jt]sx$/i.test(path) && /<[A-Za-z/!]/.test(contents))
-      ? { lines: new Map<number, string>(), safe: false }
-      : wholeLineComments(contents);
-  result.lexicalSafe = lexed.safe;
-  if (!lexed.safe) {
-    result.reason =
-      "This file contains ambiguous or multiline lexical constructs; review comment editing is disabled.";
-    return result;
-  }
+  const physical = contents.split("\n");
+  if (physical.at(-1) === "") physical.pop();
   const markers: Marker[] = [];
-  for (const [line, text] of lexed.lines) {
-    if (!/^\/\/\s*JJ-STAMP/.test(text)) continue;
-    const match = /^\/\/ JJ-STAMP\(([^)]+)\)(?:: (.*))?$/.exec(text);
+  for (let index = 0; index < physical.length; index++) {
+    const line = index + 1;
+    const text = physical[index].replace(/^[ \t]*/, "").replace(/\r$/, "");
+    if (!/^\/\/[ \t]*JJ-STAMP/.test(text)) continue;
+    const match = /^\/\/ JJ-STAMP\(([^)]+)\)(?:: ([^\r\n]*))?$/.exec(text);
     if (!match || !REVIEW_COMMENT_ID.test(match[1])) {
       result.issues.push(`Malformed review marker at line ${line}.`);
       continue;
     }
     markers.push({ line, id: match[1], body: match[2] });
   }
-  const physical = contents.split("\n");
-  if (physical.at(-1) === "") physical.pop();
   const used = new Set<string>();
   const markerLines = new Set(markers.map((marker) => marker.line));
   for (let i = 0; i < markers.length; i++) {

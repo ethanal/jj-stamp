@@ -97,8 +97,50 @@ try {
   await expect(page.getByRole("button", { name: "Add comment" })).toHaveCount(
     0,
   );
+  // The managed overlay uses physical coordinates, not source-language
+  // lexing or an extension allowlist. Exercise actual mutations and reloads
+  // in every formerly problematic kind of source.
+  for (const source of [
+    "rust",
+    "python",
+    "json",
+    "markdown",
+    "extensionless",
+  ]) {
+    await page.goto(`${url}?source=${source}`);
+    await expect(card()).toBeVisible();
+    await expect(page.locator("#loads")).toHaveText("1");
+    await line(1).click();
+    await line(2).click({ modifiers: ["Shift"] });
+    await page.getByRole("button", { name: "Add comment" }).click();
+    await editor.fill(`${source}: added on physical source lines`);
+    await page.getByRole("button", { name: "Save comment" }).click();
+    const added = page.locator(
+      '[data-comment-id="dddddddd-dddd-4ddd-8ddd-dddddddddddd"]',
+    );
+    await expect(added).toContainText(
+      `${source}: added on physical source lines`,
+    );
+    await expect(added).toContainText("Line 1–2 · COMMENTS revision");
+    await added.getByRole("button", { name: "Edit comment" }).click();
+    await editor.fill(`${source}: edited`);
+    await page.getByRole("button", { name: "Save comment" }).click();
+    await expect(added).toContainText(`${source}: edited`);
+    await expect(page.locator("#loads")).toHaveText("1");
+    await expect(page.locator("[data-fold-comment-marker]")).toHaveCount(0);
+    await page.reload();
+    await expect(added).toContainText(`${source}: edited`);
+    await added.getByRole("button", { name: "Remove comment" }).click();
+    await expect(added).toHaveCount(0);
+    await expect(page.locator("#loads")).toHaveText("1");
+    await page.reload();
+    await expect(card()).toBeVisible();
+    await expect(added).toHaveCount(0);
+  }
   assert.deepEqual(errors, []);
-  console.log("independent COMMENTS overlays use clean code coordinates: ok");
+  console.log(
+    "independent COMMENTS overlays use clean coordinates in every source language: ok",
+  );
 } finally {
   await fixture.close();
 }

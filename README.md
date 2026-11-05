@@ -134,10 +134,13 @@ When a file has been fully squashed out of Remaining, select Reviewed to see its
 code and comment overlays. The current viewer shows overlays only for files in
 the selected revision's diff; companion revisions retain all draft bodies.
 
-This first version enables comment editing only in managed PR reviews and only
-for supported regular `//` source files. Ambiguous lexical constructs (including
-template/raw strings, regex/division, JSX and multiline literals), malformed
-markers, unsupported file formats and deleted-side anchors fail closed. Raw
+Comment editing is available in managed PR reviews regardless of file extension
+or source-language syntax. `// JJ-STAMP` is a reserved annotation format, not a
+requirement that the file support `//` comments: Rust lifetimes/raw strings,
+Python, JSON, Markdown, and extensionless text work the same way. Comment bodies
+can contain code snippets, tabs, and Unicode text. Malformed markers, unsafe
+byte formats, and deleted-side anchors still fail closed. Files currently require
+lossless UTF-8 without BOM/NUL, consistent LF or CRLF, and a final newline. Raw
 markers already present in ordinary code revisions are read-only and still
 block squashing that file; this does not apply to independent branch overlays.
 To inspect stored drafts, select their COMMENTS revision in the graph or use

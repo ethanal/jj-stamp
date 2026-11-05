@@ -6,12 +6,36 @@ import type { DiffFile, Selections } from "../src/types";
 import "../src/styles.css";
 
 const id = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+const source = new URLSearchParams(location.search).get("source");
+const wrappers: Record<
+  string,
+  { path: string; before: string; after: string }
+> = {
+  rust: {
+    path: "comments.rs",
+    before: 'const TEXT: &str = r###"',
+    after: '"###;',
+  },
+  template: {
+    path: "comments.ts",
+    before: "const text = `",
+    after: "`;",
+  },
+  block: { path: "comments.json", before: "/*", after: "*/" },
+  python: { path: "comments.py", before: 'text = """', after: '"""' },
+  markdown: { path: "comments.md", before: "```text", after: "```" },
+  extensionless: { path: "COMMENTS", before: 'arbitrary "', after: '"' },
+};
+const wrapper = source ? wrappers[source] : undefined;
+const path = wrapper?.path ?? "comments.ts";
+const surround = (lines: string[]) =>
+  wrapper ? [wrapper.before, ...lines, wrapper.after] : lines;
 const oldLines = [
-  `// JJ-STAMP(${id}): Previous <b>question</b>`,
+  `  // JJ-STAMP(${id}): Previous <b>question</b>`,
   "export const value = 1;",
 ];
 const goodLines = [
-  `// JJ-STAMP(${id}): Current question`,
+  `  // JJ-STAMP(${id}): Current question`,
   "export const value = 2;",
 ];
 function Fixture() {
@@ -24,31 +48,34 @@ function Fixture() {
   const newLines = malformed
     ? ["// JJ-STAMP(invalid): Do not hide this", goodLines[1]]
     : goodLines;
+  const oldSource = surround(oldLines);
+  const newSource = surround(newLines);
+  const header = `@@ -1,${oldSource.length} +1,${newSource.length} @@`;
   const file: DiffFile = {
-    path: "comments.ts",
-    additions: 2,
-    deletions: 2,
+    path,
+    additions: newSource.length,
+    deletions: oldSource.length,
     patch: [
-      "diff --git a/comments.ts b/comments.ts",
-      "--- a/comments.ts",
-      "+++ b/comments.ts",
-      "@@ -1,2 +1,2 @@",
-      ...oldLines.map((text) => `-${text}`),
-      ...newLines.map((text) => `+${text}`),
+      `diff --git a/${path} b/${path}`,
+      `--- a/${path}`,
+      `+++ b/${path}`,
+      header,
+      ...oldSource.map((text) => `-${text}`),
+      ...newSource.map((text) => `+${text}`),
       "",
     ].join("\n"),
     hunks: [
       {
         id: "comment-hunk",
-        header: "@@ -1,2 +1,2 @@",
+        header,
         rows: [
-          ...oldLines.map((text, i) => ({
+          ...oldSource.map((text, i) => ({
             index: i + 1,
             raw: `-${text}`,
             oldLine: i + 1,
           })),
-          ...newLines.map((text, i) => ({
-            index: i + 3,
+          ...newSource.map((text, i) => ({
+            index: i + oldSource.length + 1,
             raw: `+${text}`,
             newLine: i + 1,
           })),
@@ -96,11 +123,11 @@ function Fixture() {
               return {
                 oldFile: {
                   name: file.path,
-                  contents: oldLines.join("\n") + "\n",
+                  contents: oldSource.join("\n") + "\n",
                 },
                 newFile: {
                   name: file.path,
-                  contents: newLines.join("\n") + "\n",
+                  contents: newSource.join("\n") + "\n",
                 },
               };
             }}

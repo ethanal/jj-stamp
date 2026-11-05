@@ -149,11 +149,16 @@ External jj processes and file edits cannot be locked by this in-process queue. 
 
 ## Independent comment branches
 
-Canonical markers are whole source-comment lines:
+Canonical markers are reserved whole physical lines:
 `// JJ-STAMP(uuid): body` immediately before the anchor. Adjacent same-UUID body
 lines form a multiline body; optional `// JJ-STAMP(uuid)` after code closes a
-range. Parsing is deliberately fail-closed for unsupported source syntax,
-malformed/duplicate markers, unsafe bytes, and ambiguous lexical constructs.
+range. The protocol is independent of file extensions and source syntax: markers
+inside strings, raw literals, block comments, or non-code text are still
+annotations. The annotated companion need not be valid source code. Parsing
+rejects malformed/duplicate markers, not language constructs. Byte validation
+requires lossless UTF-8 without BOM/NUL, consistent LF or CRLF, and final newlines.
+Bodies allow tabs and Unicode text, with LF separating body lines; invalid
+Unicode and other control characters are rejected.
 
 Managed-only validation resolves both code revisions and both independent leaf
 companions, checks their identities, parents, mutability, conflicts, and `@`,

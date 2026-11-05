@@ -23,6 +23,7 @@ async function fixture(
   t: TestContext,
   crlf = false,
   code = { old: original, new: working },
+  pathname = filename,
 ) {
   const root = await mkdtemp(path.join(os.tmpdir(), "jj-stamp-branches-"));
   t.after(() => rm(root, { recursive: true, force: true }));
@@ -43,7 +44,8 @@ async function fixture(
     "root()",
   ]);
   await mkdir(path.join(root, "src"));
-  const file = path.join(root, filename);
+  const file = path.join(root, pathname);
+  await mkdir(path.dirname(file), { recursive: true });
   const encode = (text: string) =>
     crlf ? text.replaceAll("\n", "\r\n") : text;
   await writeFile(file, encode(code.old));
@@ -92,15 +94,15 @@ const add = (state: State, extra = {}): ReviewCommentMutation => ({
   body: "Please simplify",
   ...extra,
 });
-const overlay = (service: ReviewService, state: State) =>
-  service.getComments({ version: state.version, path: filename });
+const overlay = (service: ReviewService, state: State, pathname = filename) =>
+  service.getComments({ version: state.version, path: pathname });
 const rejectsCode = (promise: Promise<unknown>, code: string) =>
   assert.rejects(
     promise,
     (error: unknown) => error instanceof ApiError && error.code === code,
   );
-const selections = (state: State) => {
-  const hunk = state.files.find((file) => file.path === filename)!.hunks[0];
+const selections = (state: State, pathname = filename) => {
+  const hunk = state.files.find((file) => file.path === pathname)!.hunks[0];
   return [
     {
       id: hunk.id,
@@ -114,19 +116,31 @@ async function branchFile(
   root: string,
   config: CommentsLayerConfig,
   code = config.sourceChangeId,
+  pathname = filename,
 ) {
   const branch = config.branches.find(
     (branch) => branch.codeChangeId === code,
   )!;
+  return revisionFile(
+    root,
+    `change_id("${branch.commentsChangeId}")`,
+    pathname,
+  );
+}
+async function revisionFile(
+  root: string,
+  revision: string,
+  pathname = filename,
+) {
   return (
     await jj(root, [
       "file",
       "show",
       "--ignore-working-copy",
       "-r",
-      `change_id("${branch.commentsChangeId}")`,
+      revision,
       "--",
-      `root-file:${JSON.stringify(filename)}`,
+      `root-file:${JSON.stringify(pathname)}`,
     ])
   ).stdout;
 }
@@ -363,14 +377,250 @@ test("code edits in a branch fail closed while retaining previously validated bo
   assert.match(await branchFile(root, comments), /Do not lose this body/);
 });
 
-test("ambiguous lexical files return a read-only overlay explanation instead of a failed request", async (t) => {
+test("template source remains editable without interpreting its lexical syntax", async (t) => {
   const { service, state } = await fixture(t, false, {
     old: "const template = `old`;\n",
     new: "const template = `new`;\n",
   });
   const projected = await overlay(service, state);
-  assert.equal(projected.editable, false);
-  assert.match(projected.reason!, /lexical/);
+  assert.equal(projected.editable, true);
+  const added = (
+    await service.comment(add(state, { line: 1, body: "Template note" }))
+  ).state;
+  assert.equal(
+    (await overlay(service, added)).comments[0].body,
+    "Template note",
+  );
+});
+
+test("real-jj comment branches support Rust constructs and arbitrary text formats without changing code", async (t) => {
+  const cases = [
+    {
+      name: "Rust lifetimes",
+      path: "src/borrow.rs",
+      old: "fn borrow<'a>(value: &'a str) -> &'a str {\n    value.trim_start_matches(\"20\")\n}\n",
+    },
+    {
+      name: "inside a Rust raw string",
+      path: "src/raw.rs",
+      old: 'fn main() { let raw = r###"\n    20 café\n"###; }\n',
+      squash: true,
+    },
+    {
+      name: "inside nested Rust block comments",
+      path: "src/nested.rs",
+      old: "/* outer\n    /* nested 20 */\n*/\n",
+    },
+    {
+      name: "Rust division",
+      path: "src/division.rs",
+      old: "fn ratio() -> i32 {\n    20 / 2\n}\n",
+    },
+    {
+      name: "inside a Python multiline string",
+      path: "src/message.py",
+      old: 'message = """\n    20 café\n"""\n',
+      squash: true,
+    },
+    {
+      name: "JSON",
+      path: "settings.json",
+      old: '{\n  "value": 20\n}\n',
+    },
+    {
+      name: "inside a Markdown code fence with CRLF",
+      path: "README.md",
+      old: '```json\n  {"value": 20}\n```\n',
+      crlf: true,
+    },
+    {
+      name: "extensionless text",
+      path: "settings",
+      old: "settings:\n\tvalue: 20\n",
+    },
+  ];
+  for (const example of cases) {
+    await t.test(example.name, async (t) => {
+      const code = { old: example.old, new: example.old.replace("20", "21") };
+      const { root, file, comments, service, state, source } = await fixture(
+        t,
+        example.crlf,
+        code,
+        example.path,
+      );
+      const oldSource = example.crlf
+        ? code.old.replaceAll("\n", "\r\n")
+        : code.old;
+      const assertClean = async (current: State) => {
+        assert.equal(current.source.commitId, state.source.commitId);
+        assert.equal(current.parent!.commitId, state.parent!.commitId);
+        assert.equal(
+          (
+            await jj(root, ["log", "--no-graph", "-r", "@", "-T", "commit_id"])
+          ).stdout.trim(),
+          state.source.commitId,
+        );
+        assert.deepEqual(await readFile(file), Buffer.from(source));
+        const clean = await service.getFile({
+          version: current.version,
+          path: example.path,
+        });
+        assert.equal(clean.oldFile!.contents, oldSource);
+        assert.equal(clean.newFile!.contents, source);
+        for (const contents of [
+          clean.oldFile!.contents,
+          clean.newFile!.contents,
+        ])
+          assert.doesNotMatch(contents, /JJ-STAMP/);
+      };
+      assert.equal(
+        (await overlay(service, state, example.path)).editable,
+        true,
+      );
+      const body = "Please check café\nKeep this draft 🦀";
+      const added = (
+        await service.comment(add(state, { path: example.path, line: 2, body }))
+      ).state;
+      const projected = await overlay(service, added, example.path);
+      assert.equal(projected.editable, true);
+      assert.deepEqual(projected.issues, []);
+      assert.deepEqual(projected.unmapped, []);
+      assert.equal(projected.comments.length, 1);
+      const { id } = projected.comments[0];
+      assert.deepEqual(
+        projected.comments.map(({ id, body, startLine, endLine }) => ({
+          id,
+          body,
+          startLine,
+          endLine,
+        })),
+        [{ id, body, startLine: 2, endLine: 2 }],
+      );
+      const annotated = await branchFile(
+        root,
+        comments,
+        comments.sourceChangeId,
+        example.path,
+      );
+      const indent = /^[ \t]*/.exec(code.new.split("\n")[1])![0];
+      assert.ok(
+        annotated.includes(`${indent}// JJ-STAMP(${id}): Please check café`),
+      );
+      const validated = await validateCommentsLayer(root, comments);
+      const branch = validated.branches.find(
+        (branch) => branch.code.changeId === comments.sourceChangeId,
+      )!;
+      assert.deepEqual(
+        branch.files.get(example.path)!.clean,
+        Buffer.from(source),
+      );
+      await assertClean(added);
+
+      const editedBody = "Edited café\nStill kept 🦀";
+      let current = (
+        await service.comment({
+          version: added.version,
+          path: example.path,
+          action: "edit",
+          id,
+          body: editedBody,
+        })
+      ).state;
+      assert.equal(
+        (await overlay(service, current, example.path)).comments[0].body,
+        editedBody,
+      );
+      await assertClean(current);
+
+      if (example.squash) {
+        const beforeSquash = await branchFile(
+          root,
+          comments,
+          comments.sourceChangeId,
+          example.path,
+        );
+        const moved = await service.squashLines({
+          version: current.version,
+          selections: selections(current, example.path),
+        });
+        assert.equal(moved.state.canUndo, true);
+        assert.deepEqual(await readFile(file), Buffer.from(source));
+        assert.doesNotMatch(
+          moved.state.files.map((file) => file.patch).join(""),
+          /JJ-STAMP/,
+        );
+        for (const revision of [
+          `change_id("${comments.sourceChangeId}")`,
+          `change_id("${comments.reviewedChangeId}")`,
+          "@",
+        ]) {
+          const contents = await revisionFile(root, revision, example.path);
+          assert.equal(contents, source);
+          assert.doesNotMatch(contents, /JJ-STAMP/);
+        }
+        const reviewed = (
+          await service.selectRevision({
+            version: moved.state.version,
+            changeId: comments.reviewedChangeId,
+          })
+        ).state;
+        const onReviewed = await overlay(service, reviewed, example.path);
+        assert.deepEqual(onReviewed.unmapped, []);
+        assert.ok(
+          onReviewed.comments.some(
+            (comment) =>
+              comment.id === id &&
+              comment.body === editedBody &&
+              comment.startLine === 2 &&
+              comment.endLine === 2,
+          ),
+        );
+        const remaining = (
+          await service.selectRevision({
+            version: reviewed.version,
+            changeId: comments.sourceChangeId,
+          })
+        ).state;
+        current = (await service.undo(remaining.version)).state;
+        await assertClean(current);
+        assert.equal(
+          await branchFile(
+            root,
+            comments,
+            comments.sourceChangeId,
+            example.path,
+          ),
+          beforeSquash,
+        );
+        assert.ok(
+          (await overlay(service, current, example.path)).comments.some(
+            (comment) => comment.id === id && comment.body === editedBody,
+          ),
+        );
+      }
+
+      const removed = (
+        await service.comment({
+          version: current.version,
+          path: example.path,
+          action: "remove",
+          id,
+        })
+      ).state;
+      assert.deepEqual(
+        (await overlay(service, removed, example.path)).comments,
+        [],
+      );
+      assert.equal(
+        await branchFile(root, comments, comments.sourceChangeId, example.path),
+        source,
+      );
+      await assertClean(removed);
+      const final = await validateCommentsLayer(root, comments);
+      assert.equal(final.source.commitId, state.source.commitId);
+      assert.equal(final.reviewed.commitId, state.parent!.commitId);
+    });
+  }
 });
 
 test("annotated code squashes normally, projects across branches onto Reviewed, edits UUID owner, and undoes safely", async (t) => {
@@ -591,7 +841,7 @@ test("HTTP validation and loopback protection; separate overlay never contaminat
     { ...add(state), line: 0 },
     { ...add(state), body: "" },
     { ...add(state), body: "unsafe\r\ntext" },
-    { ...add(state), body: "unsafe\u2028text" },
+    { ...add(state), body: "unsafe\ud800text" },
     { ...add(state), unknown: true },
     { version: state.version, path: filename, action: "remove", id: "bad" },
   ])
@@ -604,7 +854,8 @@ test("HTTP validation and loopback protection; separate overlay never contaminat
     (await request(add(state), { Origin: "https://evil.example" })).status,
     403,
   );
-  const saved = await request(add(state));
+  const body = "Please\u2028check\u2029this\tvalue";
+  const saved = await request(add(state, { body }));
   assert.equal(saved.status, 200);
   const next = (await saved.json()).state;
   const projected = await request(
@@ -613,7 +864,9 @@ test("HTTP validation and loopback protection; separate overlay never contaminat
     "comments/file",
   );
   assert.equal(projected.status, 200);
-  assert.equal((await projected.json()).comments[0].startLine, 2);
+  const card = (await projected.json()).comments[0];
+  assert.equal(card.startLine, 2);
+  assert.equal(card.body, body);
   const immutable = await request(
     { commitId: state.source.commitId, path: filename },
     {},
