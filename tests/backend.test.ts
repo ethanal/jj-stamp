@@ -1335,6 +1335,15 @@ test("context new/deleted files have null opposite sides and unsupported files a
   );
   await writeFile(path.join(root, "added.txt"), "missing newline");
   state = await service.getState();
+  assert.deepEqual(
+    await service.getFile({ version: state.version, path: "added.txt" }),
+    {
+      oldFile: null,
+      newFile: { name: "added.txt", contents: "missing newline" },
+    },
+  );
+  await writeFile(path.join(root, "added.txt"), Buffer.from([0, 1, 2]));
+  state = await service.getState();
   await rejectsCode(
     service.getFile({ version: state.version, path: "added.txt" }),
     "UNSUPPORTED_DIFF",
