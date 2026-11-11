@@ -1,4 +1,5 @@
-import { parsePatchFiles, type SelectedLineRange } from "@pierre/diffs";
+import type { SelectedLineRange } from "@pierre/diffs";
+import { parseRenderDiff } from "./render-diff";
 import type { RowRef } from "./optimistic";
 import type { DiffFile, Row, Selections } from "./types";
 
@@ -111,7 +112,7 @@ function visualRows(
   // The public patch parser supplies the same similarity-aligned content
   // groups consumed by the renderer, without constructing a renderer.
   try {
-    const parsed = parsePatchFiles(file.patch, undefined, true)[0]?.files[0];
+    const parsed = parseRenderDiff(file);
     if (parsed?.hunks.length === file.hunks.length) {
       const indexed = new Map<string, PhysicalRow>();
       for (const row of physical) {

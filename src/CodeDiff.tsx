@@ -12,7 +12,6 @@ import {
 } from "react";
 import { FileDiff } from "@pierre/diffs/react";
 import {
-  parsePatchFiles,
   type FileDiff as DiffInstance,
   type FileDiffLoadedFiles,
   type SelectedLineRange,
@@ -45,6 +44,7 @@ import { colorSchemes, type ColorScheme } from "./preferences";
 import { moveVimLine, vimLines, type VimCursorRequest } from "./vim-navigation";
 import { SplitDiffResize } from "./SplitDiffLayout";
 import { remapVimCursor } from "./vim-refresh";
+import { parseRenderDiff } from "./render-diff";
 
 type Point = LinePoint;
 function pointFromElement(element: Element | null): Point | null {
@@ -120,6 +120,13 @@ const separatorCSS = `
   grid-template-columns: minmax(0, var(--split-diff-left, 50%)) minmax(0, 1fr);
 }
 [data-code] { padding-top: 0; padding-bottom: 0; }
+/* Pierre 1.4 renders both sides' EOF notices for a shared context row even in
+   unified mode. Collapse the duplicate notice AND its gutter cell, keeping
+   the renderer's single metadata-row metrics and code/gutter alignment. */
+[data-unified] [data-no-newline][data-line-type="context"] + [data-no-newline][data-line-type="context"],
+[data-unified] [data-gutter-buffer="metadata"][data-line-type="context"] + [data-gutter-buffer="metadata"][data-line-type="context"] {
+  display: none;
+}
 /* Hunk headings use 100cqi: size them to their own pane, not the viewport.
    A stable vertical scrollbar gutter otherwise leaves an unpainted strip at
    the pane's right edge even though only horizontal scrolling is enabled. */
@@ -723,7 +730,7 @@ export function CodeDiff({
     };
   }, [contextLoadKey, contextDisabled, file.path, getLoadedContexts]);
   const fileDiff = useMemo(
-    () => parsePatchFiles(file.patch, contextLoadKey, true)[0]?.files[0],
+    () => parseRenderDiff(file, contextLoadKey),
     [file.patch, contextLoadKey],
   );
   const scrollToSearchMatch = useCallback((): boolean => {
