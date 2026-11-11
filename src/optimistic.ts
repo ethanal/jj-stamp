@@ -6,11 +6,12 @@ export type RowRef = {
   kind: "+" | "-";
   line: number;
   text: string;
+  noNewline?: boolean;
 };
 export type SquashSpec = { id: string; lines: number[] };
 
 const key = (ref: RowRef): string =>
-  JSON.stringify([ref.path, ref.kind, ref.line, ref.text]);
+  JSON.stringify([ref.path, ref.kind, ref.line, ref.text, !!ref.noNewline]);
 
 function rowRef(path: string, row: Row): RowRef {
   const kind = row.raw[0];
@@ -23,7 +24,13 @@ function rowRef(path: string, row: Row): RowRef {
     throw new Error(
       "Selection must identify a changed row with valid source coordinates.",
     );
-  return { path, kind, line, text: row.raw.slice(1) };
+  return {
+    path,
+    kind,
+    line,
+    text: row.raw.slice(1),
+    ...(row.noNewline ? { noNewline: true } : {}),
+  };
 }
 
 function checkedKeys(refs: RowRef[]): Set<string> {
@@ -33,6 +40,7 @@ function checkedKeys(refs: RowRef[]): Set<string> {
       !ref ||
       typeof ref.path !== "string" ||
       typeof ref.text !== "string" ||
+      (ref.noNewline !== undefined && typeof ref.noNewline !== "boolean") ||
       (ref.kind !== "+" && ref.kind !== "-") ||
       !Number.isSafeInteger(ref.line) ||
       ref.line < 1
@@ -254,6 +262,7 @@ function projectFile(
 ): DiffFile | null {
   let delta = 0;
   let movedAdditions = 0;
+  let oldEnded = false;
   const hunks: Hunk[] = [];
   for (const hunk of file.hunks) {
     const match = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@(.*)$/.exec(
@@ -282,8 +291,19 @@ function projectFile(
         delta++;
         movedAdditions++;
       }
-      const next: Row = { index: rows.length + 1, raw };
-      if (raw[0] !== "+") next.oldLine = oldLine++;
+      const next: Row = {
+        index: rows.length + 1,
+        raw,
+        ...(row.noNewline ? { noNewline: true } : {}),
+      };
+      if (raw[0] !== "+") {
+        if (oldEnded)
+          throw new Error(
+            "This selection would put content after a line without a final newline. Select the related EOF changes together.",
+          );
+        oldEnded = !!row.noNewline;
+        next.oldLine = oldLine++;
+      }
       if (raw[0] !== "-") next.newLine = newLine++;
       rows.push(next);
     }
@@ -318,7 +338,11 @@ function projectFile(
         ...prefix,
         ...hunks.flatMap((hunk) => [
           hunk.header,
-          ...hunk.rows.map((row) => row.raw),
+          ...hunk.rows.flatMap((row) =>
+            row.noNewline
+              ? [row.raw, "\\ No newline at end of file"]
+              : [row.raw],
+          ),
         ]),
       ].join("\n") + "\n",
   };

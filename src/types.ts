@@ -1,6 +1,8 @@
 export interface Row {
   index: number;
   raw: string;
+  /** The source line has no terminating LF; not a separate selectable row. */
+  noNewline?: boolean;
   oldLine?: number;
   newLine?: number;
 }

@@ -589,3 +589,50 @@ test("whole-file references include every hunk but no context or other file, inc
   repo.files[0].unsupported = "Read-only";
   assert.throws(() => refsFromFile(repo, "a"), /unsupported/);
 });
+
+test("EOF metadata participates in exact references and change signatures", () => {
+  const terminated = state(file("a", "@@ -1 +1 @@\n-old\n+new"));
+  const unterminated = structuredClone(terminated);
+  unterminated.files[0].hunks[0].rows[1].noNewline = true;
+  const refs = select(unterminated, "a-0", 2);
+  assert.equal(refs[0].noNewline, true);
+  assert.notEqual(changeSignature(terminated), changeSignature(unterminated));
+  assert.throws(() => specsForRefs(terminated, refs), /no longer match/);
+});
+
+test("optimistic patches preserve EOF markers and reject invalid partial EOF edits", () => {
+  const marker = "\\ No newline at end of file";
+  const repo = state(
+    file("a", `@@ -1 +1 @@\n-old\n${marker}\n+new\n${marker}`),
+  );
+  // Removing the old row leaves an addition that still has no final newline.
+  const projected = projectSquash(repo, select(repo, "a-0", 1));
+  assert.match(
+    projected.files[0].patch,
+    /\+new\n\\ No newline at end of file\n$/,
+  );
+  assert.equal(projected.files[0].hunks[0].rows[0].noNewline, true);
+  assert.doesNotThrow(() => parseFile(projected.files[0].patch, "a"));
+  // Keeping the unterminated old row and adding another line would concatenate
+  // source lines, invalidating every subsequent optimistic coordinate.
+  assert.throws(
+    () => projectSquash(repo, select(repo, "a-0", 2)),
+    /related EOF changes together/,
+  );
+  assert.deepEqual(projectSquash(repo, select(repo, "a-0", 1, 2)).files, []);
+});
+
+test("optimistic context retains a missing final newline", () => {
+  const marker = "\\ No newline at end of file";
+  const repo = state(
+    file("a", `@@ -1,2 +1,2 @@\n-old\n+new\n-last\n+tail\n${marker}`),
+  );
+  const projected = projectSquash(repo, select(repo, "a-0", 3, 4));
+  assert.match(
+    projected.files[0].patch,
+    / tail\n\\ No newline at end of file\n$/,
+  );
+  const parsed = parseFile(projected.files[0].patch, "a");
+  assert.equal(parsed.hunks[0].rows.at(-1)?.noNewline, true);
+  assert.equal(projected.files[0].hunks[0].rows.at(-1)?.noNewline, true);
+});

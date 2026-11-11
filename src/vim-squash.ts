@@ -25,14 +25,14 @@ type VisualRow = {
 };
 
 const refKey = (ref: RowRef): string =>
-  JSON.stringify([ref.path, ref.kind, ref.line, ref.text]);
+  JSON.stringify([ref.path, ref.kind, ref.line, ref.text, !!ref.noNewline]);
 
 function rowKey(path: string, row: Row): string | null {
   const kind = row.raw[0];
   if (kind !== "+" && kind !== "-") return null;
   const line = kind === "+" ? row.newLine : row.oldLine;
   if (line === undefined) return null;
-  return JSON.stringify([path, kind, line, row.raw.slice(1)]);
+  return JSON.stringify([path, kind, line, row.raw.slice(1), !!row.noNewline]);
 }
 
 function hunkStart(header: string): {

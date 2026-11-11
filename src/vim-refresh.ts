@@ -100,7 +100,7 @@ function findCursor(
 }
 
 function signature(hunk: Hunk): string {
-  return JSON.stringify(hunk.rows.map((row) => row.raw));
+  return JSON.stringify(hunk.rows.map((row) => [row.raw, !!row.noNewline]));
 }
 
 function signatureGroups(signatures: readonly string[]): Map<string, number[]> {
