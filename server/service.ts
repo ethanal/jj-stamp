@@ -476,7 +476,11 @@ export class ReviewService {
             // IDs belong to this exact pinned diff, not to a third-party listing.
             // Resolve even short-hash collisions deterministically across files.
             const short = hash(
-              JSON.stringify([name, hunk.header, hunk.rows.map((r) => r.raw)]),
+              JSON.stringify([
+                name,
+                hunk.header,
+                hunk.rows.map((r) => [r.raw, r.noNewline ?? false]),
+              ]),
             ).slice(0, 7);
             const occurrence = (occurrences.get(short) ?? 0) + 1;
             occurrences.set(short, occurrence);

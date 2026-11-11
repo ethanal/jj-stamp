@@ -4,6 +4,7 @@ import {
   mkdtemp,
   readFile,
   readdir,
+  rm,
   writeFile,
   appendFile,
 } from "node:fs/promises";
@@ -307,15 +308,13 @@ test("serialized duplicate squash requests execute once only", async () => {
   assert.equal(after.canUndo, true);
 });
 
-test("unsupported newline, mode, binary and rename structures fail closed", async () => {
+test("missing newlines are supported; mode, binary and rename structures fail closed", async () => {
   const { service, state, root } = await fixture();
   await writeFile(path.join(root, "src/notifications.ts"), "no newline");
   const next = await service.getState();
-  const unsupported = next.files.find(
-    (f) => f.path === "src/notifications.ts",
-  )!;
-  assert.match(unsupported.unsupported!, /newline/);
-  assert.deepEqual(unsupported.hunks, []);
+  const supported = next.files.find((f) => f.path === "src/notifications.ts")!;
+  assert.equal(supported.unsupported, undefined);
+  assert.equal(supported.hunks.at(-1)!.rows.at(-1)!.noNewline, true);
   const goodPatch = state.files[0].patch;
   for (const extra of [
     "old mode 100644\nnew mode 100755\n",
@@ -323,6 +322,112 @@ test("unsupported newline, mode, binary and rename structures fail closed", asyn
     "rename from x\nrename to y\n",
   ]) {
     assert.throws(() => parseFile(extra + goodPatch, state.files[0].path));
+  }
+});
+
+test("real EOF selections preserve exact parent/workspace bytes, reject unsafe halves and undo", async (t) => {
+  const { root, dataDir } = await fixture();
+  t.after(() => rm(dataDir, { recursive: true, force: true }));
+  const cases: Array<[string, string | null, string | null]> = [
+    ["remove-newline.txt", "same\n", "same"],
+    ["add-newline.txt", "same", "same\n"],
+    ["crlf-eof.txt", "old\r\n", "new\r"],
+    ["added-eof.txt", null, "created"],
+    ["deleted-eof.txt", "gone", null],
+    ["context-eof.txt", "old\ntail", "new\ntail"],
+    ["partial-eof.txt", "old", "new"],
+  ];
+  for (const [name, base] of cases)
+    if (base !== null) await writeFile(path.join(root, name), base);
+  await jj(root, ["commit", "-m", "EOF base"]);
+  for (const [name, , source] of cases) {
+    if (source === null) await rm(path.join(root, name));
+    else await writeFile(path.join(root, name), source);
+  }
+  const service = new ReviewService({ repoPath: root });
+  const state = await service.getState();
+  assert.equal(state.files.length, cases.length);
+  assert.ok(state.files.every((file) => !file.unsupported));
+  for (const [name, base, source] of cases) {
+    assert.deepEqual(
+      await service.getFile({ version: state.version, path: name }),
+      {
+        oldFile: base === null ? null : { name, contents: base },
+        newFile: source === null ? null : { name, contents: source },
+      },
+    );
+  }
+  const unsafe = state.files.find((file) => file.path === "add-newline.txt")!
+    .hunks[0];
+  const unsafeSelections = [
+    {
+      id: unsafe.id,
+      lines: [unsafe.rows.find((row) => row.raw[0] === "+")!.index],
+    },
+  ];
+  await rejectsCode(
+    service.preview(input(state, unsafeSelections)),
+    "UNSAFE_PREVIEW",
+  );
+  await rejectsCode(
+    service.squashLines({
+      version: state.version,
+      selections: unsafeSelections,
+    }),
+    "UNSAFE_PREVIEW",
+  );
+  assert.deepEqual(await service.getState(), state);
+  const selections = state.files.flatMap((file) =>
+    file.hunks.map((hunk) => ({
+      id: hunk.id,
+      lines:
+        file.path === "partial-eof.txt"
+          ? hunk.rows
+              .filter((row) => row.raw[0] === "-")
+              .map((row) => row.index)
+          : changes(hunk),
+    })),
+  );
+  const preview = await service.preview(input(state, selections));
+  assert.ok(preview.patch.includes("\\ No newline at end of file\n"));
+  assert.equal(
+    preview.selectedLines,
+    selections.reduce((count, selection) => count + selection.lines.length, 0),
+  );
+  const squashed = await service.squashLines({
+    version: state.version,
+    selections,
+  });
+  assert.deepEqual(
+    squashed.state.files.map((file) => file.path),
+    ["partial-eof.txt"],
+  );
+  assert.equal(squashed.state.files[0].hunks[0].rows[0].noNewline, true);
+  for (const [name, , source] of cases) {
+    if (source === null) {
+      await assert.rejects(readFile(path.join(root, name)), { code: "ENOENT" });
+      await assert.rejects(jj(root, ["file", "show", "-r", "@-", "--", name]));
+    } else {
+      assert.deepEqual(
+        await readFile(path.join(root, name)),
+        Buffer.from(source),
+      );
+      const parent = await jj(root, ["file", "show", "-r", "@-", "--", name]);
+      assert.deepEqual(
+        parent.stdoutBytes,
+        Buffer.from(name === "partial-eof.txt" ? "" : source),
+      );
+    }
+  }
+  const undone = await service.undo(squashed.state.version);
+  assert.equal(undone.state.source.commitId, state.source.commitId);
+  assert.deepEqual(undone.state.files, state.files);
+  for (const [name, base] of cases) {
+    if (base === null) continue;
+    assert.deepEqual(
+      (await jj(root, ["file", "show", "-r", "@-", "--", name])).stdoutBytes,
+      Buffer.from(base),
+    );
   }
 });
 

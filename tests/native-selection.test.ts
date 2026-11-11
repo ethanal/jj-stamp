@@ -11,8 +11,8 @@ const bytes = (text: string | null) =>
   text === null ? null : Buffer.from(text);
 const lines = (rows: string[]) => (rows.length ? `${rows.join("\n")}\n` : "");
 function hunk(rows: string[], oldStart = 1, newStart = 1): string {
-  const oldCount = rows.filter((row) => row[0] !== "+").length;
-  const newCount = rows.filter((row) => row[0] !== "-").length;
+  const oldCount = rows.filter((row) => /^[ -]/.test(row)).length;
+  const newCount = rows.filter((row) => /^[ +]/.test(row)).length;
   return `@@ -${oldStart},${oldCount} +${newStart},${newCount} @@\n${lines(rows)}`;
 }
 function patch(body: string, kind: "edit" | "new" | "delete" = "edit"): string {
@@ -306,7 +306,7 @@ test("invalid UTF-8 in either pinned side and lone patch surrogates fail closed"
   );
 });
 
-test("unsupported text formats remain fail closed even with no selected rows", () => {
+test("unsupported formats and incorrect EOF claims fail closed even with no selected rows", () => {
   const original = patch(hunk(["-old", "+new"]));
   for (const modified of [
     original + "\\ No newline at end of file\n",
@@ -328,12 +328,12 @@ test("unsupported text formats remain fail closed even with no selected rows", (
   assert.throws(
     () =>
       materializeSelection(input(original, []), bytes("old"), bytes("new\n")),
-    /final newline/,
+    /exact coordinate/,
   );
   assert.throws(
     () =>
       materializeSelection(input(original, []), bytes("old\n"), bytes("new")),
-    /final newline/,
+    /reconstruct/,
   );
   assert.throws(
     () =>
@@ -491,4 +491,149 @@ test("every subset of multiple replacement blocks has an accurate deterministic 
       lines(expected),
     );
   }
+});
+
+const eofMarker = "\\ No newline at end of file";
+const fileRow = (kind: string, text: string): string[] => [
+  kind + (text.endsWith("\n") ? text.slice(0, -1) : text),
+  ...(text.endsWith("\n") ? [] : [eofMarker]),
+];
+
+test("all final-line terminator combinations preserve bytes, previews and safe partial selections", () => {
+  for (const oldEnding of ["\n", "\r\n", "", "\r"]) {
+    for (const newEnding of ["\n", "\r\n", "", "\r"]) {
+      for (const newText of ["new", "old"]) {
+        const base = "old" + oldEnding;
+        const source = newText + newEnding;
+        const original = patch(
+          hunk([...fileRow("-", base), ...fileRow("+", source)]),
+        );
+        for (const envelopeLF of [true, false]) {
+          const envelope = envelopeLF ? original : original.slice(0, -1);
+          check(envelope, base, source, [], base);
+          check(envelope, base, source, all(envelope), source);
+          check(envelope, base, source, [{ hunk: 0, lines: [1] }], "");
+          const plusOnly = [{ hunk: 0, lines: [2] }];
+          if (base.endsWith("\n")) {
+            check(envelope, base, source, plusOnly, base + source);
+          } else {
+            assert.throws(
+              () =>
+                materializeSelection(
+                  input(envelope, plusOnly),
+                  bytes(base),
+                  bytes(source),
+                ),
+              /nonfinal unterminated line/,
+            );
+          }
+        }
+      }
+    }
+  }
+});
+
+test("new/deleted unterminated files retain absence, empty and partial-file semantics", () => {
+  for (const ending of ["", "\r"]) {
+    const contents = "one\ntwo\nthree" + ending;
+    const addition = patch(
+      hunk(["+one", "+two", ...fileRow("+", "three" + ending)], 0, 1),
+      "new",
+    );
+    check(addition, null, contents, [], null);
+    check(addition, null, contents, all(addition), contents);
+    check(addition, null, contents, [{ hunk: 0, lines: [1] }], "one\n");
+    check(
+      addition,
+      null,
+      contents,
+      [{ hunk: 0, lines: [3] }],
+      "three" + ending,
+    );
+    check(
+      addition,
+      null,
+      contents,
+      [{ hunk: 0, lines: [1, 3] }],
+      "one\nthree" + ending,
+    );
+    const deletion = patch(
+      hunk(["-one", "-two", ...fileRow("-", "three" + ending)], 1, 0),
+      "delete",
+    );
+    check(deletion, contents, null, [], contents);
+    check(deletion, contents, null, all(deletion), null);
+    check(
+      deletion,
+      contents,
+      null,
+      [{ hunk: 0, lines: [1, 2] }],
+      "three" + ending,
+    );
+    check(deletion, contents, null, [{ hunk: 0, lines: [3] }], "one\ntwo\n");
+    const edit = patch(
+      hunk([...fileRow("-", "old" + ending), ...fileRow("+", "new" + ending)]),
+    );
+    check(edit, "old" + ending, "new" + ending, [{ hunk: 0, lines: [1] }], "");
+  }
+});
+
+test("unchanged EOF markers survive context/neutralized-deletion previews and unchanged tails", () => {
+  const context = patch(hunk(["-old", "+new", " tail", eofMarker]));
+  const preview = check(
+    context,
+    "old\ntail",
+    "new\ntail",
+    all(context),
+    "new\ntail",
+  ).preview;
+  assert.ok(preview.endsWith(` tail\n${eofMarker}\n`));
+  for (const index of [3, 4]) {
+    assert.throws(
+      () =>
+        materializeSelection(
+          input(context, [{ hunk: 0, lines: [index] }]),
+          bytes("old\ntail"),
+          bytes("new\ntail"),
+        ),
+      /selected/,
+    );
+  }
+  const deletion = patch(hunk(["-old", "+new", "-tail", eofMarker]));
+  const neutralized = check(
+    deletion,
+    "old\ntail",
+    "new\n",
+    [{ hunk: 0, lines: [1, 2] }],
+    "new\ntail",
+  ).preview;
+  assert.ok(neutralized.endsWith(` tail\n${eofMarker}\n`));
+  const omittedTail = patch(hunk(["-old", "+new"]));
+  check(omittedTail, "old\ntail", "new\ntail", all(omittedTail), "new\ntail");
+});
+
+test("pinned bytes must agree with markers on both sides even for unselected hunks", () => {
+  const original = patch(hunk(["-old", eofMarker, "+new", eofMarker]));
+  for (const [base, source] of [
+    ["old\n", "new"],
+    ["old", "new\n"],
+    ["old\n", "new\n"],
+    ["old\ntail", "new"],
+    ["old", "new\ntail"],
+  ]) {
+    assert.throws(() =>
+      materializeSelection(input(original, []), bytes(base), bytes(source)),
+    );
+  }
+  const nonfinal = patch(hunk(["-old", "+new", eofMarker, "-tail"]));
+  check(nonfinal, "old\ntail\n", "new", all(nonfinal), "new");
+  assert.throws(
+    () =>
+      materializeSelection(
+        input(nonfinal, [{ hunk: 0, lines: [2] }]),
+        bytes("old\ntail\n"),
+        bytes("new"),
+      ),
+    /nonfinal unterminated line/,
+  );
 });

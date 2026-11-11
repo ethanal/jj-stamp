@@ -171,7 +171,7 @@ test("full IDs, exact changed paths, literal filesets, absent sides, unsupported
     code("INVALID_PATH"),
   );
   await writeFile(path.join(root, "literal[1]*.txt"), "literal content\n");
-  await writeFile(path.join(root, "no-newline.txt"), "unsupported");
+  await writeFile(path.join(root, "no-newline.txt"), "supported");
   await rm(path.join(root, "src/preferences.ts"));
   await jj(root, ["describe", "-m", "new and deleted"]);
   const id = (
@@ -197,9 +197,12 @@ test("full IDs, exact changed paths, literal filesets, absent sides, unsupported
       .newFile,
     null,
   );
-  await assert.rejects(
-    service.getCommitFile({ commitId: id, path: "no-newline.txt" }),
-    code("UNSUPPORTED_DIFF"),
+  assert.deepEqual(
+    await service.getCommitFile({ commitId: id, path: "no-newline.txt" }),
+    {
+      oldFile: null,
+      newFile: { name: "no-newline.txt", contents: "supported" },
+    },
   );
   const read = calls.find(
     (args) => args[0] === "file" && args.at(-1)!.includes("literal"),

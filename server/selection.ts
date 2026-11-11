@@ -14,16 +14,17 @@ function textLines(bytes: Buffer | null, side: string): string[] {
     throw new Error(`${side} is not lossless UTF-8 text.`);
   if (text.includes("\0"))
     throw new Error(`${side} contains binary NUL bytes.`);
-  if (text !== "" && !text.endsWith("\n"))
-    throw new Error(
-      `${side} has no final newline; this format is unsupported.`,
-    );
-  // Split on LF only: the CR in a CRLF line is part of its exact content.
-  return text === "" ? [] : text.slice(0, -1).split("\n");
+  // Retain each LF terminator. A final unterminated line is a distinct fragment;
+  // CR (including a final lone CR) remains part of the exact content.
+  return text.match(/[^\n]*\n|[^\n]+$/g) ?? [];
 }
 
 function encode(lines: string[]): Buffer {
-  return Buffer.from(lines.length ? `${lines.join("\n")}\n` : "", "utf8");
+  if (lines.slice(0, -1).some((line) => !line.endsWith("\n")))
+    throw new Error(
+      "Selected edits would create a nonfinal unterminated line. Select the related EOF replacement/deletion rows together.",
+    );
+  return Buffer.from(lines.join(""), "utf8");
 }
 
 /**
@@ -95,7 +96,7 @@ export function materializeSelection(
     let hunkChanges = 0;
     for (const row of hunk.rows) {
       const kind = row.raw[0];
-      const content = row.raw.slice(1);
+      const content = row.raw.slice(1) + (row.noNewline ? "" : "\n");
       if (kind !== "+" && baseLines[oldCursor++] !== content)
         throw new Error(
           "Patch row does not match the pinned base at its exact coordinate.",
@@ -108,7 +109,10 @@ export function materializeSelection(
   }
   for (; oldCursor < baseLines.length; oldCursor++)
     reconstructed.push(baseLines[oldCursor]);
-  if (!encode(reconstructed).equals(source ?? Buffer.alloc(0)))
+  if (
+    reconstructed.length !== sourceLines.length ||
+    reconstructed.some((line, index) => line !== sourceLines[index])
+  )
     throw new Error(
       "Complete patch does not reconstruct the pinned source byte-for-byte.",
     );
@@ -155,12 +159,15 @@ export function materializeSelection(
     const previewRows: string[] = [];
     for (const row of hunk.rows) {
       const kind = row.raw[0];
-      const content = row.raw.slice(1);
+      const content = row.raw.slice(1) + (row.noNewline ? "" : "\n");
       const picked = chosen?.has(row.index) ?? false;
       if (kind !== "+") oldCursor++;
       if (kind === "+" && !picked) continue;
       if (kind !== "-" || !picked) output.push(content);
-      previewRows.push(kind === "-" && !picked ? ` ${content}` : row.raw);
+      previewRows.push(
+        kind === "-" && !picked ? ` ${row.raw.slice(1)}` : row.raw,
+      );
+      if (row.noNewline) previewRows.push("\\ No newline at end of file");
     }
     if (chosen?.size) {
       const oldCount = oldCursor - oldStart;

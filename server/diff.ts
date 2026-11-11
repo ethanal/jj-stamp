@@ -1,6 +1,8 @@
 /** Parse pinned jj diffs into exact, one-based patch-body rows. */
 export interface Row {
   raw: string;
+  /** The row's file line has no LF terminator; the marker is not a row. */
+  noNewline?: boolean;
   oldLine?: number;
   newLine?: number;
   hunk: number;
@@ -14,7 +16,7 @@ export interface FileDiff {
   path: string;
   hunks: Hunk[];
 }
-/** Initial native-editor scope: regular, newline-terminated UTF-8 text only. */
+/** Native-editor scope: regular UTF-8 text only. */
 function assertSupported(patch: string): void {
   if (
     /^(?:rename (?:from|to)|copy (?:from|to)|(?:old|new) mode|similarity index|dissimilarity index) /m.test(
@@ -30,11 +32,6 @@ function assertSupported(patch: string): void {
   }
   if (/^index [0-9a-f]+\.\.[0-9a-f]+ (?!100644$)\d+/m.test(patch)) {
     throw new Error("Only regular, non-executable text files are supported.");
-  }
-  if (/^\\ No newline at end of file/m.test(patch)) {
-    throw new Error(
-      "Files without a final newline are not supported safely by the native diff editor. Add a newline and refresh first.",
-    );
   }
   if (/^(?:GIT binary patch|Binary files |@@@)/m.test(patch)) {
     throw new Error(
@@ -68,8 +65,12 @@ export function parseFile(patch: string, path: string): FileDiff {
   const hunks: Hunk[] = [];
   let oldPath: string | null | undefined;
   let newPath: string | null | undefined;
+  let oldEOF: number | undefined;
+  let newEOF: number | undefined;
   let cursor = 0;
   for (; cursor < lines.length && !lines[cursor].startsWith("@@ "); cursor++) {
+    if (lines[cursor].startsWith("\\"))
+      throw new Error("Misplaced or malformed no-newline marker.");
     if (lines[cursor].startsWith("--- "))
       oldPath = readPath(lines[cursor], "a/");
     if (lines[cursor].startsWith("+++ "))
@@ -110,6 +111,12 @@ export function parseFile(patch: string, path: string): FileDiff {
     ) {
       throw new Error("Diff hunk has invalid or unsafe line coordinates.");
     }
+    if (
+      (oldEOF !== undefined && (oldRemaining > 0 || oldLine > oldEOF)) ||
+      (newEOF !== undefined && (newRemaining > 0 || newLine > newEOF))
+    ) {
+      throw new Error("Diff hunk continues beyond a no-newline EOF marker.");
+    }
     const hunk: Hunk = { header, rows: [] };
     while (oldRemaining > 0 || newRemaining > 0) {
       const raw = lines[cursor++];
@@ -132,6 +139,20 @@ export function parseFile(patch: string, path: string): FileDiff {
       }
       if (oldRemaining < 0 || newRemaining < 0)
         throw new Error("Diff hunk line counts disagree.");
+      if (lines[cursor]?.startsWith("\\")) {
+        if (
+          lines[cursor] !== "\\ No newline at end of file" ||
+          raw.length === 1 ||
+          (raw[0] !== "+" && oldRemaining !== 0) ||
+          (raw[0] !== "-" && newRemaining !== 0)
+        ) {
+          throw new Error("Misplaced or malformed no-newline EOF marker.");
+        }
+        cursor++;
+        row.noNewline = true;
+        if (raw[0] !== "+") oldEOF = row.oldLine;
+        if (raw[0] !== "-") newEOF = row.newLine;
+      }
       hunk.rows.push(row);
     }
     hunks.push(hunk);
