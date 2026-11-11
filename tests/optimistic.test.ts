@@ -53,9 +53,10 @@ function validatePatches(repo: RepoState): void {
     assert.deepEqual(
       parsed.hunks.map((h) => h.rows.map(({ hunk: _, ...row }) => row)),
       current.hunks.map((h) =>
-        h.rows.map(({ index, raw, oldLine, newLine }) => ({
+        h.rows.map(({ index, raw, oldLine, newLine, noNewline }) => ({
           index,
           raw,
+          ...(noNewline ? { noNewline: true } : {}),
           ...(oldLine === undefined ? {} : { oldLine }),
           ...(newLine === undefined ? {} : { newLine }),
         })),
@@ -607,6 +608,7 @@ test("optimistic patches preserve EOF markers and reject invalid partial EOF edi
   );
   // Removing the old row leaves an addition that still has no final newline.
   const projected = projectSquash(repo, select(repo, "a-0", 1));
+  validatePatches(projected);
   assert.match(
     projected.files[0].patch,
     /\+new\n\\ No newline at end of file\n$/,
@@ -628,6 +630,7 @@ test("optimistic context retains a missing final newline", () => {
     file("a", `@@ -1,2 +1,2 @@\n-old\n+new\n-last\n+tail\n${marker}`),
   );
   const projected = projectSquash(repo, select(repo, "a-0", 3, 4));
+  validatePatches(projected);
   assert.match(
     projected.files[0].patch,
     / tail\n\\ No newline at end of file\n$/,
