@@ -32,6 +32,17 @@ import type {
 
 export type DiffStyle = "unified" | "split";
 
+function FileName({ file }: { file: DiffFile }) {
+  return (
+    <span title={file.oldPath ? `${file.oldPath} → ${file.path}` : file.path}>
+      {file.oldPath && (
+        <span className="file-previous-path">{file.oldPath} → </span>
+      )}
+      {file.path}
+    </span>
+  );
+}
+
 export function LineCounts({
   additions,
   deletions,
@@ -531,7 +542,9 @@ function FileDiffSection({
               <path d={expanded ? "m4 6 4 4 4-4" : "m6 4 4 4-4 4"} />
             </svg>
           </button>
-          <h2>{file.path}</h2>
+          <h2>
+            <FileName file={file} />
+          </h2>
           {actions}
         </div>
       )}
@@ -779,9 +792,13 @@ export function ReviewViewer({
       <div className="file-bar">
         <div className="file-bar-title">
           <span className="file-bar-filename">
-            {fileView === "all"
-              ? "All changed files"
-              : (file?.path ?? "Reviewed change")}
+            {fileView === "all" ? (
+              "All changed files"
+            ) : file ? (
+              <FileName file={file} />
+            ) : (
+              "Reviewed change"
+            )}
           </span>
           {file && fileView === "single" && (
             <>
@@ -931,12 +948,27 @@ export function ReviewViewer({
                     </>
                   }
                 >
+                  {entry.oldPath && !entry.unsupported && (
+                    <div className="rename-notice">
+                      <span>
+                        {entry.hunks.length
+                          ? "Renamed and modified."
+                          : "Renamed without content changes."}
+                      </span>
+                      {entry.squashUnsupported && (
+                        <span title={entry.squashUnsupported}>
+                          Review only · squashing renamed files is not
+                          supported.
+                        </span>
+                      )}
+                    </div>
+                  )}
                   {entry.unsupported ? (
                     <div className="unsupported">
                       <p>{entry.unsupported}</p>
                       <pre>{entry.patch}</pre>
                     </div>
-                  ) : (
+                  ) : entry.hunks.length > 0 ? (
                     <CodeDiff
                       file={entry}
                       version={renderVersion}
@@ -1010,7 +1042,7 @@ export function ReviewViewer({
                           : undefined
                       }
                       disabled={(!readOnlyPreview && working) || halted}
-                      readOnly={readOnlyPreview}
+                      readOnly={readOnlyPreview || !!entry.squashUnsupported}
                       contextDisabled={
                         !readOnlyPreview && (pending > 0 || recovering)
                       }
@@ -1021,7 +1053,7 @@ export function ReviewViewer({
                       onError={onError}
                       loadFile={loadFile}
                     />
-                  )}
+                  ) : null}
                 </FileDiffSection>
               ))
             )}

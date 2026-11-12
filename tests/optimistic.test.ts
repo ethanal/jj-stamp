@@ -639,3 +639,23 @@ test("optimistic context retains a missing final newline", () => {
   assert.equal(parsed.hunks[0].rows.at(-1)?.noNewline, true);
   assert.equal(projected.files[0].hunks[0].rows.at(-1)?.noNewline, true);
 });
+
+test("reviewable renamed files cannot enter the optimistic squash queue", () => {
+  const renamed = {
+    ...file("new.ts", "@@ -1 +1 @@\n-old\n+new"),
+    oldPath: "old.ts",
+    squashUnsupported: "Squashing renamed files is not supported.",
+  };
+  const ordinary = file("other.ts", "@@ -1 +1 @@\n-before\n+after");
+  const repo = state(renamed, ordinary);
+  const refs: RowRef[] = [{ path: "new.ts", kind: "+", line: 1, text: "new" }];
+  for (const action of [
+    () => refsFromFile(repo, "new.ts"),
+    () => refsFromSelection(repo, { "new.ts-0": [2] }),
+    () => specsForRefs(repo, refs),
+    () => projectSquash(repo, refs),
+  ])
+    assert.throws(action, /Squashing renamed files/);
+  const projected = projectSquash(repo, refsFromFile(repo, "other.ts"));
+  assert.deepEqual(projected.files, [renamed]);
+});

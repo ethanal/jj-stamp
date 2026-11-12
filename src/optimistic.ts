@@ -70,6 +70,8 @@ export function refsFromSelection(
     if (!entry) throw new Error("Selected hunk no longer exists.");
     if (entry.file.unsupported)
       throw new Error("Selected file is unsupported.");
+    if (entry.file.squashUnsupported)
+      throw new Error(entry.file.squashUnsupported);
     const seen = new Set<number>();
     const rowsByIndex = new Map<number, Row>();
     const ambiguous = new Set<number>();
@@ -97,6 +99,7 @@ export function refsFromFile(state: RepoState, path: string): RowRef[] {
   const file = state.files.find((entry) => entry.path === path);
   if (!file) throw new Error("Selected file no longer exists.");
   if (file.unsupported) throw new Error("Selected file is unsupported.");
+  if (file.squashUnsupported) throw new Error(file.squashUnsupported);
   return refsFromSelection(
     state,
     Object.fromEntries(
@@ -129,6 +132,7 @@ export function specsForRefs(state: RepoState, refs: RowRef[]): SquashSpec[] {
         const value = key(rowRef(file.path, row));
         if (!wanted.has(value)) continue;
         if (file.unsupported) throw new Error("Selected file is unsupported.");
+        if (file.squashUnsupported) throw new Error(file.squashUnsupported);
         if (matches.has(value))
           throw new Error("Changed-row reference is ambiguous.");
         if (

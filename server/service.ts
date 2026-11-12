@@ -58,10 +58,14 @@ export interface ReviewHunk {
 }
 export interface ReviewFile {
   path: string;
+  /** Rename source; path remains the destination and API lookup key. */
+  oldPath?: string;
   patch: string;
   additions: number;
   deletions: number;
   unsupported?: string;
+  /** Review is supported, but selecting rows for mutation is not. */
+  squashUnsupported?: string;
   hunks: ReviewHunk[];
 }
 /** Display-only immutable content. Never a mutation authorization token. */
@@ -471,6 +475,11 @@ export class ReviewService {
       };
       try {
         const parsed = parseFile(patch, name);
+        if (parsed.oldPath !== undefined) {
+          file.oldPath = parsed.oldPath;
+          file.squashUnsupported =
+            "Line squash is not supported for renamed files; review is read-only to preserve the rename.";
+        }
         if (includeHunks) {
           file.hunks = parsed.hunks.map((hunk) => {
             // IDs belong to this exact pinned diff, not to a third-party listing.
@@ -478,6 +487,7 @@ export class ReviewService {
             const short = hash(
               JSON.stringify([
                 name,
+                ...(parsed.oldPath === undefined ? [] : [parsed.oldPath]),
                 hunk.header,
                 hunk.rows.map((r) => [r.raw, r.noNewline ?? false]),
               ]),
@@ -716,7 +726,13 @@ export class ReviewService {
     };
   }
   private publishWatchState(state: State): State {
-    const paths = [...new Set(state.files.map((file) => file.path))].sort();
+    const paths = [
+      ...new Set(
+        state.files.flatMap((file) =>
+          file.oldPath === undefined ? [file.path] : [file.oldPath, file.path],
+        ),
+      ),
+    ].sort();
     if (!same(paths, this.watchPaths)) {
       this.watchPaths = paths;
       for (const listener of [...this.watchPathListeners]) {
@@ -1194,7 +1210,7 @@ export class ReviewService {
           "UNSUPPORTED_DIFF",
           "File context requires exactly one source parent.",
         );
-      const read = async (revision: string) => {
+      const read = async (revision: string, name: string) => {
         const result = await this.pinnedRead(
           content.repo.path,
           [
@@ -1203,7 +1219,7 @@ export class ReviewService {
             "-r",
             this.commitRevset(revision),
             "--",
-            `root-file:${JSON.stringify(file.path)}`,
+            `root-file:${JSON.stringify(name)}`,
           ],
           4 * 1024 * 1024,
         );
@@ -1217,14 +1233,14 @@ export class ReviewService {
             "UNSUPPORTED_DIFF",
             "Only lossless UTF-8 text contents are supported.",
           );
-        return { name: file.path, contents: result.stdout };
+        return { name, contents: result.stdout };
       };
       const oldFile = /^--- \/dev\/null$/m.test(file.patch)
         ? null
-        : await read(content.baseCommitId);
+        : await read(content.baseCommitId, file.oldPath ?? file.path);
       const newFile = /^\+\+\+ \/dev\/null$/m.test(file.patch)
         ? null
-        : await read(content.commitId);
+        : await read(content.commitId, file.path);
       return { oldFile, newFile };
     });
   }
@@ -1250,25 +1266,36 @@ export class ReviewService {
         );
       // A literal root-relative fileset prevents glob or fileset syntax in names
       // from reading additional paths. Both revisions are full pinned commit IDs.
-      const read = async (revision: string) => ({
-        name: file.path,
-        contents: (
-          await this.jjRunner(this.root, [
-            "file",
-            "show",
-            "-r",
-            revision,
-            "--",
-            `root-file:${JSON.stringify(file.path)}`,
-          ])
-        ).stdout,
-      });
+      const read = async (revision: string, name: string) => {
+        const result = await this.jjRunner(this.root, [
+          "file",
+          "show",
+          "-r",
+          revision,
+          "--ignore-working-copy",
+          "--",
+          `root-file:${JSON.stringify(name)}`,
+        ]);
+        // Pure renames have no text hunks to reveal binary content. Enforce
+        // the same lossless text boundary as immutable file context reads.
+        if (
+          result.stdout.includes("\0") ||
+          (result.stdoutBytes &&
+            !Buffer.from(result.stdout).equals(result.stdoutBytes))
+        )
+          throw new ApiError(
+            422,
+            "UNSUPPORTED_DIFF",
+            "Only lossless UTF-8 text contents are supported.",
+          );
+        return { name, contents: result.stdout };
+      };
       const oldFile = /^--- \/dev\/null$/m.test(file.patch)
         ? null
-        : await read(parents[0].commitId);
+        : await read(parents[0].commitId, file.oldPath ?? file.path);
       const newFile = /^\+\+\+ \/dev\/null$/m.test(file.patch)
         ? null
-        : await read(before.source.commitId);
+        : await read(before.source.commitId, file.path);
       await this.revalidateVersion(before.version);
       return { oldFile, newFile };
     });
@@ -1422,6 +1449,8 @@ export class ReviewService {
         if (!lines) continue;
         if (file.unsupported)
           throw new ApiError(422, "UNSUPPORTED_DIFF", file.unsupported);
+        if (file.squashUnsupported)
+          throw new ApiError(422, "SQUASH_UNSUPPORTED", file.squashUnsupported);
         const changed = hunk.rows.filter((row) => /^[+-]/.test(row.raw));
         const changedIndices = new Set(changed.map((row) => row.index));
         if (lines.some((index) => !changedIndices.has(index)))

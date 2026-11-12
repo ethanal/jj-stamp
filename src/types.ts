@@ -13,10 +13,14 @@ export interface Hunk {
 }
 export interface DiffFile {
   path: string;
+  /** Original path for a rename; path always identifies the destination. */
+  oldPath?: string;
   patch: string;
   additions: number;
   deletions: number;
   unsupported?: string;
+  /** Display is supported, but this file cannot be squashed. */
+  squashUnsupported?: string;
   hunks: Hunk[];
 }
 export interface Revision {

@@ -9,6 +9,13 @@ export function parseRenderDiff(file: DiffFile, cacheKey?: string) {
   const patch = file.patch.endsWith("\n") ? file.patch : `${file.patch}\n`;
   const parsed = parsePatchFiles(patch, cacheKey, true)[0]?.files[0];
   if (!parsed) return;
+  // jj emits rename from/to without Git's optional similarity index, which
+  // Pierre otherwise uses to classify renames.
+  if (file.oldPath) {
+    parsed.prevName = file.oldPath;
+    parsed.name = file.path;
+    parsed.type = file.hunks.length ? "rename-changed" : "rename-pure";
+  }
   // Pierre's EOF cleanup removes CRLF together. A marked source line ending
   // in a literal CR has only the synthetic LF removed; Row.raw is authoritative.
   for (const [index, hunk] of parsed.hunks.entries()) {

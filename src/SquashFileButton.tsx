@@ -15,7 +15,7 @@ export function SquashFileButton({
   // Read-only revisions are quiet while browsing; the keyboard action explains
   // why squashing is unavailable if the user explicitly attempts it.
   if (unavailable) return null;
-  const reason = file.unsupported;
+  const reason = file.unsupported || file.squashUnsupported;
   return (
     <button
       className="squash-file"

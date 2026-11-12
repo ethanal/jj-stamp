@@ -70,11 +70,12 @@ export function ChangedFilesTree(props: Props) {
     renderRowDecoration({ item }) {
       const file = filesByPath.current.get(item.path);
       if (!file) return null;
+      const label = file.oldPath ? `${file.oldPath} → ${file.path}` : file.path;
       return {
         text: `+${file.additions}−${file.deletions}`,
         title: file.unsupported
-          ? `${file.path} — read-only: ${file.unsupported}`
-          : `${file.path} — ${file.additions} additions, ${file.deletions} deletions`,
+          ? `${label} — read-only: ${file.unsupported}`
+          : `${label} — ${file.additions} additions, ${file.deletions} deletions${file.squashUnsupported ? ` — ${file.squashUnsupported}` : ""}`,
         parts: [
           { text: `+${file.additions}`, color: "var(--added)" },
           { text: `−${file.deletions}`, color: "var(--removed)" },
@@ -123,11 +124,13 @@ export function ChangedFilesTree(props: Props) {
           return [
             {
               path: file.path,
-              status: file.patch.includes("new file mode")
-                ? "added"
-                : file.patch.includes("deleted file mode")
-                  ? "deleted"
-                  : "modified",
+              status: file.oldPath
+                ? "renamed"
+                : file.patch.includes("new file mode")
+                  ? "added"
+                  : file.patch.includes("deleted file mode")
+                    ? "deleted"
+                    : "modified",
             },
           ];
         }),

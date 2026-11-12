@@ -595,6 +595,18 @@ kbd {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.file-previous-path {
+  color: var(--muted);
+}
+.rename-notice {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  padding: 8px 15px;
+  color: var(--muted);
+  font-size: calc(var(--font-size) - 1px);
+  border-bottom: 1px solid var(--border);
+}
 .file-bar-title .line-counts,
 .file-bar-title .squash-file {
   flex-shrink: 0;

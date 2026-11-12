@@ -40,6 +40,10 @@ export function materializeSelection(
   if (Buffer.from(input.patch, "utf8").toString("utf8") !== input.patch)
     throw new Error("Patch is not lossless UTF-8 text.");
   const file = parseFile(input.patch, input.path);
+  // The single-path scratch plan cannot preserve a rename. Review parsing is
+  // deliberately broader than native mutation support; never silently drop it.
+  if (file.oldPath !== undefined)
+    throw new Error("Line squash is not supported for renamed files.");
   const baseLines = textLines(base, "Base file");
   const sourceLines = textLines(source, "Source file");
   const headerLines = input.patch.split("\n").slice(

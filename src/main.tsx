@@ -619,6 +619,13 @@ function App() {
         );
         return;
       }
+      const selectedFile = current.view.files.find(
+        (entry) => entry.path === (path ?? file?.path),
+      );
+      if (selectedFile?.squashUnsupported) {
+        setError(selectedFile.squashUnsupported);
+        return;
+      }
       if (!path && !count) return;
       let enqueued = false;
       try {
@@ -1166,7 +1173,12 @@ function App() {
         busy={busy}
         recovering={queued.recovering}
         halted={queued.halted}
-        notice={notice}
+        notice={
+          notice ||
+          (file?.squashUnsupported
+            ? "Review-only file · Alt-drag to select text"
+            : "")
+        }
         queueNotice={queued.notice}
         showSquash={!state?.squashUnavailable}
         canSquash={!!count && !squashDisabled}
@@ -1176,6 +1188,7 @@ function App() {
         working={working}
         dragging={dragging}
         squashTitle={
+          file?.squashUnsupported ??
           state?.squashUnavailable ??
           "Queue selected lines into this change’s immediate parent"
         }
