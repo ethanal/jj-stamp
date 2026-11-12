@@ -204,7 +204,7 @@ function stale(): never {
   throw new ApiError(
     409,
     "STALE_STATE",
-    "The repository changed. Refresh the diff and review your selection again; nothing was squashed.",
+    "The repository changed while this request was being validated.",
   );
 }
 

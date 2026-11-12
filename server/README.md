@@ -48,6 +48,8 @@ Every squash-eligible state exposes the exact single **mutable immediate parent*
 - `POST /undo {version}`: revert only the last exactly attributed app squash via `jj op revert <operation>`, while the selected-source state and repository operation still match. Undo is available only in the process that performed the squash, not after restart.
 - Legacy `POST /preview {version,target,selections:[{id,lines}]}` and `POST /squash {token}` remain for internal compatibility/tests. They are not used by the UI. Whole-hunk selections contain only changed rows; tokens are one-shot, expire after ten minutes, and do not survive restart.
 
+The browser retries only stale `GET /state` and `GET /graph` validation failures, at most twice with short backoff. Background staleness is not surfaced as a mutation error. A definite `409 STALE_STATE` squash rejection discards queued selections and reloads state; only a successful reload re-enables new explicit selections. Neither the rejected mutation nor unsent selections are replayed. Other mutation errors and failed recovery reads remain halted. The shared stale diagnostic is request-neutral because it also applies to reads, revision switches and editor requests.
+
 Unknown routes, including `/reset`, return 404. Errors are JSON `{error,code,output?}`. Invalid inputs use 400; stale, conflict, unavailable-source and recovery conditions use 409; unsupported/unsafe previews use 422; tool failures use 500.
 
 ## Workspace editor

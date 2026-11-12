@@ -7,7 +7,12 @@ import {
   type SquashSpec,
 } from "./optimistic";
 import type { RepoState } from "./types";
-import { errorMessage as message, errorDetails, type ErrorDetail } from "./api";
+import {
+  errorMessage as message,
+  errorDetails,
+  isStaleState,
+  type ErrorDetail,
+} from "./api";
 
 export interface SquashTransport {
   squash(input: {
@@ -157,6 +162,7 @@ export class SquashQueue {
 
   private async recover(error: unknown): Promise<void> {
     this.jobs = [];
+    const stale = isStaleState(error);
     const explanation = `Squash stopped: ${message(error)} No queued squashes were retried.`;
     // Do not leave speculative edits visible while a potentially slow GET runs.
     this.publish({
@@ -164,24 +170,37 @@ export class SquashQueue {
       pending: 0,
       recovering: true,
       halted: true,
-      error: explanation,
-      errorDetails: errorDetails(error, "Squash"),
-      notice: "",
+      error: stale ? "" : explanation,
+      errorDetails: stale ? [] : errorDetails(error, "Squash"),
+      notice: stale ? "Repository changed; refreshing the diff…" : "",
       epoch: this.snapshot.epoch + 1,
     });
     try {
-      // Serialized after the failed POST; this GET is attempted exactly once.
+      // Serialized after the failed POST. Only reads may retry stale validation;
+      // the rejected POST and all queued selections have already been discarded.
       const fresh = await this.transport.readState();
       this.publish({
         confirmed: fresh,
         view: fresh,
         recovering: false,
+        // Only a definite pre-mutation rejection can resume automatically.
+        // The fresh state permits new selections, never replaying canceled jobs.
+        ...(stale
+          ? {
+              halted: false,
+              error: "",
+              errorDetails: [],
+              notice:
+                "Diff refreshed. Selection and queued squashes were canceled. Nothing was squashed by the rejected request.",
+            }
+          : {}),
         epoch: this.snapshot.epoch + 1,
       });
     } catch (refreshError) {
       this.publish({
         view: this.snapshot.confirmed,
         recovering: false,
+        notice: "",
         errorDetails: [
           ...errorDetails(error, "Squash"),
           ...errorDetails(refreshError, "Reload"),

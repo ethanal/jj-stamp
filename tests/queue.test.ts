@@ -239,6 +239,175 @@ test("network/tool failure discards every speculative job, reloads once, and nev
   assert.equal(posts.length, 1);
 });
 
+test("definite stale rejection cancels queued selections and resumes only after a fresh read, without replay", async () => {
+  const { queue, posts, reads, state } = setup();
+  const first = refs(state, 2);
+  queue.enqueue(first);
+  queue.enqueue(refs(queue.getSnapshot().view!, 2));
+  queue.enqueue(refs(queue.getSnapshot().view!, 2));
+  const epoch = queue.getSnapshot().epoch;
+  posts[0].result.reject(
+    new RequestError("Selection is stale.", 409, "STALE_STATE"),
+  );
+  await tick();
+  assert.equal(posts.length, 1);
+  assert.equal(reads.length, 1);
+  assert.equal(queue.getSnapshot().pending, 0);
+  assert.equal(queue.getSnapshot().view, state);
+  assert.equal(queue.getSnapshot().recovering, true);
+  assert.equal(queue.getSnapshot().halted, true);
+  assert.equal(queue.getSnapshot().error, "");
+  assert.deepEqual(queue.getSnapshot().errorDetails, []);
+  assert.match(queue.getSnapshot().notice, /Repository changed; refreshing/);
+  assert.throws(() => queue.enqueue(first), /paused/);
+  assert.throws(() => queue.replace(state), /Wait/);
+
+  const fresh = structuredClone(state);
+  fresh.version = "external";
+  fresh.operation = "external-operation";
+  fresh.source.commitId = "external-commit";
+  fresh.files[0].hunks[0].id = "fresh-hunk";
+  reads[0].resolve(fresh);
+  await tick();
+  const snapshot = queue.getSnapshot();
+  assert.equal(snapshot.confirmed, fresh);
+  assert.equal(snapshot.view, fresh);
+  assert.equal(snapshot.recovering, false);
+  assert.equal(snapshot.halted, false);
+  assert.equal(snapshot.pending, 0);
+  assert.equal(snapshot.error, "");
+  assert.deepEqual(snapshot.errorDetails, []);
+  assert.ok(snapshot.epoch > epoch);
+  assert.match(snapshot.notice, /Diff refreshed/);
+  assert.match(snapshot.notice, /Selection and queued squashes were canceled/);
+  assert.match(snapshot.notice, /Nothing was squashed by the rejected request/);
+  await tick();
+  assert.equal(
+    posts.length,
+    1,
+    "neither rejected nor queued jobs are replayed",
+  );
+  assert.equal(reads.length, 1);
+
+  const explicit = refs(fresh, 4);
+  queue.enqueue(explicit);
+  assert.equal(posts.length, 2);
+  assert.deepEqual(posts[1].input, {
+    version: "external",
+    selections: [{ id: "fresh-hunk", lines: [4] }],
+  });
+  posts[1].result.resolve({ state: acknowledge(fresh, explicit, "v-next") });
+  await tick();
+  assert.equal(queue.getSnapshot().halted, false);
+  assert.equal(queue.getSnapshot().pending, 0);
+  assert.equal(queue.getSnapshot().notice, "1 line squashed.");
+});
+
+test("stale rejection after an acknowledged squash preserves earlier success and cancels the remaining queue", async () => {
+  const { queue, posts, reads, state } = setup();
+  const first = refs(state, 2);
+  queue.enqueue(first);
+  queue.enqueue(refs(queue.getSnapshot().view!, 2));
+  const actual = acknowledge(state, first, "v1");
+  posts[0].result.resolve({ state: actual });
+  await tick();
+  assert.equal(posts.length, 2);
+  queue.enqueue(refs(queue.getSnapshot().view!, 2));
+  posts[1].result.reject(
+    new RequestError("Repository changed.", 409, "STALE_STATE"),
+  );
+  await tick();
+  assert.equal(queue.getSnapshot().view, actual);
+  assert.equal(queue.getSnapshot().confirmed, actual);
+  const fresh = { ...actual, version: "external" };
+  reads[0].resolve(fresh);
+  await tick();
+  assert.equal(queue.getSnapshot().view, fresh);
+  assert.equal(queue.getSnapshot().confirmed, fresh);
+  assert.equal(queue.getSnapshot().halted, false);
+  assert.equal(queue.getSnapshot().pending, 0);
+  assert.match(
+    queue.getSnapshot().notice,
+    /Nothing was squashed by the rejected request/,
+  );
+  assert.equal(posts.length, 2);
+  assert.equal(reads.length, 1);
+});
+
+test("stale rejection stays halted with both diagnostics when its recovery read fails", async () => {
+  const { queue, posts, reads, state } = setup();
+  const first = refs(state, 2);
+  queue.enqueue(first);
+  const actual = acknowledge(state, first, "v1");
+  posts[0].result.resolve({ state: actual });
+  await tick();
+  queue.enqueue(refs(queue.getSnapshot().view!, 2));
+  queue.enqueue(refs(queue.getSnapshot().view!, 2));
+  posts[1].result.reject(
+    new RequestError("Selection is stale.", 409, "STALE_STATE"),
+  );
+  await tick();
+  reads[0].reject(
+    new RequestError("Cannot reload.", 409, "SOURCE_UNAVAILABLE", "missing\n"),
+  );
+  await tick();
+  const snapshot = queue.getSnapshot();
+  assert.equal(snapshot.view, actual);
+  assert.equal(snapshot.confirmed, actual);
+  assert.equal(snapshot.halted, true);
+  assert.equal(snapshot.recovering, false);
+  assert.equal(snapshot.pending, 0);
+  assert.equal(snapshot.notice, "");
+  assert.match(snapshot.error, /Reload also failed: Cannot reload/);
+  assert.deepEqual(snapshot.errorDetails, [
+    { label: "Squash", code: "STALE_STATE", output: undefined },
+    { label: "Reload", code: "SOURCE_UNAVAILABLE", output: "missing\n" },
+  ]);
+  assert.equal(posts.length, 2);
+  assert.equal(reads.length, 1);
+  queue.clearError();
+  assert.equal(queue.getSnapshot().halted, true);
+  assert.throws(() => queue.enqueue(refs(actual, 2)), /paused/);
+  await tick();
+  assert.equal(posts.length, 2);
+  assert.equal(reads.length, 1);
+});
+
+for (const error of [
+  new RequestError("Selection is stale.", 500, "STALE_STATE"),
+  new RequestError("Conflict.", 409, "OTHER_CONFLICT"),
+  new RequestError("Selection is stale.", 409),
+  Object.assign(new Error("Selection is stale."), {
+    status: 409,
+    code: "STALE_STATE",
+  }),
+]) {
+  test(`nondefinite stale rejection stays halted after a fresh read: ${error.constructor.name} ${"status" in error ? error.status : ""} ${"code" in error ? error.code : ""}`, async () => {
+    const { queue, posts, reads, state } = setup();
+    queue.enqueue(refs(state, 2));
+    queue.enqueue(refs(queue.getSnapshot().view!, 2));
+    posts[0].result.reject(error);
+    await tick();
+    reads[0].resolve(state);
+    await tick();
+    assert.equal(queue.getSnapshot().view, state);
+    assert.equal(queue.getSnapshot().halted, true);
+    assert.equal(queue.getSnapshot().recovering, false);
+    assert.equal(queue.getSnapshot().pending, 0);
+    assert.match(queue.getSnapshot().error, new RegExp(error.message));
+    assert.deepEqual(
+      queue.getSnapshot().errorDetails,
+      error instanceof RequestError && error.code
+        ? [{ label: "Squash", code: error.code, output: undefined }]
+        : [],
+    );
+    assert.equal(queue.getSnapshot().notice, "");
+    assert.throws(() => queue.enqueue(refs(state, 2)), /paused/);
+    assert.equal(posts.length, 1);
+    assert.equal(reads.length, 1);
+  });
+}
+
 test("failed reload rolls back to last acknowledged state, not the initial or speculative state", async () => {
   const { queue, posts, reads, state } = setup();
   const first = refs(state, 2);

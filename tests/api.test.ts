@@ -1,6 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { api, RequestError, errorDetails } from "../src/api.ts";
+import {
+  api,
+  readRepository,
+  isStaleState,
+  RequestError,
+  errorDetails,
+} from "../src/api.ts";
 
 test("API failures preserve the code and complete multiline tool output", async (t) => {
   const output =
@@ -102,4 +108,67 @@ test("API successes and network errors keep their normal behavior", async (t) =>
   });
   await assert.rejects(api("state"), (error) => error === offline);
   assert.deepEqual(errorDetails(offline), []);
+});
+
+test("repository reads retry definite stale validation failures, with a bounded budget", async (t) => {
+  let requests = 0;
+  const fetch = t.mock.method(globalThis, "fetch", async () => {
+    requests++;
+    return requests < 3
+      ? Response.json(
+          { error: "Changed", code: "STALE_STATE" },
+          { status: 409 },
+        )
+      : Response.json({ version: "fresh" });
+  });
+  assert.deepEqual(await readRepository("state"), { version: "fresh" });
+  assert.equal(requests, 3);
+
+  requests = 0;
+  fetch.mock.mockImplementation(async () => {
+    requests++;
+    return Response.json(
+      { error: "Changed", code: "STALE_STATE" },
+      { status: 409 },
+    );
+  });
+  await assert.rejects(readRepository("graph"), isStaleState);
+  assert.equal(requests, 3, "continuous changes must not cause a retry loop");
+});
+
+test("non-stale errors, superseded reads and mutation requests are not retried", async (t) => {
+  let requests = 0;
+  let code = "SOURCE_UNAVAILABLE";
+  const fetch = t.mock.method(globalThis, "fetch", async () => {
+    requests++;
+    return Response.json({ error: "Failed", code }, { status: 409 });
+  });
+  await assert.rejects(readRepository("state"));
+  assert.equal(requests, 1);
+  code = "STALE_STATE";
+  await assert.rejects(
+    readRepository("graph", () => false),
+    isStaleState,
+  );
+  assert.equal(requests, 2);
+  let checks = 0;
+  await assert.rejects(
+    readRepository("graph", () => ++checks === 1),
+    isStaleState,
+  );
+  assert.equal(
+    requests,
+    3,
+    "a graph overtaken during backoff must not issue another read",
+  );
+  await assert.rejects(api("squash-lines", {}), isStaleState);
+  assert.equal(requests, 4);
+
+  const offline = new TypeError("Failed to fetch");
+  fetch.mock.mockImplementation(async () => {
+    requests++;
+    throw offline;
+  });
+  await assert.rejects(readRepository("state"), (error) => error === offline);
+  assert.equal(requests, 5);
 });

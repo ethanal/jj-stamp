@@ -227,7 +227,10 @@ try {
   // Errors leave the confirmed selection intact and do not retry the shortcut.
   failNext = true;
   await page.keyboard.press("Shift+Digit2");
-  await expect(page.locator(".error")).toContainText("Selection is stale");
+  await expect(page.locator(".statusbar")).toContainText(
+    "Repository changed; choose the revision again.",
+  );
+  await expect(page.getByRole("alert")).toHaveCount(0);
   await expect(page.locator(".log-loading")).toHaveCount(0);
   await selected("working-copy");
   assert.equal(requests.length, beforeIgnored + 1);
@@ -326,7 +329,10 @@ try {
   await expect(page.locator(".viewer-scroll")).toBeFocused();
   release!();
   release = undefined;
-  await expect(page.locator(".error")).toContainText("Selection is stale");
+  await expect(page.locator(".statusbar")).toContainText(
+    "Repository changed; choose the revision again.",
+  );
+  await expect(page.getByRole("alert")).toHaveCount(0);
   await selected("top");
   await expect(expandLog).toBeVisible();
   await expect(page.locator(".viewer-scroll")).toBeFocused();

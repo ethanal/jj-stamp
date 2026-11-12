@@ -23,7 +23,14 @@ import { ContentStore } from "./content-store";
 import { RevisionNavigation } from "./revision-navigation";
 import { FilesystemRefresh, parseRepositoryChange } from "./filesystem-refresh";
 import { SquashQueue } from "./squash-queue";
-import { api, errorMessage, errorDetails, type ErrorDetail } from "./api";
+import {
+  api,
+  readRepository,
+  isStaleState,
+  errorMessage,
+  errorDetails,
+  type ErrorDetail,
+} from "./api";
 import { DiffFontSizeContext } from "./DiffRuntime";
 import { useAppearancePreferences } from "./preferences";
 import {
@@ -83,7 +90,7 @@ function App() {
     () =>
       new SquashQueue({
         squash: (input) => api("squash-lines", input),
-        readState: () => api<RepoState>("state"),
+        readState: () => readRepository<RepoState>("state"),
       }),
   );
   const queued = useSyncExternalStore(queue.subscribe, queue.getSnapshot);
@@ -196,6 +203,7 @@ function App() {
   const logOperation = useRef<string | undefined>(undefined);
   const logVersion = useRef<string | undefined>(undefined);
   const logRequest = useRef(0);
+  const logStale = useRef(false);
   // Fresh state can authorize navigation through the existing graph while its
   // replacement loads. A later graph response can also supply a recovery token
   // when the selected source is unavailable and no fresh state can be loaded.
@@ -330,13 +338,17 @@ function App() {
         setNotice("");
       }
       try {
-        const next = await api<RepoState>("state");
+        const next = await readRepository<RepoState>("state");
         // A focus check must not reset the view/selection or dismiss diagnostics
         // when nothing changed. Halted queues require explicit user recovery.
         if (automatic) replaceAutomatically(next);
         else replace(next);
+        if (logStale.current) setGraphRefresh((value) => value + 1);
       } catch (error) {
-        setError(error);
+        // Continued editing is not an actionable background error. Keep the
+        // last view; the next save/focus event can check again without polling.
+        if (!automatic || !current.confirmed || !isStaleState(error))
+          setError(error);
         setGraphRefresh((value) => value + 1);
       } finally {
         lock.current = false;
@@ -428,7 +440,10 @@ function App() {
         const before = queue.getSnapshot();
         const generation = refreshGeneration.current;
         const selection = rangeRef.current;
-        const next = await api<RepoState>("state");
+        const next = await readRepository<RepoState>(
+          "state",
+          () => eligible() && generation === refreshGeneration.current,
+        );
         // Never lock or dim the UI for a filesystem-triggered check. Foreground
         // work may overtake it; retain the invalidation, not the stale response.
         const current = queue.getSnapshot();
@@ -441,6 +456,7 @@ function App() {
         )
           return false;
         replaceAutomatically(next);
+        if (logStale.current) setGraphRefresh((value) => value + 1);
         return true;
       },
     });
@@ -513,16 +529,22 @@ function App() {
     const delay =
       logOperation.current && logOperation.current !== operation ? 120 : 0;
     const timer = setTimeout(() => {
-      api<{ version: string; rows: LogRow[] }>("graph")
+      readRepository<{ version: string; rows: LogRow[] }>("graph", isCurrent)
         .then((result) => {
           if (isCurrent()) {
+            logStale.current = false;
             setLog(result.rows);
             logVersion.current = result.version;
             logOperation.current = operation;
           }
         })
         .catch((error) => {
-          if (isCurrent()) setError(error);
+          // Graph loading is a background read, not a failed user operation.
+          // Bounded retries handle transient races; later events handle churn.
+          if (isCurrent()) {
+            if (isStaleState(error)) logStale.current = true;
+            else setError(error);
+          }
         })
         .finally(() => {
           if (isCurrent()) setLogLoading(false);
@@ -798,7 +820,14 @@ function App() {
       setNavigationTarget(null);
       setPreviewUnavailable(false);
       setRevisionPreview(null);
-      setError(error);
+      if (isStaleState(error) && !queue.getSnapshot().halted) {
+        // A rejected revision switch did not change the session. Revalidate
+        // before the next explicit choice, without replaying the failed POST.
+        setNotice("Repository changed; choose the revision again.");
+        setFocusRefreshPending(true);
+      } else {
+        setError(error);
+      }
       setGraphRefresh((value) => value + 1);
     },
   };

@@ -20,6 +20,33 @@ export class RequestError extends Error {
 export const errorMessage = (error: unknown): string =>
   error instanceof Error ? error.message : String(error);
 
+export const isStaleState = (error: unknown): error is RequestError =>
+  error instanceof RequestError &&
+  error.status === 409 &&
+  error.code === "STALE_STATE";
+
+/**
+ * Repository reads can race an editor save or an external jj operation. Retry
+ * only those definite validation failures, with a small, bounded backoff.
+ * Keep this separate from api(): POSTs must never be replayed automatically.
+ */
+export async function readRepository<T>(
+  route: "state" | "graph",
+  isCurrent: () => boolean = () => true,
+): Promise<T> {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await api<T>(route);
+    } catch (error) {
+      if (!isStaleState(error) || attempt === 2 || !isCurrent()) throw error;
+      await new Promise((resolve) =>
+        setTimeout(resolve, attempt === 0 ? 100 : 250),
+      );
+      if (!isCurrent()) throw error;
+    }
+  }
+}
+
 export function errorDetails(error: unknown, label = "Request"): ErrorDetail[] {
   return error instanceof RequestError && (error.code || error.output)
     ? [{ label, code: error.code, output: error.output }]
