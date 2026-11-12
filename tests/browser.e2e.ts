@@ -883,8 +883,10 @@ try {
   await codeLine(queueLines[0].newLine!).click();
   await page.keyboard.press("s");
   await expect(page.getByRole("status")).toContainText("1 queued");
+  // Graph navigation can preview another revision while a squash is queued;
+  // only its live selection is deferred until the queue drains.
   for (const button of await page.locator(".log-change").all())
-    await expect(button).toBeDisabled();
+    await expect(button).toBeEnabled();
   await expect(codeLine(queueLines[0].newLine!)).toHaveCount(0);
   await expect(page.getByLabel("Change line counts")).toHaveText("+39−0");
   await expect(treeRow("src/long.ts")).toContainText("+39−0");
@@ -1107,7 +1109,11 @@ try {
     "nested\n",
   );
   await writeFile(path.join(initial.repo.path, "other/one.txt"), "other\n");
-  await writeFile(path.join(initial.repo.path, "other/raw.txt"), "no newline");
+  // Unterminated text is supported; use binary bytes for the read-only fixture.
+  await writeFile(
+    path.join(initial.repo.path, "other/raw.txt"),
+    Buffer.from([0, 1, 2, 3]),
+  );
   await refreshState();
   await expect(treeRow("nested/deep/one.txt")).toBeVisible();
   await expect(treeRow("nested/deep/")).toHaveAttribute(
