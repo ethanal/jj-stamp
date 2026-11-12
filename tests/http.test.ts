@@ -2,8 +2,10 @@ import test from "node:test";
 import type { TestContext } from "node:test";
 import assert from "node:assert/strict";
 import express from "express";
+import { once } from "node:events";
 import { mkdtemp, mkdir, rm, utimes, writeFile } from "node:fs/promises";
 import { request, type IncomingHttpHeaders } from "node:http";
+import { connect } from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { startLocalServer } from "../server/http.ts";
@@ -56,6 +58,86 @@ async function writeBuild(assetsDir: string, build: string) {
     "body { color: green; }",
   );
 }
+
+for (const partialHeaders of [false, true]) {
+  test(`shutdown closes ${partialHeaders ? "incomplete HTTP headers" : "unused browser preconnections"} without waiting for a network timeout`, async (t) => {
+    const { assetsDir, service } = await fixture(t);
+    const local = await startLocalServer({ service, assetsDir, port: 0 });
+    const accepted = once(local.server, "connection");
+    const socket = connect(Number(new URL(local.url).port), "127.0.0.1");
+    t.after(async () => {
+      socket.destroy();
+      await local.close();
+    });
+    const [serverSocket] = await accepted;
+    await once(socket, "connect");
+    if (partialHeaders) {
+      const received = once(serverSocket, "data");
+      socket.write("GET /api/state HTTP/1.1\r\nHost:");
+      await received;
+    }
+    const closed = once(local.server, "close", {
+      signal: AbortSignal.timeout(1000),
+    });
+    const shutdown = local.close();
+    assert.equal(local.close(), shutdown, "shutdown remains idempotent");
+    await closed;
+    await shutdown;
+  });
+}
+
+test("shutdown preserves an accepted request body and response alongside a preconnection", async (t) => {
+  const { assetsDir, service } = await fixture(t);
+  const local = await startLocalServer({ service, assetsDir, port: 0 });
+  const accepted = once(local.server, "connection");
+  const idle = connect(Number(new URL(local.url).port), "127.0.0.1");
+  t.after(async () => {
+    idle.destroy();
+    req.destroy();
+    await local.close();
+  });
+  await accepted;
+  await once(idle, "connect");
+
+  const admitted = once(local.server, "request");
+  const req = request(new URL("api/not-a-route", local.url), {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Content-Length": "2",
+      "X-Fold-Request": "1",
+    },
+  });
+  const response = new Promise<{ status: number; body: string }>(
+    (resolve, reject) => {
+      req.on("error", reject);
+      req.on("response", (res) => {
+        let body = "";
+        res.setEncoding("utf8");
+        res.on("data", (chunk) => (body += chunk));
+        res.on("error", reject);
+        res.on("end", () => resolve({ status: res.statusCode!, body }));
+      });
+    },
+  );
+  req.write("{");
+  await admitted;
+  let closed = false;
+  const transportClosed = once(local.server, "close", {
+    signal: AbortSignal.timeout(1000),
+  });
+  const shutdown = local.close().then(() => {
+    closed = true;
+  });
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.equal(closed, false, "accepted HTTP bodies must still drain");
+  req.end("}");
+  const result = await response;
+  assert.equal(result.status, 404);
+  assert.equal(JSON.parse(result.body).code, "NOT_FOUND");
+  await transportClosed;
+  await shutdown;
+});
 
 test("an upgrade never revalidates obsolete HTML with colliding file metadata", async (t) => {
   const { assetsDir, service } = await fixture(t);

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { spawn, type ChildProcess } from "node:child_process";
 import { createHash } from "node:crypto";
+import { once } from "node:events";
 import {
   access,
   chmod,
@@ -12,6 +13,7 @@ import {
   writeFile,
 } from "node:fs/promises";
 import http from "node:http";
+import { connect } from "node:net";
 import os from "node:os";
 import path from "node:path";
 import test, { type TestContext } from "node:test";
@@ -651,6 +653,25 @@ test(
 );
 
 for (const signal of ["SIGINT", "SIGTERM"] as const) {
+  test(`${signal} exits promptly with an unused browser preconnection`, async (t) => {
+    const box = await sandbox(t);
+    const repo = await createDemo(box.root);
+    const cli = box.start(["--no-open", "--port", "0"], repo);
+    const url = await cli.url();
+    const idle = connect(Number(new URL(url).port), "127.0.0.1");
+    try {
+      await once(idle, "connect");
+      // Round-trip a second connection so the server has accepted the first.
+      assert.equal((await request(url, "/")).status, 200);
+      assert.equal(cli.child.kill(signal), true);
+      await until(() => cli.ended, cli.diagnostics, 1000);
+      assert.deepEqual(await cli.exit, { code: 0, signal: null });
+      assert.match(cli.stdout, /Stopping jj-stamp/);
+    } finally {
+      idle.destroy();
+    }
+  });
+
   for (const mutation of [false, true]) {
     test(
       `${signal} drains an accepted ${mutation ? "squash" : "read"} request without interrupting its jj child`,

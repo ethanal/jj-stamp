@@ -19,8 +19,27 @@ export async function startLocalServer({
   port,
 }: LocalServerOptions) {
   const app = express();
-  const server = createServer(app);
   let closing = false;
+  let activeResponses = 0;
+  const server = createServer((req, res) => {
+    activeResponses++;
+    const finished = () => {
+      res.removeListener("finish", finished);
+      res.removeListener("close", finished);
+      activeResponses--;
+      closeUnusedConnections();
+    };
+    res.once("finish", finished);
+    res.once("close", finished);
+    app(req, res);
+  });
+  function closeUnusedConnections() {
+    // close()/closeIdleConnections() can leave browser preconnections and
+    // incomplete headers waiting on a network timeout. Once every response has
+    // finished (or disconnected), no HTTP work remains to protect. Service
+    // tasks whose clients disconnected are still awaited by drain() below.
+    if (closing && activeResponses === 0) server.closeAllConnections();
+  }
   app.disable("x-powered-by");
   app.use((req, res, next) => {
     const address = server.address();
@@ -131,12 +150,11 @@ export async function startLocalServer({
     close(): Promise<void> {
       if (!shutdown) {
         closing = true;
-        // End long-lived SSE responses before server.close(), otherwise they
-        // would keep graceful shutdown open indefinitely.
-        api.closeEvents();
         shutdown = new Promise<void>((resolve, reject) => {
           server.close((error) => (error ? reject(error) : resolve()));
-          server.closeIdleConnections();
+          // End long-lived streams so they cannot hold the response drain open.
+          api.closeEvents();
+          closeUnusedConnections();
         }).then(() => service.drain());
       }
       return shutdown;
