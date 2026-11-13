@@ -3,6 +3,7 @@ import type { Request, Response, Router } from "express";
 import { z } from "zod";
 import { ApiError, ReviewService } from "./service.ts";
 import { processFailureOutput, ProcessError } from "./process.ts";
+import { revisionSelectionPattern, validGraphRevset } from "./revision.ts";
 import { watchFailure, type WatchFailure } from "./watch-errors.ts";
 import {
   watchFilesystemEvents,
@@ -12,6 +13,7 @@ import {
 } from "./fs-events.ts";
 
 const version = z.string().regex(/^[0-9a-f]{64}$/);
+const graphRevset = z.string().refine(validGraphRevset).optional();
 const previewSchema = z
   .object({
     version,
@@ -344,8 +346,11 @@ export function createApi(
     res.json(await service.getState());
   });
   // This is local revision-graph data, not an event/telemetry logging endpoint.
-  router.get("/graph", async (_req, res) => {
-    const { version, rows } = await service.getLog({ includeOutput: false });
+  router.get("/graph", async (req, res) => {
+    const { version, rows } = await service.getLog({
+      includeOutput: false,
+      revset: graphRevset.parse(req.query.revset),
+    });
     res.json({ version, rows });
   });
   router.get("/log", async (req, res) => {
@@ -353,7 +358,10 @@ export function createApi(
       .enum(["full", "rows"])
       .default("full")
       .parse(req.query.format);
-    const result = await service.getLog({ includeOutput: format === "full" });
+    const result = await service.getLog({
+      includeOutput: format === "full",
+      revset: graphRevset.parse(req.query.revset),
+    });
     res.json(
       format === "rows"
         ? { version: result.version, rows: result.rows }
@@ -364,7 +372,7 @@ export function createApi(
     const input = z
       .object({
         version,
-        changeId: z.union([z.literal("@"), z.string().regex(/^[k-z]{1,64}$/)]),
+        changeId: z.string().regex(revisionSelectionPattern),
       })
       .strict()
       .parse(req.body);

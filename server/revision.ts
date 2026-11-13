@@ -7,6 +7,21 @@ export interface Revision {
   changeIdPrefix?: string;
 }
 
+/** Literal selection identities only; never arbitrary revsets or bookmark names. */
+// A negative all-character lookahead requires the true end, unlike $, which
+// also accepts a trailing newline in JavaScript.
+export const revisionSelectionPattern =
+  /^(?:@|[k-z]{1,64}|[0-9a-f]{1,64})(?![\s\S])/;
+export const maxGraphRevsetLength = 4096;
+export function validGraphRevset(value: unknown): value is string {
+  return (
+    typeof value === "string" &&
+    value.length <= maxGraphRevsetLength &&
+    value.trim().length > 0 &&
+    !value.includes("\0")
+  );
+}
+
 /** Common identity fields shared by state, selection, and graph metadata reads. */
 export const revisionFieldsTemplate =
   'json(change_id) ++ "\\t" ++ json(commit_id) ++ "\\t" ++ json(description.first_line()) ++ "\\t" ++ json(author.name()) ++ "\\t" ++ json(change_id.shortest(8).prefix())';

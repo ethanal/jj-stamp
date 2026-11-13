@@ -44,7 +44,15 @@ test("state, graph and selection have bounded process budgets and derive all hun
   );
   assert.deepEqual(
     calls.filter((call) => call.args[0] === "diff").map((call) => call.args),
-    [["diff", "--git", "-r", initial.source.commitId, "--ignore-working-copy"]],
+    [
+      [
+        "diff",
+        "--git",
+        "-r",
+        `commit_id("${initial.source.commitId}")`,
+        "--ignore-working-copy",
+      ],
+    ],
   );
   calls.length = 0;
   assert.deepEqual(await service.getState(), initial);
@@ -84,7 +92,7 @@ test("state, graph and selection have bounded process budgets and derive all hun
         "diff",
         "--git",
         "-r",
-        selected.source.commitId,
+        `commit_id("${selected.source.commitId}")`,
         "--ignore-working-copy",
       ],
     ],
@@ -144,7 +152,8 @@ for (const affected of ["source", "candidate"] as const) {
         const result = await jj(cwd, args);
         if (
           args[0] === "diff" &&
-          args[args.indexOf("-r") + 1] !== original.commitId &&
+          args[args.indexOf("-r") + 1] !==
+            `commit_id("${original.commitId}")` &&
           !changed
         ) {
           assert.ok(args.includes("--ignore-working-copy"));

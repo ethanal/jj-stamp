@@ -99,7 +99,7 @@ test("pinned native hunk IDs are stable and mixed unsupported files do not requi
     diffCalls.every(
       (args) =>
         args.includes("--ignore-working-copy") &&
-        args.includes(state.source.commitId),
+        args.includes(`commit_id("${state.source.commitId}")`),
     ),
   );
 });

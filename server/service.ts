@@ -24,6 +24,8 @@ import {
   parseRevisionRecord,
   revisionFieldsTemplate,
   revisionTemplate,
+  revisionSelectionPattern,
+  validGraphRevset,
 } from "./revision.ts";
 import type { Revision } from "./revision.ts";
 
@@ -104,6 +106,7 @@ interface ViewSelection {
   workingCopy?: boolean;
   allowUnavailable?: boolean;
   changeId?: string;
+  commitId?: string;
   requireAvailable?: boolean;
 }
 interface ViewOptions {
@@ -442,7 +445,7 @@ export class ReviewService {
         "diff",
         "--git",
         "-r",
-        source,
+        this.commitRevset(source),
         "--ignore-working-copy",
       ])
     ).stdout;
@@ -524,15 +527,17 @@ export class ReviewService {
     selections = [{}],
     snapshot = true,
   }: ViewOptions = {}): Promise<ReviewView[]> {
-    const checkWorkingCopy = selections.some(
-      (selection) => selection.workingCopy,
+    const checkExactCommit = selections.some(
+      (selection) => selection.workingCopy || selection.commitId,
     );
     const revsets = selections.map((selection) => {
       const source = selection.workingCopy
         ? "@"
         : selection.changeId
           ? this.changeRevset(selection.changeId)
-          : this.sourceRevset;
+          : selection.commitId
+            ? `commit_id(${JSON.stringify(selection.commitId)})`
+            : this.sourceRevset;
       return [source, `mutable() & ::${source} ~ ${source}`, `${source}-`];
     });
     const metadataRevset = revsets
@@ -558,11 +563,25 @@ export class ReviewService {
           // all visible history. Preserve configured conflicts() aliases.
           contained(`(${metadataRevset}) & conflicts()`) +
           ' ++ "\\t" ++ json(self.contained_in("mutable()"))' +
-          // @ names one commit even when its change is divergent. Unlike a
-          // change_id() lookup, counting its rows alone cannot establish safety.
-          (checkWorkingCopy ? ' ++ "\\t" ++ json(!hidden && !divergent)' : "") +
+          // @ and commit_id() can name a hidden or divergent commit. Unlike a
+          // change_id() lookup, counting their rows alone cannot establish safety.
+          (checkExactCommit ? ' ++ "\\t" ++ json(!hidden && !divergent)' : "") +
           ' ++ "\\n"',
-      ])
+      ]).catch((error: unknown) => {
+        // commit_id() rejects ambiguous prefixes at evaluation time instead of
+        // returning several rows. Treat unresolved candidates as input errors,
+        // just as startup revision resolution does, without another jj query.
+        if (
+          error instanceof ProcessError &&
+          selections.some((selection) => selection.commitId)
+        )
+          throw new ApiError(
+            400,
+            "INVALID_REVISION",
+            "Choose exactly one visible, non-divergent change using a unique change or commit ID.",
+          );
+        throw error;
+      })
     ).stdout
       .trim()
       .split("\n")
@@ -570,7 +589,7 @@ export class ReviewService {
       .map((line) =>
         parseRevisionRecord(
           line,
-          selections.length * 3 + 2 + Number(checkWorkingCopy),
+          selections.length * 3 + 2 + Number(checkExactCommit),
           "Unrecognized revision metadata.",
         ),
       );
@@ -582,7 +601,7 @@ export class ReviewService {
         parent: flags[index * 3 + 2],
         conflict: flags[selections.length * 3],
         mutable: flags[selections.length * 3 + 1],
-        availableWorkingCopy: flags[selections.length * 3 + 2],
+        availableExactCommit: flags[selections.length * 3 + 2],
       }));
       const sources = metadata
         .filter((entry) => entry.source)
@@ -590,9 +609,9 @@ export class ReviewService {
       if (
         selection.requireAvailable &&
         (sources.length !== 1 ||
-          (selection.workingCopy &&
+          ((selection.workingCopy || selection.commitId) &&
             metadata.some(
-              (entry) => entry.source && !entry.availableWorkingCopy,
+              (entry) => entry.source && !entry.availableExactCommit,
             )))
       )
         throw new ApiError(
@@ -801,7 +820,7 @@ export class ReviewService {
       if (
         !input ||
         typeof input.changeId !== "string" ||
-        (input.changeId !== "@" && !/^[k-z]{1,64}$/.test(input.changeId)) ||
+        !revisionSelectionPattern.test(input.changeId) ||
         Object.keys(input).some(
           (key) => key !== "version" && key !== "changeId",
         )
@@ -809,7 +828,7 @@ export class ReviewService {
         throw new ApiError(
           400,
           "INVALID_REQUEST",
-          "Supply a change ID or literal @ and the current state version.",
+          "Supply a change ID, commit ID, or literal @ and the current state version.",
         );
       await this.init();
       // Resolve both identities and their live eligibility in one snapshot.
@@ -820,7 +839,9 @@ export class ReviewService {
         { allowUnavailable: true },
         input.changeId === "@"
           ? { workingCopy: true, requireAvailable: true }
-          : { changeId: input.changeId, requireAvailable: true },
+          : /^[0-9a-f]+$/.test(input.changeId)
+            ? { commitId: input.changeId, requireAvailable: true }
+            : { changeId: input.changeId, requireAvailable: true },
       ];
       const views = await this.readViews({ selections });
       const operation = await this.operation();
@@ -842,10 +863,17 @@ export class ReviewService {
     });
   }
   getLog(
-    options: { includeOutput?: boolean } = {},
+    options: { includeOutput?: boolean; revset?: string } = {},
   ): Promise<{ version: string; output: string; rows: LogRow[] }> {
     const name = options.includeOutput === false ? "graph" : "log";
     return this.serial(name, async () => {
+      if (options.revset !== undefined && !validGraphRevset(options.revset))
+        throw new ApiError(
+          400,
+          "INVALID_REQUEST",
+          "Supply a nonempty graph revset of at most 4096 characters.",
+        );
+      const revset = options.revset ?? reviewLogRevset;
       await this.init(false);
       // The graph remains a read-only recovery path when the pinned source is
       // absent, divergent or conflicted. Its version still identifies that old
@@ -865,7 +893,7 @@ export class ReviewService {
               await this.jjRunner(this.root, [
                 "log",
                 "-r",
-                reviewLogRevset,
+                revset,
                 "--at-operation",
                 operation.id,
               ])
@@ -888,7 +916,7 @@ export class ReviewService {
           "--config",
           "ui.log-word-wrap=false",
           "-r",
-          reviewLogRevset,
+          revset,
           "--at-operation",
           operation.id,
           "-T",

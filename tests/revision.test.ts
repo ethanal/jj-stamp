@@ -538,7 +538,15 @@ test("invalid choices retain source and previews; immutable choices are readable
     target: original.parent!.changeId,
     selections: selections(original),
   });
-  for (const changeId of ["", "@-", " @", "@ ", "@ | @-", "--help", "abc123"]) {
+  for (const changeId of [
+    "",
+    "@-",
+    " @",
+    "@ ",
+    "@ | @-",
+    "--help",
+    "abc123g",
+  ]) {
     await rejectsCode(
       service.selectRevision({ version: original.version, changeId }),
       "INVALID_REQUEST",
@@ -643,6 +651,13 @@ test("in-process pending recovery prevents source switching, but restart forgets
     service.selectRevision({ version: state.version, changeId: "@" }),
     "RECOVERY_REQUIRED",
   );
+  await rejectsCode(
+    service.selectRevision({
+      version: state.version,
+      changeId: state.parent!.commitId,
+    }),
+    "RECOVERY_REQUIRED",
+  );
   assert.deepEqual(await service.getState(), state);
   const restarted = new ReviewService({ repoPath: options.repoPath });
   assert.deepEqual(await restarted.getState(), state);
@@ -705,7 +720,11 @@ test("selection becoming stale leaves the prior source active", async () => {
     repoPath: options.repoPath,
     jjRunner: async (cwd, args) => {
       const result = await jj(cwd, args);
-      if (args[0] === "diff" && args.includes(chosenCommit) && !moved) {
+      if (
+        args[0] === "diff" &&
+        args.includes(`commit_id("${chosenCommit}")`) &&
+        !moved
+      ) {
         moved = true;
         await jj(cwd, ["new", "-m", "Race while selecting"]);
       }
