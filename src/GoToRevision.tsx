@@ -206,12 +206,14 @@ export function GoToRevision({
       const accepted = await onSubmit(revision);
       if (request === session.current && accepted) close();
     } catch (cause) {
-      if (request === session.current)
+      if (request === session.current) {
         setError(
           cause instanceof Error
             ? cause.message
             : "Unable to open revision. Try again.",
         );
+        input.current?.focus({ preventScroll: true });
+      }
     } finally {
       if (request === session.current) {
         submitting.current = false;
@@ -279,8 +281,12 @@ export function GoToRevision({
               spellCheck={false}
               readOnly={busy}
               disabled={disabled && !busy}
+              aria-invalid={error ? true : undefined}
               aria-describedby={error ? `${id}-error` : undefined}
-              onChange={(event) => setValue(event.target.value)}
+              onChange={(event) => {
+                setValue(event.target.value);
+                setError("");
+              }}
             />
             <button
               className="action-button"
@@ -291,7 +297,7 @@ export function GoToRevision({
             </button>
           </div>
           {error && (
-            <p id={`${id}-error`} role="alert">
+            <p id={`${id}-error`} className="goto-revision-error" role="alert">
               {error}
             </p>
           )}

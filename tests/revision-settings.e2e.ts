@@ -106,15 +106,29 @@ try {
   });
   await expect(goto).toBeFocused();
   await goto.fill("bad");
-  await page.keyboard.press("Enter");
+  const gotoDialog = page.getByRole("dialog", { name: "Go to revision" });
+  // Mouse submission must return focus to the invalid field, too.
+  await gotoDialog.getByRole("button", { name: "Go", exact: true }).click();
+  await expect(gotoDialog.getByRole("alert")).toHaveText(
+    "No matching revision",
+  );
   await expect(
-    page.getByText("No matching revision", { exact: true }).first(),
-  ).toBeVisible();
+    page.getByText("No matching revision", { exact: true }),
+  ).toHaveCount(1);
+  await expect(page.locator(".error")).toHaveCount(0);
+  await expect(page.getByText("INVALID_REVISION", { exact: true })).toHaveCount(
+    0,
+  );
   await expect(goto).toBeVisible();
+  await expect(goto).toBeFocused();
+  await expect(goto).toHaveValue("bad");
+  await expect(goto).toHaveAttribute("aria-invalid", "true");
   await expect(
     page.getByLabel("Current change ID", { exact: true }),
   ).toHaveText(first.changeId);
   await goto.fill(" bbbb ");
+  await expect(gotoDialog.getByRole("alert")).toHaveCount(0);
+  await expect(goto).not.toHaveAttribute("aria-invalid");
   await page.keyboard.press("Enter");
   await expect(goto).toBeHidden();
   await expect(

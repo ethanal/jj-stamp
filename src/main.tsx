@@ -747,7 +747,7 @@ function App() {
   const navigationCallbacks = useRef({
     onState: (_next: RepoState) => {},
     onIntent: (_changeId: string) => {},
-    onError: (_error: unknown) => {},
+    onError: (_error: unknown, _reportError?: boolean) => {},
   });
   navigationCallbacks.current = {
     onState: (next) => {
@@ -823,7 +823,7 @@ function App() {
             setPreviewUnavailable(true);
         });
     },
-    onError: (error) => {
+    onError: (error, reportError = true) => {
       setOpenRevisionId(null);
       navigationIntent.current++;
       setNavigationTarget(null);
@@ -834,7 +834,7 @@ function App() {
         // before the next explicit choice, without replaying the failed POST.
         setNotice("Repository changed; choose the revision again.");
         setFocusRefreshPending(true);
-      } else {
+      } else if (reportError) {
         setError(error);
       }
       setGraphRefresh((value) => value + 1);
@@ -946,7 +946,9 @@ function App() {
         navigationCallbacks.current.onState(result.state);
         return true;
       } catch (error) {
-        navigationCallbacks.current.onError(error);
+        // The Go to popover owns this failure; keep navigation cleanup and
+        // stale-state recovery without duplicating it over the current diff.
+        navigationCallbacks.current.onError(error, false);
         throw error;
       } finally {
         lock.current = false;

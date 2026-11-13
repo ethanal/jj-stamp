@@ -46,6 +46,16 @@ try {
     "Unknown revision: abc123",
   );
   await expect(input).toHaveValue("  abc123  ");
+  await expect(input).toBeFocused();
+  await expect(input).toHaveAttribute("aria-invalid", "true");
+  assert.equal(
+    await input.getAttribute("aria-describedby"),
+    await dialog.getByRole("alert").getAttribute("id"),
+  );
+  await input.fill("abc123");
+  await expect(dialog.getByRole("alert")).toHaveCount(0);
+  await expect(input).not.toHaveAttribute("aria-invalid");
+  await expect(input).not.toHaveAttribute("aria-describedby");
   await input.press("Enter");
   await page.evaluate(() => window.settleGoto(true));
   await expect(dialog).toHaveCount(0);

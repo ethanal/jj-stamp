@@ -53,9 +53,18 @@
   outline-offset: -1px;
 }
 
+.goto-revision-entry input[aria-invalid="true"] {
+  border-color: var(--error-border);
+  outline-color: var(--error-border);
+}
+
 .goto-revision-popover p {
   margin: 7px 0 0;
   color: var(--muted);
   font-size: calc(var(--font-size) - 1px);
   white-space: normal;
+}
+
+.goto-revision-popover .goto-revision-error {
+  color: var(--red);
 }
