@@ -39,6 +39,7 @@ export function GoToRevision({
   const popover = useRef<HTMLFormElement>(null);
   const input = useRef<HTMLInputElement>(null);
   const previousFocus = useRef<HTMLElement | null>(null);
+  const restoreFocusTarget = useRef<HTMLElement | null>(null);
   const opened = useRef(false);
   const submitting = useRef(false);
   const session = useRef(0);
@@ -57,12 +58,12 @@ export function GoToRevision({
     setError("");
     const previous = previousFocus.current;
     previousFocus.current = null;
-    if (restoreFocus && previous?.isConnected)
-      previous.focus({ preventScroll: true });
+    restoreFocusTarget.current = restoreFocus ? previous : null;
   }, []);
 
   const show = useCallback(() => {
     if (disabled || opened.current || modalOpen()) return;
+    restoreFocusTarget.current = null;
     previousFocus.current =
       document.activeElement instanceof HTMLElement
         ? document.activeElement
@@ -74,6 +75,20 @@ export function GoToRevision({
   useEffect(() => {
     if (open) input.current?.focus({ preventScroll: true });
   }, [open]);
+
+  useLayoutEffect(() => {
+    const previous = restoreFocusTarget.current;
+    if (open || !previous) return;
+    if (!previous.isConnected) {
+      restoreFocusTarget.current = null;
+      return;
+    }
+    // Parent pending state may still disable the trigger when submit resolves.
+    // Restore after React commits its enabled state, not synchronously in close.
+    if (previous.matches(":disabled")) return;
+    restoreFocusTarget.current = null;
+    previous.focus({ preventScroll: true });
+  }, [open, disabled]);
 
   useLayoutEffect(() => {
     if (!open) return;
@@ -157,9 +172,11 @@ export function GoToRevision({
   useEffect(() => {
     if (!open) return;
     const outside = (event: PointerEvent) => {
+      if (!opened.current) return;
       if (!event.composedPath().includes(root.current!)) close(false);
     };
     const focus = (event: FocusEvent) => {
+      if (!opened.current) return;
       if (!event.composedPath().includes(root.current!)) close(false);
     };
     document.addEventListener("pointerdown", outside);

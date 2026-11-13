@@ -177,6 +177,18 @@ try {
   await trigger.click();
   await expect(input).toBeFocused();
   await input.press("Escape");
+
+  // Success opened from the trigger restores it after the parent's pending
+  // disabled state is committed away, not while that button is still disabled.
+  await trigger.click();
+  await input.fill("trigger-success");
+  await input.press("Enter");
+  await expect(trigger).toBeDisabled();
+  await expect(input).toBeFocused();
+  await page.evaluate(() => window.settleGoto(true));
+  await expect(dialog).toHaveCount(0);
+  await expect(trigger).toBeEnabled();
+  await expect(trigger).toBeFocused();
   assert.deepEqual(errors, []);
   console.log("Go to revision component keyboard and async regressions passed");
 } finally {
