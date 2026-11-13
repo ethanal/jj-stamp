@@ -215,7 +215,9 @@ test("real jj renames support live and immutable review, literal old/new side re
     await service.getFile({ version: state.version, path: newPath }),
     expected,
   );
-  const liveReads = calls.filter((args) => args[0] === "file");
+  const liveReads = calls.filter(
+    (args) => args[0] === "file" && args[1] === "show",
+  );
   assert.equal(liveReads.length, 2);
   for (const [index, name] of [oldPath, newPath].entries()) {
     const args = liveReads[index];
