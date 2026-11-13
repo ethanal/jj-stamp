@@ -503,7 +503,8 @@ function FileDiffSection({
   children: ReactNode;
 }) {
   const contentId = useId();
-  const expanded = !allFiles || !collapsed;
+  const collapsible = allFiles || !!file.generated;
+  const expanded = !collapsible || !collapsed;
   const label = `${expanded ? "Collapse" : "Expand"} file ${file.path}`;
   // Search and keyboard selection must be able to reveal hidden lines.
   useLayoutEffect(() => {
@@ -516,7 +517,7 @@ function FileDiffSection({
       data-file-path={file.path}
       ref={sectionRef}
     >
-      {allFiles && (
+      {collapsible && (
         <div className="file-diff-heading">
           <button
             className="file-collapse"
@@ -545,6 +546,14 @@ function FileDiffSection({
           <h2>
             <FileName file={file} />
           </h2>
+          {file.generated && (
+            <span
+              className="generated-file-label"
+              title="Marked linguist-generated in .gitattributes"
+            >
+              Generated
+            </span>
+          )}
           {actions}
         </div>
       )}
@@ -650,18 +659,21 @@ export function ReviewViewer({
   const vimScope = `${contentIdentity}\u0000${renderVersion}`;
   const collapseScope = JSON.stringify([state?.repo.path, source?.changeId]);
   const [collapsedScope, setCollapsedScope] = useState(collapseScope);
-  const [collapsedFiles, setCollapsedFiles] = useState<Set<string>>(new Set());
+  // Keep explicit choices separate from defaults: new generated files arriving
+  // on refresh start collapsed, without re-hiding a file the user expanded.
+  const [collapsedFiles, setCollapsedFiles] = useState<Map<string, boolean>>(
+    new Map(),
+  );
   if (collapsedScope !== collapseScope) {
     setCollapsedScope(collapseScope);
-    setCollapsedFiles(new Set());
+    setCollapsedFiles(new Map());
   }
   const onFileCollapsedChange = useCallback(
     (path: string, collapsed: boolean) => {
       setCollapsedFiles((previous) => {
-        if (previous.has(path) === collapsed) return previous;
-        const next = new Set(previous);
-        if (collapsed) next.add(path);
-        else next.delete(path);
+        if (previous.get(path) === collapsed) return previous;
+        const next = new Map(previous);
+        next.set(path, collapsed);
         return next;
       });
     },
@@ -912,7 +924,9 @@ export function ReviewViewer({
                   key={`${state.repo.path}:${source?.changeId}:${entry.path}`}
                   file={entry}
                   allFiles={fileView === "all"}
-                  collapsed={collapsedFiles.has(entry.path)}
+                  collapsed={
+                    collapsedFiles.get(entry.path) ?? !!entry.generated
+                  }
                   onCollapsedChange={onFileCollapsedChange}
                   disabled={(!readOnlyPreview && working) || halted || dragging}
                   revealRequest={

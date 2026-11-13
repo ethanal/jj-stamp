@@ -961,6 +961,10 @@ kbd {
 .file-diff-heading .line-counts {
   flex-shrink: 0;
 }
+.generated-file-label {
+  color: var(--muted);
+  font-size: 0.9em;
+}
 .code-surface {
   position: relative;
   min-height: 100%;
