@@ -330,14 +330,16 @@
         background: var(--panel);
         min-width: 0;
         position: relative;
+        display: flex;
+        flex-direction: column;
       }
       .log .heading span:last-child {
         color: var(--muted);
         font-size: 10px;
       }
       .destination-bar {
-        min-height: 65px;
-        padding: 12px;
+        min-height: 32px;
+        padding: 5px 12px;
         display: flex;
         align-items: center;
         gap: 10px;
@@ -347,12 +349,12 @@
       .target-summary {
         min-width: 0;
         flex: 1;
+        white-space: nowrap;
       }
       .target-label {
         color: var(--muted);
         font-size: 10px;
-        margin-bottom: 5px;
-        display: block;
+        margin-right: 6px;
       }
       .target-id {
         font-size: 12px;
@@ -390,32 +392,42 @@
       .pick-banner button {
         font-size: 10px;
       }
+      /* Match the production jj log: one unwrapped monospace line per row.
+         Annotations and actions must never change the graph's cell metrics. */
       .log-list {
-        padding: 9px 10px 14px;
+        flex: 1;
+        min-height: 0;
+        overflow: auto;
+        margin: 0;
+        padding: 14px 12px 14px 20px;
+        font: inherit;
+        line-height: normal;
+        white-space: pre;
+        tab-size: 2;
       }
       .revision {
-        display: grid;
-        grid-template-columns: 20px 1fr;
-        position: relative;
-        min-height: 65px;
-        padding: 8px 8px 8px 3px;
-        border-left: 2px solid transparent;
-        border-radius: 3px;
-        margin: 1px 0;
+        display: block;
+        width: max-content;
+        min-width: 100%;
+        padding: 0 4px;
+        margin: 0;
+        border: 0;
+        border-radius: 0;
+        font: inherit;
+        line-height: inherit;
+        white-space: inherit;
       }
       .revision.current {
         background: #154d79;
         color: white;
       }
       .revision.target {
-        border-left-color: var(--amber);
+        box-shadow: inset 2px 0 var(--amber);
         background: #29261f;
       }
       .graph {
         white-space: pre;
-        text-align: center;
-        color: #8b949e;
-        line-height: 21px;
+        color: var(--muted);
       }
       .revision.current .graph {
         color: #c3e5ff;
@@ -423,55 +435,34 @@
       .revision.target .graph {
         color: var(--amber);
       }
-      .row-main {
-        min-width: 0;
-      }
-      .row-top {
-        display: flex;
-        align-items: center;
-        gap: 6px;
-        min-height: 21px;
-      }
-      .review-id {
-        font-size: 12px;
-        color: var(--blue);
+      .review-id,
+      .row-action {
+        font: inherit;
+        line-height: inherit;
         padding: 0;
         border: 0;
+        border-radius: 0;
         background: transparent !important;
-        border-radius: 2px;
+      }
+      .review-id {
+        color: var(--blue);
       }
       .current .review-id {
         color: white;
       }
       .row-title {
-        font-size: 11px;
         color: #b9c4d0;
-        margin-top: 5px;
-        overflow: hidden;
-        text-overflow: ellipsis;
-        white-space: nowrap;
       }
       .current .row-title {
         color: #e2eff9;
       }
       .role {
-        font-size: 9px;
-        border: 1px solid #6396be;
-        padding: 2px 5px;
-        border-radius: 3px;
         color: #d0eaff;
-        white-space: nowrap;
-        margin-left: auto;
       }
       .role.dest {
         color: var(--amber);
-        border-color: #786242;
-        background: #302a21;
       }
       .row-action {
-        margin-left: auto;
-        padding: 3px 6px;
-        font-size: 10px;
         color: var(--amber);
         opacity: 0;
         pointer-events: none;
@@ -486,18 +477,12 @@
       .row-action:disabled {
         opacity: 1;
         pointer-events: none;
-        border: 0;
-        background: none;
-        padding-right: 0;
-        font-size: 9px;
       }
       .row-action:focus-visible {
         pointer-events: auto;
       }
       .row-note {
-        margin-left: auto;
         color: var(--muted);
-        font-size: 9px;
       }
       .log-tip {
         font-size: 10px;
@@ -549,7 +534,7 @@
       .picker {
         position: absolute;
         right: 10px;
-        top: 98px;
+        top: 74px;
         width: min(430px, calc(100% - 20px));
         padding: 13px;
         background: #1b222b;
@@ -734,20 +719,14 @@
           opacity: 1;
           pointer-events: auto;
         }
-        .row-title {
-          font-size: 10px;
-        }
         .picker {
-          top: 98px;
+          top: 74px;
         }
         h1 {
           font-size: 23px;
         }
         .intro p {
           font-size: 11px;
-        }
-        .revision {
-          min-height: 66px;
         }
         .log-tip {
           font-size: 9px;
@@ -786,7 +765,7 @@
         </button>
         <button class="option" data-concept="mode" aria-pressed="false">
           <b>B · Pick in the log</b
-          ><span>One explicit mode. A larger click target.</span>
+          ><span>Choose a row without leaving the graph.</span>
         </button>
         <button class="option" data-concept="search" aria-pressed="false">
           <b>C · Compact search picker</b
@@ -795,7 +774,7 @@
       </nav>
       <div class="controls">
         <span class="hint" id="try-hint"
-          >Try: hover a log row → Set destination → Reset.</span
+          >Try: hover a log row → [↓] sets destination → Reset.</span
         ><label
           >Example state
           <select id="scenario" aria-label="Example state">
@@ -878,7 +857,7 @@
             </div>
             <div class="destination-bar">
               <div class="target-summary">
-                <span class="target-label">↓ Squash destination</span
+                <span class="target-label">Squash →</span
                 ><code class="target-id" id="destination-id">pqxvqmoo</code
                 ><span class="default-note" id="destination-kind"
                   >immediate parent</span
@@ -902,7 +881,13 @@
               <span>Choose a squash destination, not a review.</span
               ><button id="cancel-pick">Cancel</button>
             </div>
-            <div class="log-list" id="log-list"></div>
+            <div
+              class="log-list"
+              id="log-list"
+              tabindex="0"
+              role="region"
+              aria-label="Monospace jj log graph"
+            ></div>
             <div class="log-tip" id="log-tip">
               <strong>Click an ID to review.</strong> Use the separate row
               action to choose where selected lines go.
@@ -948,17 +933,17 @@
             <span class="number">01</span>Keep the log direct
           </h2>
           <p id="rationale">
-            The ID still opens a review. A separate “Set destination” action
-            appears on hover or keyboard focus, with the next older candidate
-            exposed for discoverability.
+            The ID still opens a review. A separate inline [↓] destination
+            action appears on hover or keyboard focus, with the next older
+            candidate exposed for discoverability.
           </p>
         </article>
         <article>
           <h2><span class="number">02</span>Two roles, two treatments</h2>
           <p>
-            Blue fill marks the source you are reviewing. An amber edge and
-            labeled badge mark the squash destination. The same ID appears
-            beside the squash action.
+            Keep the normal monospace graph and line height. Blue marks the
+            reviewed source; an amber edge and inline [target] label mark the
+            target. No cards, wrapped descriptions, or extra graph rows.
           </p>
         </article>
         <article>
@@ -997,14 +982,14 @@
         pickerOpen = false;
       const conceptCopy = {
         row: [
-          "Try: hover a log row → Set destination → Reset.",
+          "Try: hover a log row → [↓] sets destination → Reset.",
           "Keep the log direct",
-          "The ID still opens a review. A separate “Set destination” action appears on hover or keyboard focus, with the next older candidate exposed for discoverability.",
+          "The ID still opens a review. A separate inline [↓] destination action appears on hover or keyboard focus, with the next older candidate exposed for discoverability.",
         ],
         mode: [
           "Try: Change… → pick an older row → Reset.",
           "Make intent explicit",
-          "Change… temporarily turns the log into a destination picker. IDs stop navigating until you pick or cancel. The larger row click target helps avoid choosing the wrong action.",
+          "Change… temporarily turns the log into a destination picker. IDs stop navigating until you pick or cancel. Rows keep their normal line height; the existing whole row is clickable.",
         ],
         search: [
           "Try: Change… → search “delivery” → choose a result.",
@@ -1091,15 +1076,11 @@
           graph.className = "graph";
           graph.setAttribute("aria-hidden", "true");
           graph.textContent = revision.source
-            ? "@\n│"
+            ? "@  "
             : revision.immutable
-              ? "◆"
-              : "○\n│";
+              ? "◆  "
+              : "○  ";
           row.append(graph);
-          const content = document.createElement("div");
-          content.className = "row-main";
-          const top = document.createElement("div");
-          top.className = "row-top";
           const review = document.createElement("button");
           review.className = "review-id";
           review.textContent = revision.id;
@@ -1113,34 +1094,10 @@
             picking
               ? choose(revision.id)
               : tell(
-                  `Review navigation is not simulated · this mockup stays on vqkqszmu`,
+                  "Review navigation is not simulated · this mockup stays on vqkqszmu",
                 );
-          top.append(review);
-          if (revision.source || isTarget) {
-            const badge = document.createElement("span");
-            badge.className = `role${isTarget ? " dest" : ""}`;
-            badge.textContent = revision.source
-              ? "REVIEWING"
-              : target === "pqxvqmoo"
-                ? "↓ DESTINATION · DEFAULT"
-                : "↓ DESTINATION";
-            top.append(badge);
-          } else if (revision.immutable) {
-            const note = document.createElement("span");
-            note.className = "row-note";
-            note.textContent = "Immutable · unavailable";
-            top.append(note);
-          } else if (concept === "row" || picking) {
-            const action = document.createElement("button");
-            action.className = "row-action";
-            action.textContent = picking ? "Choose" : "↓ Set destination";
-            action.disabled = queued;
-            action.setAttribute("aria-label", `Set destination ${revision.id}`);
-            action.onclick = () => choose(revision.id);
-            top.append(action);
-          }
-          content.append(top);
-          const title = document.createElement("div");
+          row.append(review, document.createTextNode(" "));
+          const title = document.createElement("span");
           title.className = "row-title";
           if (revision.bookmark) {
             const bookmark = document.createElement("span");
@@ -1149,8 +1106,30 @@
             title.append(bookmark);
           }
           title.append(document.createTextNode(revision.title));
-          content.append(title);
-          row.append(content);
+          row.append(title, document.createTextNode("  "));
+          if (revision.source || isTarget) {
+            const badge = document.createElement("span");
+            badge.className = `role${isTarget ? " dest" : ""}`;
+            badge.textContent = revision.source ? "[reviewing]" : "[target]";
+            badge.title = revision.source
+              ? "Reviewed source"
+              : "Squash destination";
+            row.append(badge);
+          } else if (revision.immutable) {
+            const note = document.createElement("span");
+            note.className = "row-note";
+            note.textContent = "[immutable]";
+            row.append(note);
+          } else if (concept === "row" || picking) {
+            const action = document.createElement("button");
+            action.className = "row-action";
+            action.textContent = "[↓]";
+            action.title = "Set squash destination";
+            action.disabled = queued;
+            action.setAttribute("aria-label", `Set destination ${revision.id}`);
+            action.onclick = () => choose(revision.id);
+            row.append(action);
+          }
           if (picking && !revision.source && !revision.immutable) {
             row.style.cursor = "pointer";
             row.onclick = (event) => {

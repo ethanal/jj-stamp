@@ -6,11 +6,16 @@ Design only. No application/API or squash behavior changed. Open
 
 ## Shared visual model
 
+- Preserve the existing **monospace graph with normal line height**: literal
+  graph prefix, change ID, bookmarks, and description all share one line. No
+  commit cards, extra vertical padding, wrapped titles, or invented connector
+  lines. Long rows scroll horizontally, as in the current log.
 - Default to the reviewed change's **immediate parent**, not the next visible log
   row. The example starts at `vqkqszmu → pqxvqmoo`.
 - Keep the existing blue review highlight. Give the destination a separate amber
-  edge, `↓ DESTINATION` badge, and a persistent summary above the log. Labels—not
-  color alone—distinguish the two roles.
+  inset edge, inline `[target]` label, and a compact summary above the log.
+  Labels—not color alone—distinguish the two roles. All inline controls and
+  annotations inherit the graph's font size and line height.
 - Repeat the destination in the existing file-sidebar footer and alongside the
   selected-line squash action, including when the log isn't visible.
 - Choosing a destination leaves the source diff and selected lines unchanged;
@@ -20,23 +25,24 @@ Design only. No application/API or squash behavior changed. Open
 
 ## A — Direct row action (recommended)
 
-Hover or keyboard-focus an eligible row to reveal **↓ Set destination**. The
+Hover or keyboard-focus an eligible row to reveal **[↓]** (Set destination). The
 change ID retains its separate review-navigation role. One candidate's action
 is exposed by default to make the feature discoverable; touch/narrow layouts
 show all actions. **Pick in log** also provides an explicit, keyboard-accessible
-entry into the larger-target picker used in B.
+entry into the full-row picker used in B. The action stays inline after the
+description without increasing the line height.
 
 This is the shortest path when the desired commit is already visible, and keeps
-the log's navigation model intact. Its tradeoff is the extra per-row action and
-space required to keep the action distinct from the ID.
+the log's navigation model intact. Its tradeoff is the extra inline action.
 
 ## B — Pick in the log
 
 **Change…** enters an explicit destination-selection mode with a banner and
-Cancel button. Eligible rows become large click targets; IDs choose destinations
-rather than navigate until the mode ends. Source and immutable rows cannot be
-chosen. Escape/Cancel leaves the current destination unchanged and returns focus
-to the entry control.
+Cancel button. Eligible rows become clickable across their existing width,
+without changing their normal line height; IDs choose destinations rather than
+navigate until the mode ends. Source and immutable rows cannot be chosen.
+Escape/Cancel leaves the current destination unchanged and returns focus to the
+entry control.
 
 This has a cleaner resting log and larger targets, but introduces a temporary
 mode. The banner is essential to avoid confusing destination selection with
@@ -91,7 +97,9 @@ The check generates a standalone HTML/font bundle and five PNGs in the ignored
 line-selection preservation, default/reset, cancellation and focus return,
 keyboard controls, unavailable candidates, search/no results, queued-work locks,
 off-filter destinations, narrow layout, and standalone preview interaction.
-It also rejects uncaught page errors and HTTP/API requests.
+It also checks normal line height, contiguous unpadded rows, aligned monospace
+graph columns, inline descriptions/controls, and horizontal scrolling at narrow
+widths; it rejects uncaught page errors and HTTP/API requests.
 
 The mockup uses the existing local Source Code Pro font and dark palette, without
 CDNs. No production builds, backend tests, or real-jj mutations are needed to

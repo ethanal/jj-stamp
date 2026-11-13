@@ -24,6 +24,78 @@ await copyFile(
 );
 
 const browser = await chromium.launch({ args: ["--no-sandbox"] });
+async function expectCompactGraph(page) {
+  const geometry = await page.locator("#log-list").evaluate((log) => {
+    const probe = document.createElement("div");
+    probe.textContent = "@  normal line height";
+    probe.style.cssText = "position:absolute;font:inherit;line-height:normal";
+    log.append(probe);
+    const normalHeight = probe.getBoundingClientRect().height;
+    probe.remove();
+    const rows = [...log.querySelectorAll(".revision")];
+    return {
+      lineHeight: getComputedStyle(log).lineHeight,
+      whiteSpace: getComputedStyle(log).whiteSpace,
+      normalHeight,
+      rows: rows.map((row) => {
+        const bounds = row.getBoundingClientRect();
+        const graph = row.querySelector(".graph");
+        const id = row.querySelector(".review-id");
+        const title = row.querySelector(".row-title");
+        return {
+          top: bounds.top,
+          bottom: bounds.bottom,
+          height: bounds.height,
+          graph: graph.textContent,
+          graphWidth: graph.getBoundingClientRect().width,
+          idOffset:
+            id.getBoundingClientRect().left -
+            graph.getBoundingClientRect().left,
+          titleTop: title.getBoundingClientRect().top,
+          idTop: id.getBoundingClientRect().top,
+          styles: [...row.querySelectorAll("*")].map((node) => {
+            const style = getComputedStyle(node);
+            return {
+              font: style.fontFamily,
+              size: style.fontSize,
+              lineHeight: style.lineHeight,
+            };
+          }),
+        };
+      }),
+    };
+  });
+  assert.equal(geometry.lineHeight, "normal");
+  assert.equal(geometry.whiteSpace, "pre");
+  assert.equal(geometry.rows.length, 5);
+  for (const [index, row] of geometry.rows.entries()) {
+    assert.equal(row.height, geometry.normalHeight, "no padded/tall log rows");
+    assert.equal(row.titleTop, row.idTop, "description stays on the ID's line");
+    assert.equal(
+      row.idOffset,
+      row.graphWidth,
+      "literal graph prefix sets ID column",
+    );
+    assert.equal(
+      row.graphWidth,
+      geometry.rows[0].graphWidth,
+      "monospace graph cells align",
+    );
+    assert.equal(row.graph.includes("\n"), false, "no invented connector rows");
+    assert.equal(row.graph.length, 3);
+    for (const style of row.styles) {
+      assert.equal(style.font.includes("Source"), true);
+      assert.equal(style.size, "13px", "controls inherit the graph font size");
+      assert.equal(style.lineHeight, "normal");
+    }
+    if (index)
+      assert.equal(
+        row.top,
+        geometry.rows[index - 1].bottom,
+        "no inter-row gaps",
+      );
+  }
+}
 try {
   const page = await browser.newPage({
     viewport: { width: 1440, height: 1080 },
@@ -41,6 +113,7 @@ try {
   for (const line of await page.locator(".line").all()) {
     await expect(line).toHaveCSS("height", "23px");
   }
+  await expectCompactGraph(page);
   const target = page.locator("#destination-id");
   const source = page.locator(".revision.current .review-id");
   await expect(target).toHaveText("pqxvqmoo");
@@ -64,9 +137,8 @@ try {
   await expect(page.locator("#selection-target")).toHaveText("rwpxovrz");
   await expect(source).toHaveText("vqkqszmu");
   await expect(page.locator(".line.sel")).toHaveCount(3);
-  await expect(page.locator(".revision.target .role")).toHaveText(
-    "↓ DESTINATION",
-  );
+  await expect(page.locator(".revision.target .role")).toHaveText("[target]");
+  await expectCompactGraph(page);
   await page.screenshot({
     path: ".planka-artifacts/a-custom.png",
     fullPage: true,
@@ -90,6 +162,7 @@ try {
   await page.locator('[data-concept="mode"]').click();
   await page.locator("#change").click();
   await expect(page.locator("#pick-banner")).toBeVisible();
+  await expectCompactGraph(page);
   await expect(
     page.getByRole("button", {
       name: "Choose destination vqkqszmu",
@@ -117,6 +190,7 @@ try {
 
   // C: fixture search, unavailable rows, empty results, keyboard selection, external target.
   await page.locator('[data-concept="search"]').click();
+  await expectCompactGraph(page);
   await page.locator("#change").click();
   await expect(page.locator("#search")).toBeFocused();
   await expect(
@@ -192,6 +266,14 @@ try {
     true,
     "narrow preview should not overflow",
   );
+  await expectCompactGraph(page);
+  assert.equal(
+    await page
+      .locator("#log-list")
+      .evaluate((log) => log.scrollWidth > log.clientWidth),
+    true,
+    "long monospace lines scroll inside the log instead of wrapping or truncating",
+  );
   await page.locator('[data-concept="search"]').click();
   await page.locator("#change").click();
   await expect(page.locator("#search")).toBeVisible();
@@ -211,7 +293,7 @@ try {
     "mockups must not call APIs or external services",
   );
   console.log(
-    "PASS: A/B/C destination choice, source/selection preservation, reset, keyboard, cancellation, search, unavailable rows, queue lock, external target, standalone bundle, mobile layout; zero page errors or HTTP requests.",
+    "PASS: compact monospace/normal-line-height graph across A/B/C and mobile, inline source/target controls, destination choice, selection preservation, reset, keyboard, cancellation, search, unavailable rows, queue lock, external target, standalone bundle; zero page errors or HTTP requests.",
   );
 } finally {
   await browser.close();
