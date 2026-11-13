@@ -40,7 +40,6 @@ function Fixture() {
       >
         <GoToRevision
           disabled={disabled || pending}
-          vimMode={vimMode}
           onSubmit={async (id) => {
             setRequests((previous) => [...previous, id]);
             setPending(true);

@@ -347,10 +347,18 @@ try {
     "Resize panels",
   ])
     await expect(dialog.getByRole("heading", { name: title })).toBeVisible();
-  for (const key of ["s", "u", "r", "f", "l", "@", "?", "e"])
+  for (const key of ["s", "u", "r", "f", "l", "@", "c", "?", "e"])
     await expect(
       dialog.locator("kbd").getByText(key, { exact: true }),
     ).toHaveCount(1);
+  await expect(
+    dialog.getByText("View commit by ID or revset; Enter opens it", {
+      exact: true,
+    }),
+  ).toBeVisible();
+  await expect(
+    dialog.locator("kbd").getByText("g", { exact: true }),
+  ).toHaveCount(0);
   await page.keyboard.press("Tab");
   await expect(content).toBeFocused();
   await page.keyboard.press("Tab");
