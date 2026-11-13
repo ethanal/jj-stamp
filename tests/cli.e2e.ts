@@ -1045,7 +1045,7 @@ test(
     );
     assert.deepEqual(
       records.map(({ subprocesses }) => subprocesses.length),
-      [7, 5],
+      [8, 5],
     );
     assert.ok(
       records.every(
