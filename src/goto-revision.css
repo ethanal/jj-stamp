@@ -1,0 +1,61 @@
+.goto-revision {
+  position: relative;
+  display: inline-flex;
+  flex-shrink: 0;
+}
+
+.goto-revision-popover {
+  position: fixed;
+  z-index: 50;
+  top: 0;
+  left: 0;
+  width: min(290px, calc(100vw - 24px));
+  max-height: calc(100vh - 24px);
+  overflow: auto;
+  box-sizing: border-box;
+  margin: 0;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--panel);
+  color: var(--fg);
+  box-shadow: 0 5px 20px #0004;
+  text-align: left;
+}
+
+.goto-revision-popover label {
+  display: block;
+  margin-bottom: 6px;
+  color: var(--muted);
+  font-size: calc(var(--font-size) - 1px);
+}
+
+.goto-revision-entry {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.goto-revision-entry input {
+  width: 0;
+  min-width: 0;
+  flex: 1;
+  box-sizing: border-box;
+  padding: 5px 7px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--fg);
+}
+
+.goto-revision-entry input:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: -1px;
+}
+
+.goto-revision-popover p {
+  margin: 7px 0 0;
+  color: var(--muted);
+  font-size: calc(var(--font-size) - 1px);
+  white-space: normal;
+}
