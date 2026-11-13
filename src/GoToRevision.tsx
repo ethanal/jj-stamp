@@ -10,7 +10,6 @@ import "./goto-revision.css";
 
 interface GoToRevisionProps {
   disabled: boolean;
-  vimMode: boolean;
   onSubmit: (id: string) => Promise<boolean>;
 }
 
@@ -29,11 +28,7 @@ function typing(event: KeyboardEvent) {
     );
 }
 
-export function GoToRevision({
-  disabled,
-  vimMode,
-  onSubmit,
-}: GoToRevisionProps) {
+export function GoToRevision({ disabled, onSubmit }: GoToRevisionProps) {
   const id = useId();
   const root = useRef<HTMLSpanElement>(null);
   const popover = useRef<HTMLFormElement>(null);
@@ -119,19 +114,12 @@ export function GoToRevision({
   }, [open, error]);
 
   useEffect(() => {
-    let pending: ReturnType<typeof setTimeout> | undefined;
-    const cancel = () => {
-      clearTimeout(pending);
-      pending = undefined;
-    };
     const key = (event: KeyboardEvent) => {
-      const secondG = pending !== undefined;
-      cancel();
       if (
         disabled ||
         opened.current ||
         event.defaultPrevented ||
-        event.key !== "g" ||
+        event.key !== "c" ||
         event.repeat ||
         event.ctrlKey ||
         event.metaKey ||
@@ -143,32 +131,14 @@ export function GoToRevision({
         typing(event)
       )
         return;
-      if (!vimMode) {
-        event.preventDefault();
-        show();
-      } else if (!secondG) {
-        // Observe before CodeDiff's bubbling listener, but never consume its
-        // prefix: both keys of gg must reach the existing Vim motion handler.
-        // Keep the ambiguity window short so a single g feels responsive.
-        const focus = document.activeElement;
-        pending = setTimeout(() => {
-          pending = undefined;
-          if (document.activeElement === focus && !modalOpen()) show();
-        }, 150);
-      }
+      event.preventDefault();
+      show();
     };
     document.addEventListener("keydown", key, true);
-    document.addEventListener("pointerdown", cancel, true);
-    document.addEventListener("focusin", cancel);
-    window.addEventListener("blur", cancel);
     return () => {
-      cancel();
       document.removeEventListener("keydown", key, true);
-      document.removeEventListener("pointerdown", cancel, true);
-      document.removeEventListener("focusin", cancel);
-      window.removeEventListener("blur", cancel);
     };
-  }, [disabled, show, vimMode]);
+  }, [disabled, show]);
 
   useEffect(() => {
     if (!open) return;
@@ -211,7 +181,7 @@ export function GoToRevision({
         setError(
           cause instanceof Error
             ? cause.message
-            : "Unable to open revision. Try again.",
+            : "Unable to view commit. Try again.",
         );
         input.current?.focus({ preventScroll: true });
       }
@@ -228,21 +198,21 @@ export function GoToRevision({
       <button
         type="button"
         className="action-button goto-revision-trigger"
-        title="Go to an ID or revset (g)"
+        title="View a commit by ID or revset (c)"
         aria-haspopup="dialog"
         aria-expanded={open}
         aria-controls={open ? id : undefined}
         disabled={disabled}
         onClick={() => (open ? close() : show())}
       >
-        Go to
+        View commit
       </button>
       {open && (
         <form
           ref={popover}
           id={id}
           role="dialog"
-          aria-label="Go to revision"
+          aria-label="View commit"
           aria-busy={busy}
           className="goto-revision-popover"
           onSubmit={(event) => {
@@ -294,7 +264,7 @@ export function GoToRevision({
               type="submit"
               disabled={disabled || busy || !value.trim()}
             >
-              {busy ? "Opening…" : "Go"}
+              {busy ? "Loading…" : "View"}
             </button>
           </div>
           {error && (

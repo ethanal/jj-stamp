@@ -946,7 +946,7 @@ function App() {
         navigationCallbacks.current.onState(result.state);
         return true;
       } catch (error) {
-        // The Go to popover owns this failure; keep navigation cleanup and
+        // The View commit popover owns this failure; keep navigation cleanup and
         // stale-state recovery without duplicating it over the current diff.
         navigationCallbacks.current.onError(error, false);
         throw error;
@@ -1117,7 +1117,6 @@ function App() {
               queued.halted ||
               !logVersion.current
             }
-            vimMode={vimMode}
             onSubmit={goToRevision}
           />
           <button

@@ -99,16 +99,16 @@ try {
     page.getByLabel("Current change ID", { exact: true }),
   ).toHaveText(first.changeId);
   await expect.poll(() => graphQueries.at(-1)).toBe("none()");
-  await page.keyboard.press("g");
+  await page.keyboard.press("c");
   const goto = page.getByRole("textbox", {
     name: "ID or revset",
     exact: true,
   });
   await expect(goto).toBeFocused();
   await goto.fill("bad");
-  const gotoDialog = page.getByRole("dialog", { name: "Go to revision" });
+  const gotoDialog = page.getByRole("dialog", { name: "View commit" });
   // Mouse submission must return focus to the invalid field, too.
-  await gotoDialog.getByRole("button", { name: "Go", exact: true }).click();
+  await gotoDialog.getByRole("button", { name: "View", exact: true }).click();
   await expect(gotoDialog.getByRole("alert")).toHaveText(
     "No matching revision",
   );
