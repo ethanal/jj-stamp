@@ -39,8 +39,8 @@ test("state, graph and selection have bounded process budgets and derive all hun
   );
   assert.equal(
     calls.length,
-    7,
-    "initialization batches visibility; two metadata checks + one pinned diff",
+    8,
+    "initialization batches visibility; metadata checks + pinned diff and targeted attribute listing",
   );
   assert.deepEqual(
     calls.filter((call) => call.args[0] === "diff").map((call) => call.args),
@@ -84,7 +84,11 @@ test("state, graph and selection have bounded process budgets and derive all hun
       changeId: initial.parent!.changeId,
     })
   ).state;
-  assert.equal(calls.length, 5, "both sources share validation snapshots");
+  assert.equal(
+    calls.length,
+    6,
+    "both sources share validation snapshots; cold diff lists attributes",
+  );
   assert.deepEqual(
     calls.filter((call) => call.args[0] === "diff").map((call) => call.args),
     [
@@ -448,9 +452,15 @@ test("cold state subprocess budget stays constant with many files and mutable an
   assert.ok(
     state.files.every((file) => !file.unsupported && file.hunks.length === 1),
   );
-  assert.equal(calls.length, 7);
+  assert.equal(calls.length, 8);
   assert.ok(calls.every(({ command }) => command === "jj"));
-  assert.ok(calls.every(({ args }) => args[0] !== "file"));
+  assert.equal(
+    calls.filter(({ args }) => args[0] === "file" && args[1] === "list").length,
+    1,
+  );
+  assert.ok(
+    calls.every(({ args }) => args[0] !== "file" || args[1] === "list"),
+  );
   assert.equal(calls.filter(({ args }) => args[0] === "diff").length, 1);
   calls.length = 0;
   assert.deepEqual(await service.getState(), state);
@@ -558,7 +568,7 @@ test("direct squash and its graph refresh have explicit subprocess budgets", asy
   // One private capture + two pinned file reads/conflict baseline + final
   // metadata/op validation, native mutation, attribution, and the fully
   // validated rewritten source diff. Native editor internals are not counted.
-  assert.equal(calls.length, 15);
+  assert.equal(calls.length, 16);
   assert.equal(
     calls.filter((call) => call.command === "jj" && call.args[0] === "log")
       .length,
@@ -575,7 +585,9 @@ test("direct squash and its graph refresh have explicit subprocess budgets", asy
     1,
   );
   assert.ok(calls.every((call) => call.command === "jj"));
-  const fileReads = calls.filter((call) => call.args[0] === "file");
+  const fileReads = calls.filter(
+    (call) => call.args[0] === "file" && call.args[1] === "show",
+  );
   assert.equal(fileReads.length, 2);
   for (const { args } of fileReads) {
     assert.equal(args[1], "show");

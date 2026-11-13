@@ -53,6 +53,36 @@ The browser retries only stale `GET /state` and `GET /graph` validation failures
 
 Unknown routes, including `/reset`, return 404. Errors are JSON `{error,code,output?}`. Invalid inputs use 400; stale, conflict, unavailable-source and recovery conditions use 409; unsupported/unsafe previews use 422; tool failures use 500.
 
+## Generated files
+
+Live and immutable files expose optional `generated: true` for `linguist-generated`
+attributes in the **reviewed source commit**. This is an advisory display hint, not a
+mutation restriction. Live attribute edits take effect after the normal jj snapshot;
+historical/hidden commit reads never consult current workspace attributes. Deleted
+paths use the source tree's attributes too; deleted attribute files are not read from
+the parent. Renames use the destination path. Global Git attributes and `.git/info/attributes`
+are intentionally ignored, and symlink attribute files are not followed.
+
+The Node-only matcher supports root and nested `.gitattributes`, closer-directory and
+later-line precedence, bare `linguist-generated` and `=true`, and disabling overrides
+`=false`, `-linguist-generated`, and `!linguist-generated`. Other assigned values are
+not generated. Supported patterns include basename matching at any depth, leading `/`
+anchors, `*`, `?`, bracket ranges/negation, backslash escapes, Git-style `**` path
+segments, and C-quoted patterns. A directory pattern ending in `/` does not recurse;
+use `directory/**`. Negative patterns are invalid and ignored. Attribute macros and
+POSIX character classes are not supported: their presence conservatively leaves
+files visible rather than hiding uncertain content.
+
+Each cold, nonempty diff adds one pinned `jj file list` for **literal ancestor**
+`.gitattributes` candidates, never a recursive tree/workspace scan. Existing relevant
+attribute files are read separately with pinned `jj file show --ignore-working-copy`.
+Candidates are capped at 256 paths / 64 KiB, their listing at 64 KiB, total attribute
+contents at 256 KiB, patterns at 1024 characters, assignments at 4096, and dynamic
+programming matching at two million steps. Unsafe/conflicted attributes, unsupported
+syntax, exceeded limits, and read failures leave files visible. Results share the
+existing immutable diff/descriptor caches; warm state and file-read budgets are
+unchanged. No Git runtime, temporary Git repository, or repository writes are involved.
+
 ## Workspace editor
 
 Install `nvim` on the backend's PATH and start your editor with `nvim --listen 127.0.0.1:4242` (or use Neovim's `serverstart('127.0.0.1:4242')` in an existing session). The UI's `e` shortcut opens the cursor's file/line there. The backend runs `nvim --server 127.0.0.1:4242 --remote-expr` with an argument array; it never launches a replacement editor or falls back to opening a terminal. Missing executables, unavailable sessions and rejected editor commands return `503 EDITOR_UNAVAILABLE` with setup guidance. File eligibility failures return `422 EDITOR_FILE_UNAVAILABLE`.
@@ -69,9 +99,9 @@ Filesystem event watching is lazy and shared by at most 32 SSE clients. It uses 
 
 On POSIX, child tools run in separate process groups with referenced pipes. Terminal Ctrl-C therefore stops the CLI from accepting requests without interrupting a jj history rewrite. Shutdown waits for HTTP responses to finish or disconnect, then closes remaining connections, including unused browser preconnections and incomplete HTTP headers, without waiting for network timeouts. It also drains the serial service queue and all accepted immutable display reads (including disconnected/queued/failed reads and their children); child processes are not abandoned.
 
-Startup resolves the requested expression and checks `hidden`/`divergent` in one jj query, rather than spawning another process to resolve its visibility. The initial pinned diff/cache read overlaps the non-snapshot operation query; both finish (including on failure) before the queue can advance. Final metadata revalidation and the operation-head check remain sequential. A cold state needs seven service-launched subprocesses; local hunk IDs require no extra listing process. Live eligibility and safety checks remain uncached.
+Startup resolves the requested expression and checks `hidden`/`divergent` in one jj query, rather than spawning another process to resolve its visibility. The initial pinned diff/cache read overlaps the non-snapshot operation query; both finish (including on failure) before the queue can advance. Final metadata revalidation and the operation-head check remain sequential. A cold nonempty state without attributes needs eight service-launched subprocesses, including the targeted attribute listing; local hunk IDs require no extra listing process. Live eligibility and safety checks remain uncached.
 
-Squash and preview preparation capture pinned inputs privately; they do not publish state or authorize a write until selected-file construction and live metadata plus operation revalidation complete. Squash performs its final check **after** the conflict baseline, immediately before installing the pending guard and executing once. File/editor final checks also read metadata and operation only. A warm direct squash of one existing file with a nonempty resulting diff uses 15 service-launched subprocesses; a legacy preview uses four validation processes plus one `file show` per existing selected side. The nested callback is included in the mutation, not counted separately.
+Squash and preview preparation capture pinned inputs privately; they do not publish state or authorize a write until selected-file construction and live metadata plus operation revalidation complete. Squash performs its final check **after** the conflict baseline, immediately before installing the pending guard and executing once. File/editor final checks also read metadata and operation only. A warm direct squash of one existing file with a nonempty resulting diff and no attributes uses 16 service-launched subprocesses, including the rewritten source's targeted attribute listing; a legacy preview uses four validation processes plus one `file show` per existing selected side. The nested callback is included in the mutation, not counted separately.
 
 Metadata queries restrict their conflict-membership lookup to the same source/parent/ancestor union they render. This is set-equivalent for every returned row, including custom `conflicts()` aliases, but avoids searching all visible history just to classify a few revisions. Both initial and final validation use this bounded query. Graphs still perform both live recorded-metadata checks around their pinned render; no graph cache or unvalidated version reuse was introduced. Configured shortest-prefix semantics are unchanged.
 

@@ -170,6 +170,7 @@ test("subprocess classifications only expose allowlisted command labels", () => 
   assert.equal(jjTimingName(["op", "log", "private"]), "jj op log");
   assert.equal(jjTimingName(["op", "revert", "private"]), "jj op revert");
   assert.equal(jjTimingName(["file", "show", "private"]), "jj file show");
+  assert.equal(jjTimingName(["file", "list", "private"]), "jj file list");
   assert.equal(
     toolTimingName(["squash", "--from", "private", "--tool", "jj-stamp"]),
     "jj squash (native editor)",
@@ -263,13 +264,13 @@ test("queued operations retain their own subprocesses and wait for failed parall
       { id: 2, name: "state", ok: true },
     ],
   );
-  assert.equal(records[0].subprocesses.length, 5);
+  assert.equal(records[0].subprocesses.length, 6);
   assert.equal(records[1].subprocesses.length, 4);
   assert.equal(
     records[0].subprocesses.find((child) => child.name === "jj op log")!.ok,
     false,
   );
-  assert.equal(records[0].subprocesses.at(-1)!.name, "jj diff");
+  assert.equal(records[0].subprocesses.at(-1)!.name, "jj file list");
   assert.ok(records[1].queueMs > 0);
   for (const record of records) checkRecord(record);
 });
@@ -298,8 +299,8 @@ for (const asyncObserver of [false, true]) {
     const state = await service.getState();
     assert.equal(
       records[0].subprocesses.length,
-      7,
-      "startup is captured without extra subprocesses",
+      8,
+      "startup includes the targeted attribute listing",
     );
     await service.getLog({ includeOutput: false });
     await service.getLog();

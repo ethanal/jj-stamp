@@ -10,6 +10,12 @@ import { editorExpression, resolveEditorPath } from "./editor.ts";
 import { ApiError } from "./errors.ts";
 import { ReadLane } from "./read-lane.ts";
 import {
+  generatedPaths,
+  maxAttributeBytes,
+  maxAttributeFiles,
+  parseAttributeFiles,
+} from "./generated.ts";
+import {
   jj,
   processOutput,
   processFailureOutput,
@@ -62,6 +68,8 @@ export interface ReviewFile {
   path: string;
   /** Rename source; path remains the destination and API lookup key. */
   oldPath?: string;
+  /** Advisory classification from this source commit's versioned attributes. */
+  generated?: boolean;
   patch: string;
   additions: number;
   deletions: number;
@@ -450,6 +458,7 @@ export class ReviewService {
       ])
     ).stdout;
     const files = this.parseFiles(diff, includeHunks);
+    await this.annotateGenerated(this.root, source, files);
     if (!includeHunks) return files;
     // Do not retain unsupported interpretations.
     if (files.every((file) => !file.unsupported)) {
@@ -458,6 +467,91 @@ export class ReviewService {
       this.fileCache.set(key, structuredClone(files));
     }
     return files;
+  }
+  private async annotateGenerated(
+    root: string,
+    source: string,
+    files: ReviewFile[],
+  ): Promise<void> {
+    if (!files.length) return;
+    // Target only literal ancestor .gitattributes paths. Even an attribute-free
+    // revision must not require a recursive tree scan or workspace access.
+    const candidates = new Set<string>();
+    let candidateBytes = 0;
+    for (const file of files) {
+      const parts = file.path.split("/");
+      for (let i = 0; i < parts.length; i++) {
+        const attribute = [...parts.slice(0, i), ".gitattributes"].join("/");
+        if (candidates.has(attribute)) continue;
+        candidates.add(attribute);
+        candidateBytes += Buffer.byteLength(attribute);
+        if (candidates.size > maxAttributeFiles || candidateBytes > 64 * 1024)
+          return;
+      }
+    }
+    if (!parseAttributeFiles([...candidates].map((name) => `file:${name}`)))
+      return;
+    const attributes: Array<{ path: string; contents: string }> = [];
+    let bytes = 0;
+    try {
+      const listed = await this.pinnedRead(
+        root,
+        [
+          "file",
+          "list",
+          "-r",
+          this.commitRevset(source),
+          "-T",
+          'json(stringify(file_type ++ ":" ++ path)) ++ "\\n"',
+          "--",
+          ...[...candidates].map((name) => `root-file:${JSON.stringify(name)}`),
+        ],
+        64 * 1024,
+      );
+      const entries = listed.stdout
+        .split("\n")
+        .filter(Boolean)
+        .map((line) => JSON.parse(line) as unknown);
+      // Git does not follow symlink attribute files. Conflicts or unknown types
+      // make classification uncertain and leave every file visible.
+      const relevant = parseAttributeFiles(
+        entries.filter(
+          (entry) => typeof entry !== "string" || !entry.startsWith("symlink:"),
+        ),
+      );
+      if (!relevant || relevant.some((name) => !candidates.has(name))) return;
+      for (const attribute of relevant) {
+        const result = await this.pinnedRead(
+          root,
+          [
+            "file",
+            "show",
+            "-r",
+            this.commitRevset(source),
+            "--",
+            `root-file:${JSON.stringify(attribute)}`,
+          ],
+          maxAttributeBytes - bytes,
+        );
+        if (
+          result.stdout.includes("\0") ||
+          (result.stdoutBytes &&
+            !Buffer.from(result.stdout).equals(result.stdoutBytes))
+        )
+          return;
+        bytes += Buffer.byteLength(result.stdout);
+        attributes.push({ path: attribute, contents: result.stdout });
+      }
+      const generated = generatedPaths(
+        files.map((file) => file.path),
+        attributes,
+      );
+      for (const file of files) {
+        if (generated.has(file.path)) file.generated = true;
+      }
+    } catch {
+      // This display hint must never block review or hide uncertain files.
+    }
   }
   private parseFiles(diff: string, includeHunks = true): ReviewFile[] {
     const sections = diff.split(/(?=^diff --git )/m).filter(Boolean);
@@ -1180,11 +1274,13 @@ export class ReviewService {
         2 * 1024 * 1024,
       )
     ).stdout;
+    const files = this.parseFiles(diff);
+    await this.annotateGenerated(root, commitId, files);
     return {
       repo: { name: path.basename(root), path: root },
       commitId,
       baseCommitId: parents[0] ?? null,
-      files: this.parseFiles(diff),
+      files,
     };
   }
   private async pinnedRead(

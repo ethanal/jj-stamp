@@ -43,6 +43,7 @@ export function jjTimingName(args: string[]): string {
     if (args[1] === "revert") return "jj op revert";
   }
   if (args[0] === "file" && args[1] === "show") return "jj file show";
+  if (args[0] === "file" && args[1] === "list") return "jj file list";
   switch (args[0]) {
     case "root":
       return "jj root";

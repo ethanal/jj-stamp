@@ -249,7 +249,7 @@ test("bounded read lane is independent in both directions, timing contexts are i
     repoPath: root,
     onTiming: (record) => records.push(record),
     jjRunner: async (cwd, args, limits) => {
-      if (gate && limits) {
+      if (gate && limits && args[0] === "root") {
         entered.resolve();
         await release.promise;
       }
@@ -278,10 +278,10 @@ test("bounded read lane is independent in both directions, timing contexts are i
     records
       .filter((r) => r.name === "commit")
       .reduce((sum, r) => sum + r.subprocesses.length, 0),
-    3,
+    4,
     "one initiator owns all deduplicated descriptor subprocesses",
   );
-  assert.equal(records.find((r) => r.name === "state")!.subprocesses.length, 7);
+  assert.equal(records.find((r) => r.name === "state")!.subprocesses.length, 8);
 
   const serialEntered = deferred(),
     serialRelease = deferred();
@@ -531,7 +531,7 @@ test("warm immutable file reads only show file sides; callers cannot poison desc
   const state = await service.getState();
   calls.length = 0;
   const content = await service.getCommit({ commitId });
-  assert.equal(calls.length, 3);
+  assert.equal(calls.length, 4);
   const expected = structuredClone(content);
   content.repo.path = "/invalid";
   content.baseCommitId = "0".repeat(40);
