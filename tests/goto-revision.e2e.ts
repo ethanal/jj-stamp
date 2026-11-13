@@ -143,35 +143,56 @@ try {
   await expect(dialog).toHaveCount(0);
   await page.evaluate(() => window.gotoFixture.setDisabled(false));
 
-  // Actual CodeDiff handles gg whether its bubbling listener precedes ours or
-  // not. A lone g opens after the prefix window and restores the code surface.
+  // Use a controlled clock to assert shortcut latency without wall-clock
+  // thresholds. Keep gg working all the way to the end of the shorter window.
   await page.evaluate(() => window.gotoFixture.setVimMode(true));
   await expect(surface).toHaveAttribute("aria-description", /Vim mode/);
+  await page.clock.install();
+  await page.clock.pauseAt(new Date());
   await surface.focus();
   await page.keyboard.press("Shift+G");
   await expect(cursor).toHaveAttribute("data-line", "8");
   await page.keyboard.press("g");
-  await page.keyboard.press("g");
-  await expect(cursor).toHaveAttribute("data-line", "1");
-  await page.waitForTimeout(400);
+  await page.clock.runFor(149);
   await expect(dialog).toHaveCount(0);
   await page.keyboard.press("g");
+  await expect(cursor).toHaveAttribute("data-line", "1");
+  await page.clock.runFor(400);
+  await expect(dialog).toHaveCount(0);
+  await page.keyboard.press("g");
+  await page.clock.runFor(149);
+  await expect(dialog).toHaveCount(0);
+  await page.clock.runFor(1);
   await expect(input).toBeFocused();
+  await page.keyboard.type("@-");
+  await expect(input).toHaveValue("@-");
   await input.press("Escape");
   await expect(surface).toBeFocused();
   await page.keyboard.press("g");
   await page.keyboard.press("j");
-  await page.waitForTimeout(400);
+  await page.clock.runFor(400);
   await expect(dialog).toHaveCount(0);
   await page.keyboard.press("g");
   await previous.click();
-  await page.waitForTimeout(400);
+  await page.clock.runFor(400);
   await expect(dialog).toHaveCount(0);
   await page.keyboard.press("g");
   await page.evaluate(() => window.gotoFixture.setDisabled(true));
-  await page.waitForTimeout(400);
+  await expect(trigger).toBeDisabled();
+  await page.clock.runFor(400);
   await expect(dialog).toHaveCount(0);
   await page.evaluate(() => window.gotoFixture.setDisabled(false));
+  await expect(trigger).toBeEnabled();
+
+  // Non-Vim g needs no disambiguation or timer advance.
+  await page.evaluate(() => window.gotoFixture.setVimMode(false));
+  await expect(surface).not.toHaveAttribute("aria-description", /Vim mode/);
+  await previous.focus();
+  await page.keyboard.press("g");
+  await expect(input).toBeFocused();
+  await input.press("Escape");
+  await expect(previous).toBeFocused();
+  await page.clock.resume();
 
   // Escape works while parent-disabled; a late result cannot resurrect the form.
   await trigger.click();

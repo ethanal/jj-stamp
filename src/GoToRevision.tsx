@@ -72,7 +72,7 @@ export function GoToRevision({
     setOpen(true);
   }, [disabled]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (open) input.current?.focus({ preventScroll: true });
   }, [open]);
 
@@ -149,11 +149,12 @@ export function GoToRevision({
       } else if (!secondG) {
         // Observe before CodeDiff's bubbling listener, but never consume its
         // prefix: both keys of gg must reach the existing Vim motion handler.
+        // Keep the ambiguity window short so a single g feels responsive.
         const focus = document.activeElement;
         pending = setTimeout(() => {
           pending = undefined;
           if (document.activeElement === focus && !modalOpen()) show();
-        }, 300);
+        }, 150);
       }
     };
     document.addEventListener("keydown", key, true);
