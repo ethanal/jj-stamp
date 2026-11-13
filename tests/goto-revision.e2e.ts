@@ -30,6 +30,7 @@ try {
   await previous.focus();
   await page.keyboard.press("g");
   await expect(input).toBeFocused();
+  await expect(input).toHaveAttribute("placeholder", "Enter an ID or revset");
   await input.fill("  abc123  ");
   await input.press("Enter");
   await expect(page.locator("#requests")).toHaveText('["abc123"]');

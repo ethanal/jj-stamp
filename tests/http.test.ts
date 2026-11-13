@@ -5,10 +5,10 @@ import express from "express";
 import { once } from "node:events";
 import { mkdtemp, mkdir, rm, utimes, writeFile } from "node:fs/promises";
 import { request, type IncomingHttpHeaders } from "node:http";
-import { connect } from "node:net";
+import { connect, Server } from "node:net";
 import os from "node:os";
 import path from "node:path";
-import { startLocalServer } from "../server/http.ts";
+import { DEFAULT_PORT, startLocalServer } from "../server/http.ts";
 import { ReviewService } from "../server/service.ts";
 
 // Use raw HTTP so a fetch implementation cannot alter conditional requests.
@@ -58,6 +58,47 @@ async function writeBuild(assetsDir: string, build: string) {
     "body { color: green; }",
   );
 }
+
+test("implicit default port is reused and only falls back on a real bind conflict", async (t) => {
+  const { assetsDir, service } = await fixture(t);
+  const listen = Server.prototype.listen;
+  const attempts: Array<[number, string]> = [];
+  let isolatedDefault = 0;
+  // Translate only the default to a private ephemeral port. Real sockets still
+  // exercise binding, EADDRINUSE and reuse without relying on a free port 8000.
+  t.mock.method(
+    Server.prototype,
+    "listen",
+    function (this: Server, port: number, host: string) {
+      attempts.push([port, host]);
+      return Reflect.apply(listen, this, [
+        port === DEFAULT_PORT ? isolatedDefault : port,
+        host,
+      ]);
+    },
+  );
+  const options = { service, assetsDir };
+  const first = await startLocalServer(options);
+  t.after(() => first.close());
+  isolatedDefault = Number(new URL(first.url).port);
+  const fallback = await startLocalServer(options);
+  t.after(() => fallback.close());
+  assert.notEqual(fallback.url, first.url);
+  await assert.rejects(startLocalServer({ ...options, port: DEFAULT_PORT }), {
+    code: "EADDRINUSE",
+  });
+  await first.close();
+  const restarted = await startLocalServer(options);
+  t.after(() => restarted.close());
+  assert.equal(restarted.url, first.url);
+  assert.deepEqual(
+    attempts,
+    [DEFAULT_PORT, DEFAULT_PORT, 0, DEFAULT_PORT, DEFAULT_PORT].map((port) => [
+      port,
+      "127.0.0.1",
+    ]),
+  );
+});
 
 for (const partialHeaders of [false, true]) {
   test(`shutdown closes ${partialHeaders ? "incomplete HTTP headers" : "unused browser preconnections"} without waiting for a network timeout`, async (t) => {

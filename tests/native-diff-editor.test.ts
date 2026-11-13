@@ -57,6 +57,9 @@ async function fixture(t: TestContext, files = [edit()]) {
       const target = path.join(side!, file.path);
       await mkdir(path.dirname(target), { recursive: true });
       await writeFile(target, Buffer.from(bytes, "base64"), { mode: 0o644 });
+      // Creation modes are filtered by umask; model jj's exact scratch-file
+      // permissions even when the test runner inherits a restrictive mask.
+      await chmod(target, 0o644);
     }
   }
   return {
