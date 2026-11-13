@@ -225,7 +225,7 @@ export function GoToRevision({
       <button
         type="button"
         className="action-button goto-revision-trigger"
-        title="Go to a change or commit ID (g)"
+        title="Go to an ID or revset (g)"
         aria-haspopup="dialog"
         aria-expanded={open}
         aria-controls={open ? id : undefined}
@@ -267,13 +267,13 @@ export function GoToRevision({
           }}
           onKeyUp={(event) => event.stopPropagation()}
         >
-          <label htmlFor={`${id}-input`}>Change or commit ID</label>
+          <label htmlFor={`${id}-input`}>ID or revset</label>
           <div className="goto-revision-entry">
             <input
               ref={input}
               id={`${id}-input`}
               value={value}
-              placeholder="Enter an ID"
+              placeholder="Enter an ID or revset, e.g. @-"
               autoComplete="off"
               autoCapitalize="off"
               spellCheck={false}

@@ -538,15 +538,7 @@ test("invalid choices retain source and previews; immutable choices are readable
     target: original.parent!.changeId,
     selections: selections(original),
   });
-  for (const changeId of [
-    "",
-    "@-",
-    " @",
-    "@ ",
-    "@ | @-",
-    "--help",
-    "abc123g",
-  ]) {
+  for (const changeId of ["", " @", "@ ", "x".repeat(4097), "all()\0"]) {
     await rejectsCode(
       service.selectRevision({ version: original.version, changeId }),
       "INVALID_REQUEST",

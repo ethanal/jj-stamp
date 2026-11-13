@@ -499,9 +499,9 @@ try {
   await page.keyboard.press("g");
   await page.keyboard.press("Shift+G");
   await expect(cursor()).toHaveCount(0);
-  await expect(
-    page.getByRole("textbox", { name: "Change or commit ID" }),
-  ).toHaveValue("gG");
+  await expect(page.getByRole("textbox", { name: "ID or revset" })).toHaveValue(
+    "gG",
+  );
   await page.keyboard.press("Escape");
   await expect(
     page.getByRole("dialog", { name: "Go to revision" }),

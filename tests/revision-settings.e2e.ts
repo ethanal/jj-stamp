@@ -94,7 +94,7 @@ try {
   await expect.poll(() => graphQueries.at(-1)).toBe("none()");
   await page.keyboard.press("g");
   const goto = page.getByRole("textbox", {
-    name: "Change or commit ID",
+    name: "ID or revset",
     exact: true,
   });
   await expect(goto).toBeFocused();

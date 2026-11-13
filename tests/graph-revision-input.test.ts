@@ -137,14 +137,12 @@ test("graph/log HTTP queries validate revsets and revision accepts commit identi
       body: JSON.stringify({ version, changeId }),
     });
   for (const value of [
-    'commit_id("abc")',
-    "abc | def",
     " abc",
     "abc ",
     "abc\n",
     "@\n",
     "kkk\r\n",
-    "0".repeat(65),
+    "0".repeat(4097),
   ]) {
     const response = await select(value);
     assert.equal(response.status, 400);
@@ -170,6 +168,17 @@ test("graph/log HTTP queries validate revsets and revision accepts commit identi
   const stale = await select(before.source.commitId);
   assert.equal(stale.status, 409);
   assert.equal((await stale.json()).code, "STALE_STATE");
+  const revsetResponse = await select("@-", body.state.version);
+  assert.equal(revsetResponse.status, 200);
+  assert.equal(
+    (await revsetResponse.json()).state.source.changeId,
+    before.parent!.changeId,
+  );
+  for (const value of ["none()", "@ | @-", "broken("]) {
+    const response = await select(value, body.state.version);
+    assert.equal(response.status, 400);
+    assert.equal((await response.json()).code, "INVALID_REVISION");
+  }
 });
 
 test("full and prefix commit identities ignore bookmark shadowing and pin the full change", async (t) => {
@@ -313,6 +322,97 @@ test("commit selection revalidates candidate visibility and preserves source/wat
   await rejectsCode(
     service.selectRevision({ version: before.version, changeId: candidate }),
     "INVALID_REVISION",
+  );
+  assert.equal(injected, true);
+  assert.deepEqual(service.getWatchPaths(), paths);
+  assert.equal(
+    (await service.getState()).source.changeId,
+    before.source.changeId,
+  );
+});
+
+test("single-commit revsets select outside the graph and pin the resulting change", async (t) => {
+  const root = await fixture(t);
+  const service = new ReviewService({ repoPath: root });
+  let state = await service.getState();
+  const original = state.source;
+  const parent = state.parent!;
+  await service.getLog({ revset: "none()" });
+  for (const [revset, expected] of [
+    ["@-", parent],
+    ["(@-)+", original],
+    ["@- | none()", parent],
+    ["latest(all())", original],
+  ] as const) {
+    state = (
+      await service.selectRevision({ version: state.version, changeId: revset })
+    ).state;
+    assert.equal(state.source.commitId, expected.commitId);
+  }
+  await jj(root, ["bookmark", "create", "goto-target", "-r", "@-"]);
+  state = await service.getState();
+  state = (
+    await service.selectRevision({
+      version: state.version,
+      changeId: "goto-target",
+    })
+  ).state;
+  assert.equal(state.source.changeId, parent.changeId);
+  await jj(root, ["new", "-m", "Move workspace after revset goto"]);
+  assert.equal((await service.getState()).source.changeId, parent.changeId);
+  const child = await identity(root, "@");
+  await jj(root, ["edit", "@-"]);
+  state = await service.getState();
+  state = (
+    await service.selectRevision({ version: state.version, changeId: "@+" })
+  ).state;
+  assert.equal(state.source.commitId, child);
+});
+
+test("empty, multiple and invalid revsets preserve the source and published scope", async (t) => {
+  const root = await fixture(t);
+  const service = new ReviewService({ repoPath: root });
+  const before = await service.getState();
+  const paths = service.getWatchPaths();
+  for (const changeId of [
+    "none()",
+    "@+",
+    "@ | @-",
+    "all()",
+    "not-a-bookmark",
+    "@(",
+    "--help",
+  ]) {
+    await rejectsCode(
+      service.selectRevision({ version: before.version, changeId }),
+      "INVALID_REVISION",
+    );
+    assert.deepEqual(await service.getState(), before);
+    assert.deepEqual(service.getWatchPaths(), paths);
+  }
+});
+
+test("revset goto rejects a candidate that moves while its diff is captured", async (t) => {
+  const root = await fixture(t);
+  let armed = false;
+  let injected = false;
+  const service = new ReviewService({
+    repoPath: root,
+    jjRunner: async (cwd, args) => {
+      const result = await jj(cwd, args);
+      if (armed && !injected && args[0] === "diff") {
+        injected = true;
+        await jj(cwd, ["new", "-m", "Move revset target during goto"]);
+      }
+      return result;
+    },
+  });
+  const before = await service.getState();
+  const paths = service.getWatchPaths();
+  armed = true;
+  await rejectsCode(
+    service.selectRevision({ version: before.version, changeId: "@-" }),
+    "STALE_STATE",
   );
   assert.equal(injected, true);
   assert.deepEqual(service.getWatchPaths(), paths);

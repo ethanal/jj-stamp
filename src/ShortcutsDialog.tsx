@@ -12,7 +12,7 @@ const groups = [
       ["f", "Toggle the Files sidebar; opening focuses the active file"],
       ["l", "Toggle the log sidebar"],
       ["@", "Review the working-copy change"],
-      ["g", "Go to an ID; Enter opens it"],
+      ["g", "Go to an ID or revset; Enter opens it"],
       ["↑ / ↓", "Navigate files or review adjacent log changes (Vim: k / j)"],
       ["Enter", "Open the focused log change and hide the log"],
       ["?", "Open this shortcut reference"],

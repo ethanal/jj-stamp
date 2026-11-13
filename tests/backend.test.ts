@@ -1799,12 +1799,10 @@ test("revision API validates strict versioned identity input and returns the exp
   for (const body of [
     {},
     { version: state.version },
-    { version: state.version, changeId: "@-" },
-    { version: state.version, changeId: "@ | @-" },
     { version: state.version, changeId: " @" },
     { version: state.version, changeId: "@ " },
-    { version: state.version, changeId: "all()" },
-    { version: state.version, changeId: "k".repeat(65) },
+    { version: state.version, changeId: "all()\0" },
+    { version: state.version, changeId: "k".repeat(4097) },
     {
       version: state.version,
       changeId: state.parent!.changeId,

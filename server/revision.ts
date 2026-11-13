@@ -7,11 +7,10 @@ export interface Revision {
   changeIdPrefix?: string;
 }
 
-/** Literal selection identities only; never arbitrary revsets or bookmark names. */
-// A negative all-character lookahead requires the true end, unlike $, which
-// also accepts a trailing newline in JavaScript.
-export const revisionSelectionPattern =
-  /^(?:@|[k-z]{1,64}|[0-9a-f]{1,64})(?![\s\S])/;
+/** Selection expressions are bounded and passed only as literal jj arguments. */
+export function validRevisionSelection(value: unknown): value is string {
+  return validGraphRevset(value) && value === value.trim();
+}
 export const maxGraphRevsetLength = 4096;
 export function validGraphRevset(value: unknown): value is string {
   return (

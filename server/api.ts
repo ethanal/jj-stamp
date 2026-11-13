@@ -3,7 +3,7 @@ import type { Request, Response, Router } from "express";
 import { z } from "zod";
 import { ApiError, ReviewService } from "./service.ts";
 import { processFailureOutput, ProcessError } from "./process.ts";
-import { revisionSelectionPattern, validGraphRevset } from "./revision.ts";
+import { validRevisionSelection, validGraphRevset } from "./revision.ts";
 import { watchFailure, type WatchFailure } from "./watch-errors.ts";
 import {
   watchFilesystemEvents,
@@ -372,7 +372,7 @@ export function createApi(
     const input = z
       .object({
         version,
-        changeId: z.string().regex(revisionSelectionPattern),
+        changeId: z.string().refine(validRevisionSelection),
       })
       .strict()
       .parse(req.body);

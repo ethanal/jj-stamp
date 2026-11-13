@@ -30,7 +30,7 @@ import {
   parseRevisionRecord,
   revisionFieldsTemplate,
   revisionTemplate,
-  revisionSelectionPattern,
+  validRevisionSelection,
   validGraphRevset,
 } from "./revision.ts";
 import type { Revision } from "./revision.ts";
@@ -112,6 +112,7 @@ interface UnavailableView {
 type ReviewView = RevisionView | UnavailableView;
 interface ViewSelection {
   workingCopy?: boolean;
+  revset?: string;
   allowUnavailable?: boolean;
   changeId?: string;
   commitId?: string;
@@ -622,7 +623,8 @@ export class ReviewService {
     snapshot = true,
   }: ViewOptions = {}): Promise<ReviewView[]> {
     const checkExactCommit = selections.some(
-      (selection) => selection.workingCopy || selection.commitId,
+      (selection) =>
+        selection.workingCopy || selection.commitId || selection.revset,
     );
     const revsets = selections.map((selection) => {
       const source = selection.workingCopy
@@ -631,7 +633,9 @@ export class ReviewService {
           ? this.changeRevset(selection.changeId)
           : selection.commitId
             ? `commit_id(${JSON.stringify(selection.commitId)})`
-            : this.sourceRevset;
+            : selection.revset
+              ? `(${selection.revset})`
+              : this.sourceRevset;
       return [source, `mutable() & ::${source} ~ ${source}`, `${source}-`];
     });
     const metadataRevset = revsets
@@ -657,22 +661,22 @@ export class ReviewService {
           // all visible history. Preserve configured conflicts() aliases.
           contained(`(${metadataRevset}) & conflicts()`) +
           ' ++ "\\t" ++ json(self.contained_in("mutable()"))' +
-          // @ and commit_id() can name a hidden or divergent commit. Unlike a
+          // Expressions and commit_id() can name hidden or divergent commits. Unlike a
           // change_id() lookup, counting their rows alone cannot establish safety.
           (checkExactCommit ? ' ++ "\\t" ++ json(!hidden && !divergent)' : "") +
           ' ++ "\\n"',
       ]).catch((error: unknown) => {
-        // commit_id() rejects ambiguous prefixes at evaluation time instead of
+        // Invalid expressions and ambiguous commit prefixes fail at evaluation time instead of
         // returning several rows. Treat unresolved candidates as input errors,
         // just as startup revision resolution does, without another jj query.
         if (
           error instanceof ProcessError &&
-          selections.some((selection) => selection.commitId)
+          selections.some((selection) => selection.commitId || selection.revset)
         )
           throw new ApiError(
             400,
             "INVALID_REVISION",
-            "Choose exactly one visible, non-divergent change using a unique change or commit ID.",
+            "Choose exactly one visible, non-divergent change using an ID or revset.",
           );
         throw error;
       })
@@ -703,7 +707,7 @@ export class ReviewService {
       if (
         selection.requireAvailable &&
         (sources.length !== 1 ||
-          ((selection.workingCopy || selection.commitId) &&
+          ((selection.workingCopy || selection.commitId || selection.revset) &&
             metadata.some(
               (entry) => entry.source && !entry.availableExactCommit,
             )))
@@ -914,7 +918,7 @@ export class ReviewService {
       if (
         !input ||
         typeof input.changeId !== "string" ||
-        !revisionSelectionPattern.test(input.changeId) ||
+        !validRevisionSelection(input.changeId) ||
         Object.keys(input).some(
           (key) => key !== "version" && key !== "changeId",
         )
@@ -922,12 +926,12 @@ export class ReviewService {
         throw new ApiError(
           400,
           "INVALID_REQUEST",
-          "Supply a change ID, commit ID, or literal @ and the current state version.",
+          "Supply an ID or single-commit revset and the current state version.",
         );
       await this.init();
       // Resolve both identities and their live eligibility in one snapshot.
       // The candidate is not published until its diff and BOTH views validate.
-      // Keep @ moving in both queries so a workspace move during capture fails;
+      // Re-evaluate moving expressions in both queries so capture-time changes fail;
       // publish only the resulting full change ID, never a persistent revset.
       const selections = [
         { allowUnavailable: true },
@@ -935,7 +939,9 @@ export class ReviewService {
           ? { workingCopy: true, requireAvailable: true }
           : /^[0-9a-f]+$/.test(input.changeId)
             ? { commitId: input.changeId, requireAvailable: true }
-            : { changeId: input.changeId, requireAvailable: true },
+            : /^[k-z]+$/.test(input.changeId)
+              ? { changeId: input.changeId, requireAvailable: true }
+              : { revset: input.changeId, requireAvailable: true },
       ];
       const views = await this.readViews({ selections });
       const operation = await this.operation();
