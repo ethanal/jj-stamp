@@ -7,6 +7,8 @@ import path from "node:path";
 import { chromium, expect } from "@playwright/test";
 import express from "express";
 import { build } from "vite";
+import { resolveTheme } from "@pierre/diffs";
+import { colorSchemes } from "../src/preferences.ts";
 
 await using resources = new AsyncDisposableStack();
 const output = await mkdtemp(path.join(os.tmpdir(), "jj-stamp-diff-runtime-"));
@@ -94,6 +96,25 @@ await expect
 assert((await rowCount()) < 300);
 await page.getByRole("button", { name: "Top", exact: true }).click();
 await expect(page.locator('[data-line="17"]').last()).toBeVisible();
+// Exercise every lazy-loaded syntax palette in the production worker bundle.
+for (const [scheme, { theme }] of Object.entries(colorSchemes)) {
+  const resolved = await resolveTheme(theme);
+  await page.getByLabel("Color scheme").selectOption(scheme);
+  await expect
+    .poll(() =>
+      page
+        .locator("pre")
+        .first()
+        .evaluate((element) =>
+          getComputedStyle(element)
+            .getPropertyValue("--diffs-bg")
+            .trim()
+            .toLowerCase(),
+        ),
+    )
+    .toBe(resolved.bg!.toLowerCase());
+}
+await page.getByLabel("Color scheme").selectOption("dark");
 await page.getByRole("button", { name: "Theme", exact: true }).click();
 await page.getByRole("button", { name: "Layout", exact: true }).click();
 await expect(page.locator("[data-additions]")).toBeVisible();

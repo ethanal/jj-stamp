@@ -104,6 +104,19 @@ function Fixture() {
   return (
     <>
       <div style={{ height: 60 }}>
+        <select
+          aria-label="Color scheme"
+          value={colorScheme}
+          onChange={(event) =>
+            setColorScheme(event.target.value as ColorScheme)
+          }
+        >
+          {Object.entries(colorSchemes).map(([scheme, { label }]) => (
+            <option key={scheme} value={scheme}>
+              {label}
+            </option>
+          ))}
+        </select>
         <button
           onClick={() =>
             setColorScheme((value) => (value === "dark" ? "light" : "dark"))

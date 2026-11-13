@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useState } from "react";
+import type { DiffsThemeNames } from "@pierre/diffs";
 
 export const colorSchemes = {
   dark: { label: "Dark", theme: "github-dark", themeType: "dark" },
@@ -14,7 +15,51 @@ export const colorSchemes = {
     theme: "solarized-light",
     themeType: "light",
   },
-} as const;
+  "catppuccin-mocha": {
+    label: "Catppuccin Mocha",
+    theme: "catppuccin-mocha",
+    themeType: "dark",
+  },
+  "catppuccin-latte": {
+    label: "Catppuccin Latte",
+    theme: "catppuccin-latte",
+    themeType: "light",
+  },
+  "gruvbox-dark": {
+    label: "Gruvbox Dark",
+    theme: "gruvbox-dark-medium",
+    themeType: "dark",
+  },
+  "gruvbox-light": {
+    label: "Gruvbox Light",
+    theme: "gruvbox-light-medium",
+    themeType: "light",
+  },
+  "one-dark": {
+    label: "One Dark",
+    theme: "one-dark-pro",
+    themeType: "dark",
+  },
+  "one-light": {
+    label: "One Light",
+    theme: "one-light",
+    themeType: "light",
+  },
+  "rose-pine": {
+    label: "Rosé Pine",
+    theme: "rose-pine",
+    themeType: "dark",
+  },
+  "rose-pine-dawn": {
+    label: "Rosé Pine Dawn",
+    theme: "rose-pine-dawn",
+    themeType: "light",
+  },
+  dracula: { label: "Dracula", theme: "dracula", themeType: "dark" },
+} as const satisfies Record<
+  string,
+  { label: string; theme: DiffsThemeNames; themeType: "dark" | "light" }
+>;
 export type ColorScheme = keyof typeof colorSchemes;
 export const fontSizeLimits = { min: 10, max: 24, initial: 13 } as const;
 export function parseFontSize(value: string | null): number {

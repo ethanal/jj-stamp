@@ -3,6 +3,8 @@ import assert from "node:assert/strict";
 import express from "express";
 import { createBrowserFixture } from "./browser-fixture.ts";
 import { expect, type Locator } from "@playwright/test";
+import { colorSchemes } from "../src/preferences.ts";
+import { resolveTheme } from "@pierre/diffs";
 
 const source = {
   changeId: "abcdefghijklmno",
@@ -755,6 +757,37 @@ try {
     await expect(currentBookmarks).toHaveCSS("color", current);
     await expect(labeledBookmarks).toHaveCSS("color", bookmark);
   }
+  // New palettes style the entire app, and survive a reload like legacy ones.
+  for (const [scheme, { theme, themeType }] of Object.entries(colorSchemes)) {
+    if (
+      ["dark", "dim", "light", "solarized-dark", "solarized-light"].includes(
+        scheme,
+      )
+    )
+      continue;
+    const resolved = await resolveTheme(theme);
+    const hex = resolved.bg!.replace("#", "");
+    const background = `rgb(${[0, 2, 4].map((i) => parseInt(hex.slice(i, i + 2), 16)).join(", ")})`;
+    await picker.selectOption(scheme);
+    await expect(page.locator("html")).toHaveCSS(
+      "background-color",
+      background,
+    );
+    await expect(page.locator("html")).toHaveCSS("color-scheme", themeType);
+    await page.reload();
+    await settings.click();
+    await expect(picker).toHaveValue(scheme);
+    await expect(page.locator("html")).toHaveAttribute(
+      "data-color-scheme",
+      scheme,
+    );
+    await expect(page.locator("html")).toHaveCSS(
+      "background-color",
+      background,
+    );
+    await expect(page.locator("html")).toHaveCSS("color-scheme", themeType);
+  }
+  await picker.selectOption("solarized-light");
   await page.getByRole("button", { name: "Close settings" }).click();
   await page.screenshot({ path: "/tmp/jj-stamp-preferences-desktop.png" });
   await page.setViewportSize({ width: 600, height: 800 });

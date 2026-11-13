@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
+import { resolveTheme } from "@pierre/diffs";
 import {
   defaultLogRevset,
   parseLogRevset,
@@ -33,6 +34,20 @@ const source = {
   commitId: "0123456789abcdef",
   author: "A. Reviewer",
 };
+
+test("all 14 palettes resolve to syntax themes of the matching light/dark type", async () => {
+  assert.equal(Object.keys(colorSchemes).length, 14);
+  assert.equal(
+    Object.values(colorSchemes).filter(({ themeType }) => themeType === "light")
+      .length,
+    6,
+  );
+  for (const { theme, themeType } of Object.values(colorSchemes)) {
+    const resolved = await resolveTheme(theme);
+    assert.equal(resolved.name, theme);
+    assert.equal(resolved.type, themeType);
+  }
+});
 
 test("appearance preferences validate stored values and preserve known schemes", () => {
   assert.equal(parseColorScheme(null), "dark");
