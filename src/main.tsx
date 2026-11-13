@@ -32,7 +32,7 @@ import {
   type ErrorDetail,
 } from "./api";
 import { DiffFontSizeContext } from "./DiffRuntime";
-import { useAppearancePreferences } from "./preferences";
+import { defaultLogRevset, useAppearancePreferences } from "./preferences";
 import {
   FilesSidebar,
   LineCounts,
@@ -46,6 +46,7 @@ import {
   RevisionHeading,
   revisionPageTitle,
 } from "./ReviewToolbar";
+import { GoToRevision } from "./GoToRevision";
 import { ShortcutsDialog } from "./ShortcutsDialog";
 import { useSidebarReveal } from "./useSidebarReveal";
 import { useScrollActiveFile } from "./useScrollActiveFile";
@@ -67,6 +68,8 @@ function retainActivePath(files: RepoState["files"], current: string): string {
 
 function App() {
   const {
+    logRevset,
+    setLogRevset,
     fontSize,
     setFontSize,
     vimMode,
@@ -529,7 +532,12 @@ function App() {
     const delay =
       logOperation.current && logOperation.current !== operation ? 120 : 0;
     const timer = setTimeout(() => {
-      readRepository<{ version: string; rows: LogRow[] }>("graph", isCurrent)
+      readRepository<{ version: string; rows: LogRow[] }>(
+        logRevset === defaultLogRevset
+          ? "graph"
+          : `graph?revset=${encodeURIComponent(logRevset)}`,
+        isCurrent,
+      )
         .then((result) => {
           if (isCurrent()) {
             logStale.current = false;
@@ -559,6 +567,7 @@ function App() {
     queued.pending,
     queued.recovering,
     graphRefresh,
+    logRevset,
     busy === "switching change",
   ]);
   useEffect(() => {
@@ -913,6 +922,50 @@ function App() {
     },
     [queue, dragging, navigation, logReveal.dismiss, clear],
   );
+  const goToRevision = useCallback(
+    async (changeId: string): Promise<boolean> => {
+      const current = queue.getSnapshot();
+      if (
+        lock.current ||
+        dragging ||
+        current.pending ||
+        current.recovering ||
+        current.halted ||
+        !logVersion.current
+      )
+        return false;
+      lock.current = true;
+      busyRef.current = "opening revision";
+      setBusy("opening revision");
+      navigationCallbacks.current.onIntent(changeId);
+      try {
+        const result = await api<{ state: RepoState }>("revision", {
+          version: logVersion.current,
+          changeId,
+        });
+        navigationCallbacks.current.onState(result.state);
+        return true;
+      } catch (error) {
+        navigationCallbacks.current.onError(error);
+        throw error;
+      } finally {
+        lock.current = false;
+        busyRef.current = "";
+        setBusy("");
+      }
+    },
+    [queue, dragging],
+  );
+  const applyLogRevset = useCallback(
+    async (revset: string) => {
+      // Validate before saving: a typo must not replace the usable graph or
+      // poison the preference on the next reload. This read never changes selection.
+      await readRepository(`graph?revset=${encodeURIComponent(revset)}`);
+      logRequest.current++;
+      setLogRevset(revset);
+    },
+    [setLogRevset],
+  );
   useLayoutEffect(() => {
     if (!openRevisionId || busy) return;
     setOpenRevisionId(null);
@@ -1055,6 +1108,16 @@ function App() {
           </span>
         </RevisionHeading>
         <div className="toolbar-actions">
+          <GoToRevision
+            disabled={
+              idleActionDisabled ||
+              dragging ||
+              queued.halted ||
+              !logVersion.current
+            }
+            vimMode={vimMode}
+            onSubmit={goToRevision}
+          />
           <button
             className="action-button"
             onClick={() => void refresh()}
@@ -1064,6 +1127,8 @@ function App() {
             Refresh
           </button>
           <SettingsDialog
+            logRevset={logRevset}
+            onLogRevsetChange={applyLogRevset}
             fontSize={fontSize}
             onFontSizeChange={setFontSize}
             colorScheme={colorScheme}

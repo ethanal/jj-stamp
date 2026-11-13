@@ -3,6 +3,8 @@ import assert from "node:assert/strict";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import {
+  defaultLogRevset,
+  parseLogRevset,
   parseFontSize,
   clampSidebarWidth,
   clampSplitRatio,
@@ -205,6 +207,8 @@ test("theme control exposes all supported palettes and current preference", () =
 test("settings uses a labeled, initially closed native dialog and a named close control", () => {
   const html = renderToStaticMarkup(
     createElement(SettingsDialog, {
+      logRevset: "all()",
+      async onLogRevsetChange() {},
       fontSize: 13,
       onFontSizeChange() {},
       colorScheme: "dark",
@@ -243,4 +247,11 @@ test("split diff proportions default to equal widths and keep both sides usable"
   assert.equal(parseSplitRatio("100"), 80);
   assert.equal(clampSplitRatio(62.7), 63);
   assert.equal(clampSplitRatio(NaN), 50);
+});
+
+test("log revset preference defaults, trims and bounds saved expressions", () => {
+  for (const value of [null, "", "  ", "x".repeat(4097), "all()\0"])
+    assert.equal(parseLogRevset(value), defaultLogRevset);
+  assert.equal(parseLogRevset("  mine() | @  "), "mine() | @");
+  assert.equal(parseLogRevset("none()"), "none()");
 });

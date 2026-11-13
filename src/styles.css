@@ -1324,3 +1324,33 @@ kbd {
 .navigation-notice .action-button {
   flex-shrink: 0;
 }
+
+.log-revset-settings textarea {
+  width: 100%;
+  min-width: 0;
+  resize: vertical;
+  padding: 8px;
+  font: inherit;
+  font-size: var(--font-size);
+  color: var(--fg);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+.log-revset-settings p {
+  margin: 0;
+}
+.revset-actions {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+.revset-actions button {
+  padding: 6px 10px;
+  font-size: var(--font-size);
+}
+.revset-error {
+  color: var(--error-fg);
+  overflow-wrap: anywhere;
+  font-size: var(--font-size);
+}

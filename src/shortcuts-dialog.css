@@ -61,7 +61,7 @@
   gap: 10px;
 }
 .shortcut-entry + .shortcut-entry {
-  margin-top: 8px;
+  margin-top: 5px;
 }
 /* Global shortcuts need less key space than the modified/pointer gestures. */
 .shortcuts-group:first-child .shortcut-entry {

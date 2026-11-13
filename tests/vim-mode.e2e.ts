@@ -490,7 +490,7 @@ try {
     }
   }
 
-  // Disabling removes Vim behavior without changing the log shortcut.
+  // Disabling removes Vim motions; g now opens Go to immediately.
   await settings.click();
   await vim.uncheck();
   await page.keyboard.press("Escape");
@@ -499,6 +499,13 @@ try {
   await page.keyboard.press("g");
   await page.keyboard.press("Shift+G");
   await expect(cursor()).toHaveCount(0);
+  await expect(
+    page.getByRole("textbox", { name: "Change or commit ID" }),
+  ).toHaveValue("gG");
+  await page.keyboard.press("Escape");
+  await expect(
+    page.getByRole("dialog", { name: "Go to revision" }),
+  ).toBeHidden();
   await page.keyboard.press("l");
   await expect(
     page.getByRole("button", { name: "Expand log sidebar" }),

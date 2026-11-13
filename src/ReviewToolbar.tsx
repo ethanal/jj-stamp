@@ -1,7 +1,8 @@
-import { useId, useRef, type ReactNode } from "react";
+import { useId, useRef, useState, type ReactNode } from "react";
 import type { Revision } from "./types";
 import { useDialogBackdropDismiss } from "./useDialogBackdropDismiss";
 import {
+  defaultLogRevset,
   colorSchemes,
   fontSizeLimits,
   parseFontSize,
@@ -87,6 +88,8 @@ export function ColorSchemePicker({
 }
 
 export function SettingsDialog({
+  logRevset,
+  onLogRevsetChange,
   fontSize,
   onFontSizeChange,
   colorScheme,
@@ -97,6 +100,8 @@ export function SettingsDialog({
   onVimModeChange,
   disabled,
 }: {
+  logRevset: string;
+  onLogRevsetChange: (revset: string) => Promise<void>;
   fontSize: number;
   onFontSizeChange: (size: number) => void;
   colorScheme: ColorScheme;
@@ -107,6 +112,9 @@ export function SettingsDialog({
   onHoverSidebarsChange: (enabled: boolean) => void;
   disabled: boolean;
 }) {
+  const [revsetDraft, setRevsetDraft] = useState(logRevset);
+  const [revsetError, setRevsetError] = useState("");
+  const [savingRevset, setSavingRevset] = useState(false);
   const dialog = useRef<HTMLDialogElement>(null);
   const backdropDismiss = useDialogBackdropDismiss();
   const id = useId();
@@ -116,7 +124,11 @@ export function SettingsDialog({
         className="action-button"
         aria-haspopup="dialog"
         aria-controls={id}
-        onClick={() => dialog.current?.showModal()}
+        onClick={() => {
+          setRevsetDraft(logRevset);
+          setRevsetError("");
+          dialog.current?.showModal();
+        }}
         disabled={disabled}
       >
         Settings
@@ -131,7 +143,7 @@ export function SettingsDialog({
           event.stopPropagation();
           if (event.key !== "Tab") return;
           const controls = event.currentTarget.querySelectorAll<HTMLElement>(
-            "button:not(:disabled), select:not(:disabled), input:not(:disabled)",
+            "button:not(:disabled), select:not(:disabled), input:not(:disabled), textarea:not(:disabled)",
           );
           const first = controls[0];
           const last = controls[controls.length - 1];
@@ -187,6 +199,68 @@ export function SettingsDialog({
             />
           </label>
         </section>
+        <form
+          className="settings-section log-revset-settings"
+          onSubmit={async (event) => {
+            event.preventDefault();
+            if (savingRevset || disabled) return;
+            setSavingRevset(true);
+            setRevsetError("");
+            try {
+              await onLogRevsetChange(revsetDraft.trim());
+              setRevsetDraft(revsetDraft.trim());
+            } catch (error) {
+              setRevsetError(
+                error instanceof Error ? error.message : String(error),
+              );
+            } finally {
+              setSavingRevset(false);
+            }
+          }}
+        >
+          <h3>
+            <label htmlFor={`${id}-revset`}>jj log revset</label>
+          </h3>
+          <textarea
+            id={`${id}-revset`}
+            value={revsetDraft}
+            rows={4}
+            maxLength={4096}
+            required
+            disabled={disabled || savingRevset}
+            aria-describedby={`${id}-revset-help`}
+            onChange={(event) => setRevsetDraft(event.target.value)}
+          />
+          <p className="settings-help" id={`${id}-revset-help`}>
+            Filters the graph only, not the displayed change. Saved in this
+            browser.
+          </p>
+          {revsetError && (
+            <p className="revset-error" role="alert">
+              {revsetError}
+            </p>
+          )}
+          <div className="revset-actions">
+            <button
+              type="button"
+              disabled={disabled || savingRevset}
+              onClick={() => setRevsetDraft(defaultLogRevset)}
+            >
+              Reset to default
+            </button>
+            <button
+              type="submit"
+              disabled={
+                disabled ||
+                savingRevset ||
+                !revsetDraft.trim() ||
+                revsetDraft.trim() === logRevset
+              }
+            >
+              {savingRevset ? "Validating…" : "Apply"}
+            </button>
+          </div>
+        </form>
         <section
           className="settings-section"
           aria-labelledby={`${id}-behavior`}

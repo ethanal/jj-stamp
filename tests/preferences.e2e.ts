@@ -131,9 +131,10 @@ async function assertSettingsLayout(dialog: Locator) {
   );
   const layout = await dialog.evaluate((element) => {
     const bounds = element.getBoundingClientRect();
-    const [header, appearance, behavior, picker, rows] = [
+    const [header, appearance, logSettings, behavior, picker, rows] = [
       ".settings-heading",
       ".settings-section",
+      ".log-revset-settings",
       ".settings-section:last-child",
       "select",
       ".settings-rows",
@@ -147,10 +148,14 @@ async function assertSettingsLayout(dialog: Locator) {
         header.left - bounds.left - 1,
         bounds.right - header.right - 1,
         header.top - bounds.top - 1,
-        bounds.bottom - behavior.bottom - 1,
+        parseFloat(getComputedStyle(element).paddingBottom),
       ],
-      gaps: [appearance.top - header.bottom, behavior.top - appearance.bottom],
-      aligned: [appearance, behavior, picker, rows].every(
+      gaps: [
+        appearance.top - header.bottom,
+        logSettings.top - appearance.bottom,
+        behavior.top - logSettings.bottom,
+      ],
+      aligned: [appearance, logSettings, behavior, picker, rows].every(
         (box) => box.left === header.left && box.right === header.right,
       ),
     };
@@ -158,7 +163,7 @@ async function assertSettingsLayout(dialog: Locator) {
   assert(layout.inViewport && layout.noOverflow);
   assert(layout.aligned, "headings, controls, and rows share the same edges");
   assert.deepEqual(layout.padding, [24, 24, 24, 24]);
-  assert.deepEqual(layout.gaps, [24, 24]);
+  assert.deepEqual(layout.gaps, [24, 24, 24]);
 }
 async function assertConnectedGraph() {
   await expect(page.locator(".log-row")).toHaveCount(graphRows.length);
@@ -316,6 +321,14 @@ try {
   await fontSize.press("End");
   await expect(fontSize).toHaveValue("24");
   await fontSize.fill("13");
+  await page.keyboard.press("Tab");
+  await expect(
+    dialog.getByLabel("jj log revset", { exact: true }),
+  ).toBeFocused();
+  await page.keyboard.press("Tab");
+  await expect(
+    dialog.getByRole("button", { name: "Reset to default" }),
+  ).toBeFocused();
   await page.keyboard.press("Tab");
   await expect(hoverSetting).toBeFocused();
   await expect(hoverSetting).not.toBeChecked();

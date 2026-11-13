@@ -92,7 +92,16 @@ function usePreference<T extends string | number | boolean>(
   }, [key, value]);
   return [value, setValue] as const;
 }
+export const defaultLogRevset =
+  "visible() & (trunk() | (tracked_remote_bookmarks() & ~::trunk()) | (mutable() & mine())::)";
+export function parseLogRevset(value: string | null): string {
+  return value?.trim() && value.length <= 4096 && !value.includes("\0")
+    ? value.trim()
+    : defaultLogRevset;
+}
+
 export function useAppearancePreferences() {
+  const [logRevset, setLogRevset] = usePreference("log-revset", parseLogRevset);
   const [fontSize, setFontSize] = usePreference("font-size", parseFontSize);
   useLayoutEffect(() => {
     document.documentElement.style.setProperty("--font-size", `${fontSize}px`);
@@ -125,6 +134,8 @@ export function useAppearancePreferences() {
     document.documentElement.dataset.colorScheme = colorScheme;
   }, [colorScheme]);
   return {
+    logRevset,
+    setLogRevset,
     fontSize,
     setFontSize,
     vimMode,

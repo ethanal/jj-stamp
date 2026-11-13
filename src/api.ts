@@ -31,7 +31,7 @@ export const isStaleState = (error: unknown): error is RequestError =>
  * Keep this separate from api(): POSTs must never be replayed automatically.
  */
 export async function readRepository<T>(
-  route: "state" | "graph",
+  route: "state" | "graph" | `graph?${string}`,
   isCurrent: () => boolean = () => true,
 ): Promise<T> {
   for (let attempt = 0; ; attempt++) {
