@@ -1,0 +1,1319 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>jj-stamp · Custom squash destination concepts</title>
+    <style>
+      @font-face {
+        font-family: Source;
+        src: url("../src/fonts/SourceCodePro.ttf");
+        font-weight: 200 900;
+        font-display: swap;
+      }
+      :root {
+        color-scheme: dark;
+        --bg: #0d1117;
+        --panel: #161b22;
+        --border: #30363d;
+        --fg: #c9d1d9;
+        --muted: #8b949e;
+        --blue: #9ac3e5;
+        --amber: #e2bd7e;
+        --green: #72b88a;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        background: #090d12;
+        color: var(--fg);
+        font:
+          13px Source,
+          monospace;
+      }
+      button,
+      input,
+      select {
+        font: inherit;
+      }
+      button {
+        cursor: pointer;
+        color: inherit;
+        border: 1px solid var(--border);
+        background: var(--panel);
+        border-radius: 4px;
+        padding: 6px 10px;
+      }
+      button:hover:not(:disabled) {
+        background: #262e38;
+        border-color: #637184;
+      }
+      button:disabled {
+        cursor: not-allowed;
+        color: #66717f;
+      }
+      button:focus-visible,
+      input:focus-visible,
+      select:focus-visible {
+        outline: 2px solid var(--blue);
+        outline-offset: 3px;
+      }
+      button[hidden],
+      [hidden] {
+        display: none !important;
+      }
+      p {
+        line-height: 1.7;
+        margin: 0;
+      }
+      .muted {
+        color: var(--muted);
+      }
+      .amber {
+        color: var(--amber);
+      }
+      .blue {
+        color: var(--blue);
+      }
+      .green {
+        color: var(--green);
+      }
+      .pink {
+        color: #f778ba;
+      }
+      code {
+        font: inherit;
+      }
+      .eyebrow {
+        font-size: 10px;
+        letter-spacing: 1.7px;
+        color: var(--blue);
+        text-transform: uppercase;
+      }
+      h1 {
+        font:
+          600 26px Source,
+          monospace;
+        letter-spacing: -1px;
+        color: #f0f6fc;
+        margin: 10px 0 8px;
+      }
+      h2 {
+        font-size: 14px;
+        margin: 0 0 8px;
+        color: #f0f6fc;
+      }
+      .page {
+        max-width: 1600px;
+        margin: auto;
+        padding: 30px 32px 24px;
+      }
+      .intro {
+        display: flex;
+        justify-content: space-between;
+        align-items: start;
+        gap: 24px;
+        margin-bottom: 25px;
+      }
+      .prototype {
+        font-size: 11px;
+        border: 1px solid var(--border);
+        padding: 7px 10px;
+        border-radius: 20px;
+        white-space: nowrap;
+        color: var(--muted);
+      }
+      .options {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 10px;
+        margin-bottom: 18px;
+      }
+      .option {
+        text-align: left;
+        padding: 13px 16px;
+        background: #11171e;
+        position: relative;
+      }
+      .option[aria-pressed="true"] {
+        border-color: var(--blue);
+        background: #152332;
+        box-shadow: inset 0 2px var(--blue);
+      }
+      .option b {
+        display: block;
+        font-size: 13px;
+        font-weight: 500;
+        margin-bottom: 6px;
+        color: #eef4fa;
+      }
+      .option span {
+        font-size: 11px;
+        color: #a2adba;
+      }
+      .recommended {
+        color: var(--green) !important;
+        font-size: 10px !important;
+        margin-left: 8px;
+      }
+      .controls {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 16px;
+        margin: 0 0 12px;
+        font-size: 11px;
+      }
+      .controls label {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        color: var(--muted);
+      }
+      select {
+        padding: 5px 7px;
+        color: var(--fg);
+        border: 1px solid var(--border);
+        background: var(--panel);
+        border-radius: 4px;
+      }
+      .hint {
+        color: var(--blue);
+      }
+      .app {
+        border: 1px solid #3b4652;
+        border-radius: 7px;
+        overflow: hidden;
+        box-shadow: 0 20px 80px #0004;
+        background: var(--bg);
+      }
+      .app-header {
+        height: 44px;
+        border-bottom: 1px solid var(--border);
+        padding: 0 14px;
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        background: var(--panel);
+        font-size: 12px;
+      }
+      .app-header .grow {
+        flex: 1;
+      }
+      .app-header button {
+        font-size: 11px;
+        padding: 4px 9px;
+      }
+      .workspace {
+        display: grid;
+        grid-template-columns: 187px minmax(260px, 1fr) 490px;
+        min-height: 520px;
+      }
+      .files {
+        border-right: 1px solid var(--border);
+        background: var(--panel);
+        display: flex;
+        flex-direction: column;
+        min-width: 0;
+      }
+      .heading {
+        height: 39px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 0 12px;
+        border-bottom: 1px solid var(--border);
+        font-size: 12px;
+      }
+      .file-tree {
+        padding: 18px 10px;
+        flex: 1;
+        line-height: 2.4;
+        font-size: 11px;
+      }
+      .file-tree .file {
+        padding-left: 13px;
+        color: var(--amber);
+        white-space: nowrap;
+      }
+      .file-tree .file.active {
+        background: #232a33;
+      }
+      .footer-route {
+        font-size: 10px;
+        padding: 14px 10px;
+        border-top: 1px solid var(--border);
+      }
+      .diff {
+        min-width: 0;
+        position: relative;
+      }
+      .diff .heading {
+        background: var(--panel);
+        font-size: 11px;
+        gap: 8px;
+        white-space: nowrap;
+      }
+      .diff-tools {
+        margin-left: auto;
+        color: var(--blue);
+      }
+      .diff-body {
+        font-size: 11px;
+        overflow: hidden;
+        padding-bottom: 90px;
+      }
+      .context-bar {
+        padding: 5px 10px;
+        color: #a2adba;
+        background: #20262e;
+        font-size: 10px;
+      }
+      .line {
+        display: flex;
+        min-height: 23px;
+        line-height: 23px;
+        white-space: pre;
+      }
+      .line .ln {
+        flex: 0 0 39px;
+        text-align: right;
+        padding-right: 10px;
+        color: var(--muted);
+        border-right: 1px solid #252b32;
+        margin-right: 10px;
+        user-select: none;
+      }
+      .line.add {
+        color: #b8d8bf;
+        background: #193524;
+      }
+      .line.del {
+        color: #e2b6b4;
+        background: #352427;
+      }
+      .line.sel {
+        background: #16466b;
+        box-shadow: inset 3px 0 #79c9ff;
+        color: #e3f3ff;
+      }
+      .syntax {
+        color: #f97583;
+      }
+      .call {
+        color: #b392f0;
+      }
+      .diff-bottom {
+        position: absolute;
+        bottom: 0;
+        width: 100%;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+        padding: 13px;
+        background: var(--panel);
+        border-top: 1px solid var(--border);
+        font-size: 10px;
+      }
+      .squash-button {
+        color: var(--blue);
+        font-size: 11px;
+        padding: 6px 10px;
+        border-color: #526e86;
+        white-space: nowrap;
+      }
+      .log {
+        border-left: 1px solid var(--border);
+        background: var(--panel);
+        min-width: 0;
+        position: relative;
+      }
+      .log .heading span:last-child {
+        color: var(--muted);
+        font-size: 10px;
+      }
+      .destination-bar {
+        min-height: 65px;
+        padding: 12px;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        border-bottom: 1px solid var(--border);
+        background: #1c2026;
+      }
+      .target-summary {
+        min-width: 0;
+        flex: 1;
+      }
+      .target-label {
+        color: var(--muted);
+        font-size: 10px;
+        margin-bottom: 5px;
+        display: block;
+      }
+      .target-id {
+        font-size: 12px;
+        color: var(--amber);
+      }
+      .target-summary .default-note {
+        font-size: 10px;
+        color: var(--muted);
+        margin-left: 6px;
+      }
+      .target-actions {
+        display: flex;
+        gap: 6px;
+        align-items: center;
+      }
+      .target-actions button {
+        font-size: 10px;
+        padding: 5px 8px;
+      }
+      .reset {
+        border-color: transparent;
+        background: transparent !important;
+        color: var(--muted);
+      }
+      .pick-banner {
+        padding: 10px 12px;
+        border-bottom: 1px solid #526e86;
+        background: #182b3c;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        font-size: 11px;
+        color: #c8e4fc;
+      }
+      .pick-banner button {
+        font-size: 10px;
+      }
+      .log-list {
+        padding: 9px 10px 14px;
+      }
+      .revision {
+        display: grid;
+        grid-template-columns: 20px 1fr;
+        position: relative;
+        min-height: 65px;
+        padding: 8px 8px 8px 3px;
+        border-left: 2px solid transparent;
+        border-radius: 3px;
+        margin: 1px 0;
+      }
+      .revision.current {
+        background: #154d79;
+        color: white;
+      }
+      .revision.target {
+        border-left-color: var(--amber);
+        background: #29261f;
+      }
+      .graph {
+        white-space: pre;
+        text-align: center;
+        color: #8b949e;
+        line-height: 21px;
+      }
+      .revision.current .graph {
+        color: #c3e5ff;
+      }
+      .revision.target .graph {
+        color: var(--amber);
+      }
+      .row-main {
+        min-width: 0;
+      }
+      .row-top {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        min-height: 21px;
+      }
+      .review-id {
+        font-size: 12px;
+        color: var(--blue);
+        padding: 0;
+        border: 0;
+        background: transparent !important;
+        border-radius: 2px;
+      }
+      .current .review-id {
+        color: white;
+      }
+      .row-title {
+        font-size: 11px;
+        color: #b9c4d0;
+        margin-top: 5px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .current .row-title {
+        color: #e2eff9;
+      }
+      .role {
+        font-size: 9px;
+        border: 1px solid #6396be;
+        padding: 2px 5px;
+        border-radius: 3px;
+        color: #d0eaff;
+        white-space: nowrap;
+        margin-left: auto;
+      }
+      .role.dest {
+        color: var(--amber);
+        border-color: #786242;
+        background: #302a21;
+      }
+      .row-action {
+        margin-left: auto;
+        padding: 3px 6px;
+        font-size: 10px;
+        color: var(--amber);
+        opacity: 0;
+        pointer-events: none;
+      }
+      .revision:hover .row-action,
+      .revision:focus-within .row-action,
+      .revision.suggested .row-action,
+      .picking .row-action {
+        opacity: 1;
+        pointer-events: auto;
+      }
+      .row-action:disabled {
+        opacity: 1;
+        pointer-events: none;
+        border: 0;
+        background: none;
+        padding-right: 0;
+        font-size: 9px;
+      }
+      .row-action:focus-visible {
+        pointer-events: auto;
+      }
+      .row-note {
+        margin-left: auto;
+        color: var(--muted);
+        font-size: 9px;
+      }
+      .log-tip {
+        font-size: 10px;
+        line-height: 1.65;
+        color: var(--muted);
+        border-top: 1px solid var(--border);
+        padding: 12px;
+      }
+      .log-tip strong {
+        color: var(--fg);
+        font-weight: 400;
+      }
+      .hidden-target {
+        font-size: 10px;
+        background: #29261f;
+        padding: 10px 12px;
+        color: var(--amber);
+        border-bottom: 1px solid #5b4a34;
+      }
+      .status {
+        height: 32px;
+        border-top: 1px solid var(--border);
+        padding: 0 12px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        color: var(--muted);
+        font-size: 10px;
+        background: var(--panel);
+      }
+      .notes {
+        display: grid;
+        grid-template-columns: 1.15fr 1fr 1fr;
+        gap: 30px;
+        margin-top: 24px;
+        font-size: 11px;
+      }
+      .notes h2 {
+        font-size: 12px;
+      }
+      .notes p {
+        color: #a2adba;
+      }
+      .notes .number {
+        color: var(--blue);
+        margin-right: 7px;
+      }
+      .picker {
+        position: absolute;
+        right: 10px;
+        top: 98px;
+        width: min(430px, calc(100% - 20px));
+        padding: 13px;
+        background: #1b222b;
+        border: 1px solid #637184;
+        border-radius: 6px;
+        box-shadow: 0 14px 40px #0008;
+        z-index: 2;
+      }
+      .picker-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        font-size: 12px;
+        margin-bottom: 12px;
+      }
+      .picker-header button {
+        padding: 1px 6px;
+        color: var(--muted);
+      }
+      .picker input {
+        width: 100%;
+        height: 34px;
+        background: var(--bg);
+        color: var(--fg);
+        border: 1px solid #637184;
+        border-radius: 4px;
+        padding: 7px 10px;
+        font-size: 11px;
+      }
+      .picker-help {
+        color: var(--muted);
+        font-size: 10px;
+        line-height: 1.6;
+        margin: 10px 0;
+      }
+      .results {
+        display: grid;
+        gap: 3px;
+        max-height: 240px;
+        overflow: auto;
+      }
+      .result {
+        text-align: left;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+        padding: 9px 8px;
+        font-size: 10px;
+      }
+      .result b {
+        color: var(--blue);
+        font-weight: 400;
+      }
+      .result .result-title {
+        display: block;
+        color: var(--muted);
+        margin-top: 5px;
+      }
+      .result small {
+        font-size: 9px;
+        color: var(--muted);
+      }
+      .result:disabled b {
+        color: var(--muted);
+      }
+      .no-results {
+        padding: 15px 3px;
+        color: var(--muted);
+        font-size: 11px;
+        line-height: 1.7;
+      }
+      .demo-toast {
+        color: var(--blue) !important;
+      }
+      .locked-banner {
+        padding: 9px 12px;
+        font-size: 10px;
+        color: var(--amber);
+        background: #29261f;
+        border-bottom: 1px solid #5b4a34;
+      }
+      @media (min-width: 1550px) {
+        .workspace {
+          grid-template-columns: 200px minmax(260px, 1fr) 540px;
+        }
+        .diff-body {
+          font-size: 12px;
+        }
+      }
+      @media (max-width: 1150px) {
+        .workspace {
+          grid-template-columns: minmax(250px, 1fr) 470px;
+        }
+        .files {
+          display: none;
+        }
+        .app-header .commit {
+          display: none;
+        }
+        .page {
+          padding: 24px 20px;
+        }
+        .recommended {
+          display: block;
+          margin: 5px 0 0;
+        }
+        .notes {
+          gap: 18px;
+        }
+      }
+      @media (max-width: 800px) {
+        .workspace {
+          grid-template-columns: minmax(0, 1fr);
+        }
+        .diff {
+          height: 290px;
+        }
+        .log {
+          border-left: 0;
+          border-top: 1px solid var(--border);
+        }
+        .diff-bottom {
+          padding: 8px;
+        }
+        .intro {
+          display: block;
+        }
+        .prototype {
+          display: inline-block;
+          margin-top: 12px;
+        }
+        .options {
+          gap: 6px;
+        }
+        .option {
+          padding: 10px;
+        }
+        .option b {
+          font-size: 11px;
+        }
+        .option span {
+          font-size: 9px;
+        }
+        .page {
+          padding: 20px 12px;
+        }
+        .controls {
+          align-items: start;
+          flex-direction: column;
+          gap: 10px;
+        }
+        .app-header {
+          font-size: 10px;
+          gap: 8px;
+          padding: 0 10px;
+        }
+        .app-header .app-title {
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+        }
+        .app-header button {
+          font-size: 10px;
+        }
+        .app-header .optional {
+          display: none;
+        }
+        .notes {
+          grid-template-columns: 1fr;
+          gap: 16px;
+        }
+        .status {
+          height: auto;
+          min-height: 35px;
+          line-height: 1.6;
+        }
+        .status .optional {
+          display: none;
+        }
+        .row-action {
+          opacity: 1;
+          pointer-events: auto;
+        }
+        .row-title {
+          font-size: 10px;
+        }
+        .picker {
+          top: 98px;
+        }
+        h1 {
+          font-size: 23px;
+        }
+        .intro p {
+          font-size: 11px;
+        }
+        .revision {
+          min-height: 66px;
+        }
+        .log-tip {
+          font-size: 9px;
+        }
+      }
+      @media (prefers-reduced-motion: no-preference) {
+        button {
+          transition:
+            background 0.12s,
+            border-color 0.12s;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="page">
+      <header class="intro">
+        <div>
+          <div class="eyebrow">jj-stamp / interaction studies</div>
+          <h1>A destination, not a different review.</h1>
+          <p class="muted">
+            Squash into the commit below by default. Pick another without losing
+            your place.
+          </p>
+        </div>
+        <span class="prototype"
+          >Interactive mockups · no repository writes</span
+        >
+      </header>
+      <nav class="options" aria-label="Design concepts">
+        <button class="option" data-concept="row" aria-pressed="true">
+          <b
+            >A · Direct row action
+            <small class="recommended">RECOMMENDED</small></b
+          ><span>Point at a commit. Set it as the destination.</span>
+        </button>
+        <button class="option" data-concept="mode" aria-pressed="false">
+          <b>B · Pick in the log</b
+          ><span>One explicit mode. A larger click target.</span>
+        </button>
+        <button class="option" data-concept="search" aria-pressed="false">
+          <b>C · Compact search picker</b
+          ><span>Find an older commit by title or change ID.</span>
+        </button>
+      </nav>
+      <div class="controls">
+        <span class="hint" id="try-hint"
+          >Try: hover a log row → Set destination → Reset.</span
+        ><label
+          >Example state
+          <select id="scenario" aria-label="Example state">
+            <option value="default">Immediate parent (default)</option>
+            <option value="custom">Older destination</option>
+            <option value="queued">Queue in progress</option>
+            <option value="hidden">Destination outside log filter</option>
+          </select></label
+        >
+      </div>
+      <section class="app" aria-label="Mock review workspace">
+        <header class="app-header">
+          <code class="blue">vqkqszmu</code
+          ><span class="app-title">Polish notification delivery</span
+          ><code class="commit muted">8b9d0e2714af</code
+          ><span class="green optional">+8 −4</span><span class="grow"></span
+          ><button type="button" data-demo="Go to">Go to</button
+          ><button type="button" class="optional" data-demo="Settings">
+            Settings
+          </button>
+        </header>
+        <div class="workspace">
+          <aside class="files" aria-label="Changed files">
+            <div class="heading">Files <span class="muted">3　 ‹</span></div>
+            <div class="file-tree">
+              <div class="muted">⌄ src</div>
+              <div class="file active">
+                notifications.ts <span class="green">+2</span>
+              </div>
+              <div class="file">
+                preferences.ts <span class="green">+2</span>
+              </div>
+              <div class="muted">⌄ tests</div>
+              <div class="file">notifications.test.ts</div>
+            </div>
+            <div class="footer-route">
+              <span class="blue">vqkqszmu</span> →
+              <span class="amber" id="footer-destination">pqxvqmoo</span>
+            </div>
+          </aside>
+          <section class="diff" aria-label="Source diff">
+            <div class="heading">
+              src/notifications.ts <span class="green">+2 −2</span
+              ><span class="diff-tools">Stacked　 Split</span>
+            </div>
+            <!-- Keep fixture code whitespace literal, like a real diff renderer. -->
+            <!-- prettier-ignore -->
+            <div class="diff-body">
+              <div class="context-bar">↑ 10　 17 unmodified lines</div>
+              <div class="line"><span class="ln">18</span><span><span class="syntax">const</span> RETRY_DELAY_MS = <span class="blue">500</span>;</span></div>
+              <div class="line"><span class="ln">19</span></div>
+              <div class="line"><span class="ln">20</span><span><span class="syntax">export function</span> <span class="call">formatSubject</span>(notification) {</span></div>
+              <div class="line del"><span class="ln">21</span><span>−  return notification.subject;</span></div>
+              <div class="line add sel"><span class="ln">21</span><span>+  return `[orbit] ${notification.subject.trim()}`;</span></div>
+              <div class="line"><span class="ln">22</span><span>}</span></div>
+              <div class="line"><span class="ln">23</span></div>
+              <div class="context-bar">↓ 10　 ↑ 10　 11 unmodified lines</div>
+              <div class="line"><span class="ln">36</span><span>  return { delivered: true, attempts: attempt };</span></div>
+              <div class="line"><span class="ln">37</span><span>} <span class="syntax">catch</span> (error) {</span></div>
+              <div class="line del"><span class="ln">39</span><span>−  await sleep(RETRY_DELAY_MS);</span></div>
+              <div class="line add sel"><span class="ln">39</span><span>+  await sleep(RETRY_DELAY_MS * attempt);</span></div>
+              <div class="line"><span class="ln">40</span><span>}</span></div>
+              <div class="line"><span class="ln">41</span></div>
+              <div class="line add sel"><span class="ln">42</span><span>+  logger.info('Delivery complete');</span></div>
+              <div class="context-bar">↓ 10</div>
+            </div>
+            <div class="diff-bottom">
+              <span
+                ><span class="blue">3 lines</span> selected
+                <span class="muted">→</span>
+                <code class="amber" id="selection-target">pqxvqmoo</code></span
+              ><button class="squash-button" id="squash-demo">
+                Squash selection
+              </button>
+            </div>
+          </section>
+          <aside class="log" aria-label="Revision log">
+            <div class="heading">
+              jj log <span>source ≠ destination　 ›</span>
+            </div>
+            <div class="destination-bar">
+              <div class="target-summary">
+                <span class="target-label">↓ Squash destination</span
+                ><code class="target-id" id="destination-id">pqxvqmoo</code
+                ><span class="default-note" id="destination-kind"
+                  >immediate parent</span
+                >
+              </div>
+              <div class="target-actions">
+                <button class="reset" id="reset" hidden>Reset</button
+                ><button id="change">Change…</button>
+              </div>
+            </div>
+            <div class="locked-banner" id="locked" hidden>
+              2 squash batches queued · destination locked until drained
+            </div>
+            <div class="hidden-target" id="outside" hidden>
+              ↓ <code>nukxtrvy</code> · Extract delivery transport<br /><span
+                class="muted"
+                >Outside current log filter · destination stays explicit</span
+              >
+            </div>
+            <div class="pick-banner" id="pick-banner" hidden>
+              <span>Choose a squash destination, not a review.</span
+              ><button id="cancel-pick">Cancel</button>
+            </div>
+            <div class="log-list" id="log-list"></div>
+            <div class="log-tip" id="log-tip">
+              <strong>Click an ID to review.</strong> Use the separate row
+              action to choose where selected lines go.
+            </div>
+            <section
+              class="picker"
+              id="picker"
+              aria-label="Choose squash destination"
+              hidden
+            >
+              <div class="picker-header">
+                <span>Choose squash destination</span
+                ><button
+                  id="close-picker"
+                  aria-label="Close destination picker"
+                >
+                  ×
+                </button>
+              </div>
+              <input
+                id="search"
+                aria-label="Search destinations"
+                placeholder="Search title or change ID…"
+                autocomplete="off"
+              />
+              <p class="picker-help">
+                Changing destination does not switch the reviewed commit.<br />Fixture
+                results only · ↑ / ↓ to navigate · Esc to cancel
+              </p>
+              <div class="results" id="results"></div>
+            </section>
+          </aside>
+        </div>
+        <footer class="status">
+          <span id="status" role="status" aria-live="polite"
+            >Ready · selected lines will move from vqkqszmu to pqxvqmoo</span
+          ><span class="optional">jj-stamp / orbit</span>
+        </footer>
+      </section>
+      <section class="notes" aria-label="Design rationale">
+        <article>
+          <h2 id="rationale-title">
+            <span class="number">01</span>Keep the log direct
+          </h2>
+          <p id="rationale">
+            The ID still opens a review. A separate “Set destination” action
+            appears on hover or keyboard focus, with the next older candidate
+            exposed for discoverability.
+          </p>
+        </article>
+        <article>
+          <h2><span class="number">02</span>Two roles, two treatments</h2>
+          <p>
+            Blue fill marks the source you are reviewing. An amber edge and
+            labeled badge mark the squash destination. The same ID appears
+            beside the squash action.
+          </p>
+        </article>
+        <article>
+          <h2><span class="number">03</span>A safe, visible default</h2>
+          <p>
+            Start with the immediate parent—not the next filtered row. Reset
+            restores it. Lock destination changes during queued work; explain
+            unavailable commits in place.
+          </p>
+        </article>
+      </section>
+    </main>
+    <script>
+      const revisions = [
+        { id: "vqkqszmu", title: "Polish notification delivery", source: true },
+        { id: "pqxvqmoo", title: "Add notification preferences", parent: true },
+        { id: "rwpxovrz", title: "Build notification delivery service" },
+        {
+          id: "ksuunvyp",
+          title: "Introduce notification types",
+          bookmark: "notifications",
+        },
+        {
+          id: "zzzzzzzz",
+          title: "Release notification foundation",
+          immutable: true,
+          bookmark: "main",
+        },
+      ];
+      const external = { id: "nukxtrvy", title: "Extract delivery transport" };
+      const byId = (id) => document.getElementById(id);
+      let concept = "row",
+        target = "pqxvqmoo",
+        picking = false,
+        queued = false,
+        pickerOpen = false;
+      const conceptCopy = {
+        row: [
+          "Try: hover a log row → Set destination → Reset.",
+          "Keep the log direct",
+          "The ID still opens a review. A separate “Set destination” action appears on hover or keyboard focus, with the next older candidate exposed for discoverability.",
+        ],
+        mode: [
+          "Try: Change… → pick an older row → Reset.",
+          "Make intent explicit",
+          "Change… temporarily turns the log into a destination picker. IDs stop navigating until you pick or cancel. The larger row click target helps avoid choosing the wrong action.",
+        ],
+        search: [
+          "Try: Change… → search “delivery” → choose a result.",
+          "Find targets without scrolling",
+          "A compact picker lives beside the destination summary. Search the fixture by title or change ID, including one commit outside the visible log. Choosing a result leaves the source diff in place.",
+        ],
+      };
+      function tell(text) {
+        byId("status").textContent = text;
+        byId("status").classList.remove("demo-toast");
+      }
+      function choose(id) {
+        const revision = [...revisions, external].find((r) => r.id === id);
+        if (queued || !revision || revision.source || revision.immutable)
+          return;
+        target = id;
+        picking = false;
+        pickerOpen = false;
+        render();
+        tell(
+          `Destination set to ${id} · still reviewing vqkqszmu · no squash performed`,
+        );
+        byId("change").focus();
+      }
+      function render() {
+        document
+          .querySelectorAll("[data-concept]")
+          .forEach((button) =>
+            button.setAttribute(
+              "aria-pressed",
+              button.dataset.concept === concept,
+            ),
+          );
+        const [hint, title, body] = conceptCopy[concept];
+        byId("try-hint").textContent = hint;
+        byId("rationale-title").replaceChildren();
+        const number = document.createElement("span");
+        number.className = "number";
+        number.textContent = "01";
+        byId("rationale-title").append(number, document.createTextNode(title));
+        byId("rationale").textContent = body;
+        byId("scenario").value = queued
+          ? "queued"
+          : target === external.id
+            ? "hidden"
+            : target === "pqxvqmoo"
+              ? "default"
+              : "custom";
+        byId("destination-id").textContent = target;
+        byId("destination-kind").textContent =
+          target === "pqxvqmoo" ? "immediate parent" : "custom";
+        byId("selection-target").textContent = target;
+        byId("footer-destination").textContent = target;
+        byId("reset").hidden = target === "pqxvqmoo";
+        byId("reset").disabled = queued;
+        byId("change").disabled = queued;
+        byId("change").textContent =
+          concept === "search"
+            ? "Change…"
+            : concept === "mode"
+              ? "Change…"
+              : "Pick in log";
+        byId("change").setAttribute(
+          "aria-expanded",
+          String(picking || pickerOpen),
+        );
+        byId("change").setAttribute(
+          "aria-controls",
+          concept === "search" ? "picker" : "log-list",
+        );
+        byId("locked").hidden = !queued;
+        byId("outside").hidden = target !== external.id;
+        byId("squash-demo").disabled = queued;
+        byId("pick-banner").hidden = !picking;
+        byId("picker").hidden = !pickerOpen;
+        byId("log-list").classList.toggle("picking", picking);
+        byId("log-list").replaceChildren();
+        revisions.forEach((revision, index) => {
+          const isTarget = revision.id === target;
+          const row = document.createElement("div");
+          row.className = `revision${revision.source ? " current" : ""}${isTarget ? " target" : ""}${concept === "row" && index === 2 ? " suggested" : ""}`;
+          row.dataset.revision = revision.id;
+          const graph = document.createElement("span");
+          graph.className = "graph";
+          graph.setAttribute("aria-hidden", "true");
+          graph.textContent = revision.source
+            ? "@\n│"
+            : revision.immutable
+              ? "◆"
+              : "○\n│";
+          row.append(graph);
+          const content = document.createElement("div");
+          content.className = "row-main";
+          const top = document.createElement("div");
+          top.className = "row-top";
+          const review = document.createElement("button");
+          review.className = "review-id";
+          review.textContent = revision.id;
+          review.setAttribute(
+            "aria-label",
+            `${picking ? "Choose destination" : "Review change"} ${revision.id}`,
+          );
+          review.disabled =
+            picking && (revision.source || revision.immutable || queued);
+          review.onclick = () =>
+            picking
+              ? choose(revision.id)
+              : tell(
+                  `Review navigation is not simulated · this mockup stays on vqkqszmu`,
+                );
+          top.append(review);
+          if (revision.source || isTarget) {
+            const badge = document.createElement("span");
+            badge.className = `role${isTarget ? " dest" : ""}`;
+            badge.textContent = revision.source
+              ? "REVIEWING"
+              : target === "pqxvqmoo"
+                ? "↓ DESTINATION · DEFAULT"
+                : "↓ DESTINATION";
+            top.append(badge);
+          } else if (revision.immutable) {
+            const note = document.createElement("span");
+            note.className = "row-note";
+            note.textContent = "Immutable · unavailable";
+            top.append(note);
+          } else if (concept === "row" || picking) {
+            const action = document.createElement("button");
+            action.className = "row-action";
+            action.textContent = picking ? "Choose" : "↓ Set destination";
+            action.disabled = queued;
+            action.setAttribute("aria-label", `Set destination ${revision.id}`);
+            action.onclick = () => choose(revision.id);
+            top.append(action);
+          }
+          content.append(top);
+          const title = document.createElement("div");
+          title.className = "row-title";
+          if (revision.bookmark) {
+            const bookmark = document.createElement("span");
+            bookmark.className = "pink";
+            bookmark.textContent = revision.bookmark + " | ";
+            title.append(bookmark);
+          }
+          title.append(document.createTextNode(revision.title));
+          content.append(title);
+          row.append(content);
+          if (picking && !revision.source && !revision.immutable) {
+            row.style.cursor = "pointer";
+            row.onclick = (event) => {
+              if (!event.target.closest("button")) choose(revision.id);
+            };
+          }
+          byId("log-list").append(row);
+        });
+        byId("log-tip").innerHTML = picking
+          ? "Choose a mutable commit. <strong>Esc cancels</strong> and leaves your destination unchanged."
+          : concept === "search"
+            ? "<strong>Click an ID to review.</strong> Use Change… to search for a different squash destination."
+            : "<strong>Click an ID to review.</strong> Use the separate destination control to choose where selected lines go.";
+        if (pickerOpen) renderResults();
+      }
+      function renderResults() {
+        const query = byId("search").value.trim().toLowerCase();
+        const matches = [...revisions, external].filter((r) =>
+          `${r.id} ${r.title}`.toLowerCase().includes(query),
+        );
+        byId("results").replaceChildren();
+        if (!matches.length) {
+          const empty = document.createElement("p");
+          empty.className = "no-results";
+          empty.textContent =
+            "No matching fixture commits. Try “delivery”, “types”, or a listed change ID.";
+          byId("results").append(empty);
+          return;
+        }
+        matches.forEach((revision) => {
+          const button = document.createElement("button");
+          button.className = "result";
+          button.disabled = !!(revision.source || revision.immutable);
+          button.setAttribute("aria-label", `Choose ${revision.id}`);
+          const text = document.createElement("span"),
+            id = document.createElement("b"),
+            title = document.createElement("span");
+          id.textContent = revision.id;
+          title.className = "result-title";
+          title.textContent = revision.title;
+          text.append(id, title);
+          const note = document.createElement("small");
+          note.textContent = revision.source
+            ? "Source"
+            : revision.immutable
+              ? "Immutable"
+              : revision.parent
+                ? "Default"
+                : revision.id === external.id
+                  ? "Outside log"
+                  : revision.id === target
+                    ? "Selected"
+                    : "Choose";
+          button.append(text, note);
+          button.onclick = () => choose(revision.id);
+          byId("results").append(button);
+        });
+      }
+      document.querySelectorAll("[data-concept]").forEach(
+        (button) =>
+          (button.onclick = () => {
+            concept = button.dataset.concept;
+            picking = false;
+            pickerOpen = false;
+            render();
+            tell(
+              `Concept ${concept === "row" ? "A" : concept === "mode" ? "B" : "C"} · destination remains ${target}`,
+            );
+          }),
+      );
+      byId("change").onclick = () => {
+        if (queued) return;
+        if (concept === "search") {
+          pickerOpen = !pickerOpen;
+          picking = false;
+          byId("search").value = "";
+          render();
+          if (pickerOpen) byId("search").focus();
+        } else {
+          picking = !picking;
+          pickerOpen = false;
+          render();
+          if (picking)
+            document.querySelector(".row-action:not(:disabled)")?.focus();
+        }
+      };
+      function cancel() {
+        const wasOpen = picking || pickerOpen;
+        picking = false;
+        pickerOpen = false;
+        render();
+        if (wasOpen) {
+          tell(`Destination unchanged · ${target}`);
+          byId("change").focus();
+        }
+      }
+      byId("cancel-pick").onclick = cancel;
+      byId("close-picker").onclick = cancel;
+      byId("reset").onclick = () => choose("pqxvqmoo");
+      byId("search").oninput = renderResults;
+      byId("picker").onkeydown = (event) => {
+        if (!["ArrowDown", "ArrowUp"].includes(event.key)) return;
+        event.preventDefault();
+        const buttons = [
+          ...byId("results").querySelectorAll("button:not(:disabled)"),
+        ];
+        if (!buttons.length) return;
+        const index = buttons.indexOf(document.activeElement),
+          step = event.key === "ArrowDown" ? 1 : -1;
+        buttons[
+          index < 0
+            ? step === 1
+              ? 0
+              : buttons.length - 1
+            : Math.max(0, Math.min(buttons.length - 1, index + step))
+        ].focus();
+      };
+      document.addEventListener("keydown", (event) => {
+        if (event.key === "Escape" && (picking || pickerOpen)) {
+          event.preventDefault();
+          cancel();
+        }
+      });
+      document.addEventListener("click", (event) => {
+        if (
+          pickerOpen &&
+          !event.target.closest("#picker") &&
+          !event.target.closest("#change")
+        )
+          cancel();
+      });
+      byId("scenario").onchange = () => {
+        const state = byId("scenario").value;
+        queued = state === "queued";
+        target =
+          state === "hidden"
+            ? external.id
+            : state === "custom" || queued
+              ? "rwpxovrz"
+              : "pqxvqmoo";
+        picking = false;
+        pickerOpen = false;
+        render();
+        tell(
+          queued
+            ? `Queue preview only · 2 batches pinned to ${target} · target controls locked`
+            : `Example loaded · destination ${target} · still reviewing vqkqszmu`,
+        );
+      };
+      byId("squash-demo").onclick = () =>
+        tell(
+          `Mockup only · would squash 3 selected lines from vqkqszmu into ${target} · no repository writes`,
+        );
+      document
+        .querySelectorAll("[data-demo]")
+        .forEach(
+          (button) =>
+            (button.onclick = () =>
+              tell(
+                `${button.dataset.demo} is outside this destination-selection mockup`,
+              )),
+        );
+      render();
+    </script>
+  </body>
+</html>
