@@ -753,7 +753,7 @@ kbd {
 }
 /* Keep settings spacing independent of the shared keyboard-shortcuts dialog. */
 .preferences-dialog {
-  width: min(480px, calc(100vw - 32px));
+  width: min(720px, calc(100vw - 32px));
   max-height: calc(100dvh - 32px);
   padding: 24px;
   font-size: calc(var(--font-size) + 3px);

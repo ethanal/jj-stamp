@@ -72,6 +72,13 @@ try {
   const settings = page.getByRole("dialog", { name: "Settings", exact: true });
   const input = settings.getByLabel("jj log revset", { exact: true });
   await expect(input).toHaveValue(defaultLogRevset);
+  await expect(settings).toHaveCSS("width", "720px");
+  for (const width of [600, 390, 320]) {
+    await page.setViewportSize({ width, height: 900 });
+    const box = await settings.boundingBox();
+    assert(box && box.x >= 16 && box.x + box.width <= width - 16);
+  }
+  await page.setViewportSize({ width: 1440, height: 900 });
   await input.fill("broken(");
   await settings.getByRole("button", { name: "Apply", exact: true }).click();
   await expect(settings.getByRole("alert")).toHaveText("Invalid revset");
