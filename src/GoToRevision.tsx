@@ -275,7 +275,7 @@ export function GoToRevision({
               ref={input}
               id={`${id}-input`}
               value={value}
-              placeholder="Enter an ID or revset, e.g. @-"
+              placeholder="Enter an ID or revset"
               autoComplete="off"
               autoCapitalize="off"
               spellCheck={false}

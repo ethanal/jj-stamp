@@ -788,25 +788,56 @@ exec '${jjPath}' "$@"
 }
 
 test(
-  "default port is reused across launches and falls back only while occupied",
+  "default launches fall back while occupied and reuse the default when available",
   { timeout: 60_000 },
   async (t) => {
     const box = await sandbox(t);
     const repo = await createDemo(box.root);
     const args = ["--repository", repo, "--no-open"];
+    // Own the occupied default when possible, but never disturb an existing
+    // service. Shared development/CI hosts need not have a free port 8000.
+    const occupied = http.createServer();
+    const closeOccupied = async () => {
+      if (occupied.listening)
+        await new Promise<void>((resolve, reject) =>
+          occupied.close((error) => (error ? reject(error) : resolve())),
+        );
+    };
+    t.after(closeOccupied);
+    try {
+      await new Promise<void>((resolve, reject) => {
+        occupied.once("error", reject);
+        occupied.listen(DEFAULT_PORT, "127.0.0.1", resolve);
+      });
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EADDRINUSE") throw error;
+    }
     const first = box.start(args);
     const firstUrl = await first.url();
-    assert.equal(new URL(firstUrl).port, String(DEFAULT_PORT));
+    assert.notEqual(new URL(firstUrl).port, String(DEFAULT_PORT));
+    assert.equal((await request(firstUrl, "/api/state")).status, 200);
     // A second session must not fail or take over the first listener.
     const fallback = box.start(args);
     const fallbackUrl = await fallback.url();
     assert.notEqual(new URL(fallbackUrl).port, String(DEFAULT_PORT));
+    assert.notEqual(fallbackUrl, firstUrl);
     assert.equal((await request(fallbackUrl, "/api/state")).status, 200);
     await fallback.stop("SIGTERM");
     await first.stop("SIGTERM");
-    const restarted = box.start(args);
-    assert.equal(await restarted.url(), firstUrl);
-    await restarted.stop("SIGTERM");
+    if (occupied.listening) {
+      await closeOccupied();
+      const available = box.start(args);
+      const availableUrl = await available.url();
+      assert.equal(new URL(availableUrl).port, String(DEFAULT_PORT));
+      await available.stop("SIGTERM");
+      const restarted = box.start(args);
+      assert.equal(await restarted.url(), availableUrl);
+      await restarted.stop("SIGTERM");
+    } else {
+      t.diagnostic(
+        "Port 8000 is externally occupied; default-port reuse is covered by isolated HTTP tests.",
+      );
+    }
     // Explicit zero still asks the OS for an ephemeral port.
     const ephemeral = box.start([...args, "--port", "0"]);
     assert.notEqual(new URL(await ephemeral.url()).port, String(DEFAULT_PORT));
