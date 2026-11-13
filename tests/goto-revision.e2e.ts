@@ -17,8 +17,8 @@ const fixture = await createBrowserFixture({
   entry: "/tests/goto-revision.fixture.tsx",
 });
 const { page, url, errors } = fixture;
-const trigger = page.getByRole("button", { name: "Go to", exact: true });
-const dialog = page.getByRole("dialog", { name: "Go to revision" });
+const trigger = page.getByRole("button", { name: "View commit", exact: true });
+const dialog = page.getByRole("dialog", { name: "View commit" });
 const input = page.getByRole("textbox", { name: "ID or revset" });
 const previous = page.locator("#previous");
 const surface = page.locator(".code-surface");
@@ -28,7 +28,7 @@ try {
   await page.goto(url);
   await expect(page.locator("[data-line]").first()).toBeVisible();
   await previous.focus();
-  await page.keyboard.press("g");
+  await page.keyboard.press("c");
   await expect(input).toBeFocused();
   await expect(input).toHaveAttribute("placeholder", "Enter an ID or revset");
   await input.fill("  abc123  ");
@@ -95,17 +95,17 @@ try {
     await input.press("Escape");
   }
 
-  // Typing, modifiers, composing input, and modal dialogs never invoke g.
+  // Typing, modifiers, composing input, and modal dialogs never invoke c.
   for (const target of [
     page.getByRole("textbox", { name: "Other input" }),
     page.getByLabel("Editable text"),
   ]) {
     await target.focus();
-    await page.keyboard.press("g");
+    await page.keyboard.press("c");
     await expect(dialog).toHaveCount(0);
   }
   await previous.focus();
-  for (const key of ["Control+g", "Meta+g", "Alt+g", "Shift+g"]) {
+  for (const key of ["Control+c", "Meta+c", "Alt+c", "Shift+c"]) {
     await page.keyboard.press(key);
     await expect(dialog).toHaveCount(0);
   }
@@ -117,7 +117,7 @@ try {
     ])
       element.dispatchEvent(
         new KeyboardEvent("keydown", {
-          key: "g",
+          key: "c",
           bubbles: true,
           cancelable: true,
           ...options,
@@ -130,7 +130,7 @@ try {
     .evaluate((element) => {
       (element as HTMLDialogElement).showModal();
     });
-  await page.keyboard.press("g");
+  await page.keyboard.press("c");
   await expect(dialog).toHaveCount(0);
   await page
     .getByRole("dialog", { name: "Other modal" })
@@ -140,39 +140,47 @@ try {
   await page.evaluate(() => window.gotoFixture.setDisabled(true));
   await expect(trigger).toBeDisabled();
   await previous.focus();
-  await page.keyboard.press("g");
+  await page.keyboard.press("c");
   await expect(dialog).toHaveCount(0);
   await page.evaluate(() => window.gotoFixture.setDisabled(false));
+  await expect(trigger).toBeEnabled();
 
-  // Actual CodeDiff handles gg whether its bubbling listener precedes ours or
-  // not. A lone g opens after the prefix window and restores the code surface.
-  await page.evaluate(() => window.gotoFixture.setVimMode(true));
-  await expect(surface).toHaveAttribute("aria-description", /Vim mode/);
-  await surface.focus();
-  await page.keyboard.press("Shift+G");
-  await expect(cursor).toHaveAttribute("data-line", "8");
-  await page.keyboard.press("g");
-  await page.keyboard.press("g");
-  await expect(cursor).toHaveAttribute("data-line", "1");
-  await page.waitForTimeout(400);
-  await expect(dialog).toHaveCount(0);
-  await page.keyboard.press("g");
-  await expect(input).toBeFocused();
-  await input.press("Escape");
-  await expect(surface).toBeFocused();
-  await page.keyboard.press("g");
-  await page.keyboard.press("j");
-  await page.waitForTimeout(400);
-  await expect(dialog).toHaveCount(0);
-  await page.keyboard.press("g");
-  await previous.click();
-  await page.waitForTimeout(400);
-  await expect(dialog).toHaveCount(0);
-  await page.keyboard.press("g");
-  await page.evaluate(() => window.gotoFixture.setDisabled(true));
-  await page.waitForTimeout(400);
-  await expect(dialog).toHaveCount(0);
-  await page.evaluate(() => window.gotoFixture.setDisabled(false));
+  // c opens without advancing the clock in either mode. g is now reserved
+  // for Vim: even a slow gg still reaches CodeDiff without opening a popover.
+  await page.clock.install();
+  await page.clock.pauseAt(new Date());
+  for (const vimMode of [false, true]) {
+    await page.evaluate(
+      (enabled) => window.gotoFixture.setVimMode(enabled),
+      vimMode,
+    );
+    if (vimMode)
+      await expect(surface).toHaveAttribute("aria-description", /Vim mode/);
+    else
+      await expect(surface).not.toHaveAttribute("aria-description", /Vim mode/);
+    await surface.focus();
+    if (vimMode) {
+      await page.keyboard.press("Shift+G");
+      await expect(cursor).toHaveAttribute("data-line", "8");
+    }
+    await page.keyboard.press("g");
+    await page.clock.runFor(1000);
+    await expect(dialog).toHaveCount(0);
+    await expect(surface).toBeFocused();
+    if (vimMode) {
+      await expect(cursor).toHaveAttribute("data-line", "8");
+      await page.keyboard.press("g");
+      await expect(cursor).toHaveAttribute("data-line", "1");
+      await expect(dialog).toHaveCount(0);
+    }
+    await page.keyboard.press("c");
+    await expect(input).toBeFocused();
+    await page.keyboard.type("@-");
+    await expect(input).toHaveValue("@-");
+    await input.press("Escape");
+    await expect(surface).toBeFocused();
+  }
+  await page.clock.resume();
 
   // Escape works while parent-disabled; a late result cannot resurrect the form.
   await trigger.click();
@@ -201,7 +209,7 @@ try {
   await expect(trigger).toBeEnabled();
   await expect(trigger).toBeFocused();
   assert.deepEqual(errors, []);
-  console.log("Go to revision component keyboard and async regressions passed");
+  console.log("View commit component keyboard and async regressions passed");
 } finally {
   await fixture.close();
 }

@@ -490,7 +490,7 @@ try {
     }
   }
 
-  // Disabling removes Vim motions; g now opens Go to immediately.
+  // Disabling removes Vim motions; only c opens View commit.
   await settings.click();
   await vim.uncheck();
   await page.keyboard.press("Escape");
@@ -499,13 +499,17 @@ try {
   await page.keyboard.press("g");
   await page.keyboard.press("Shift+G");
   await expect(cursor()).toHaveCount(0);
+  await expect(page.getByRole("dialog", { name: "View commit" })).toHaveCount(
+    0,
+  );
+  await page.keyboard.press("c");
+  await page.keyboard.press("g");
+  await page.keyboard.press("Shift+G");
   await expect(page.getByRole("textbox", { name: "ID or revset" })).toHaveValue(
     "gG",
   );
   await page.keyboard.press("Escape");
-  await expect(
-    page.getByRole("dialog", { name: "Go to revision" }),
-  ).toBeHidden();
+  await expect(page.getByRole("dialog", { name: "View commit" })).toBeHidden();
   await page.keyboard.press("l");
   await expect(
     page.getByRole("button", { name: "Expand log sidebar" }),
