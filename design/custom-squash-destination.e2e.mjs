@@ -13,6 +13,18 @@ await writeFile(
   ".planka-artifacts/index.html",
   html.replace("../src/fonts/SourceCodePro.ttf", "SourceCodePro.ttf"),
 );
+// Shelley iframes cannot fetch sibling files. Embed the same local font so the
+// interactive presentation preserves graph metrics without network requests.
+const font = await readFile(
+  new URL("../src/fonts/SourceCodePro.ttf", import.meta.url),
+);
+await writeFile(
+  ".planka-artifacts/interactive-mockups.html",
+  html.replace(
+    "../src/fonts/SourceCodePro.ttf",
+    `data:font/ttf;base64,${font.toString("base64")}`,
+  ),
+);
 await copyFile(
   new URL("../src/fonts/SourceCodePro.ttf", import.meta.url),
   ".planka-artifacts/SourceCodePro.ttf",
@@ -123,10 +135,6 @@ try {
   );
   await expect(page.locator("#reset")).toBeHidden();
   await expect(source).toHaveText("vqkqszmu");
-  await page.screenshot({
-    path: ".planka-artifacts/a-default.png",
-    fullPage: true,
-  });
 
   // A: explicit row action changes only the destination, not the source/selection.
   await page
@@ -139,8 +147,10 @@ try {
   await expect(page.locator(".line.sel")).toHaveCount(3);
   await expect(page.locator(".revision.target .role")).toHaveText("[target]");
   await expectCompactGraph(page);
+  // Present the selected target and the independent inline action together.
+  await page.locator('[data-revision="pqxvqmoo"]').hover();
   await page.screenshot({
-    path: ".planka-artifacts/a-custom.png",
+    path: ".planka-artifacts/option-a-inline-log-action.png",
     fullPage: true,
   });
   await page.getByRole("button", { name: "Reset", exact: true }).click();
@@ -176,7 +186,7 @@ try {
     }),
   ).toBeDisabled();
   await page.screenshot({
-    path: ".planka-artifacts/b-pick-mode.png",
+    path: ".planka-artifacts/option-b-choose-in-log.png",
     fullPage: true,
   });
   await page.keyboard.press("Escape");
@@ -190,6 +200,7 @@ try {
 
   // C: fixture search, unavailable rows, empty results, keyboard selection, external target.
   await page.locator('[data-concept="search"]').click();
+  await page.getByRole("button", { name: "Reset", exact: true }).click();
   await expectCompactGraph(page);
   await page.locator("#change").click();
   await expect(page.locator("#search")).toBeFocused();
@@ -204,7 +215,7 @@ try {
   await page.locator("#search").fill("delivery");
   await expect(page.locator(".result")).toHaveCount(3);
   await page.screenshot({
-    path: ".planka-artifacts/c-search.png",
+    path: ".planka-artifacts/option-c-search-destination.png",
     fullPage: true,
   });
   await page.keyboard.press("ArrowDown");
@@ -254,6 +265,17 @@ try {
     true,
   );
   await expect(page.locator("#destination-id")).toHaveText("pqxvqmoo");
+  // Exercise the same self-contained document displayed by output_iframe.
+  await page.goto(
+    new URL("../.planka-artifacts/interactive-mockups.html", import.meta.url)
+      .href,
+  );
+  await page.evaluate(() => document.fonts.ready);
+  assert.equal(
+    await page.evaluate(() => document.fonts.check("13px Source")),
+    true,
+  );
+  await expectCompactGraph(page);
   await page
     .getByRole("button", { name: "Set destination rwpxovrz", exact: true })
     .click();
@@ -282,10 +304,7 @@ try {
     .getByRole("button", { name: "Choose ksuunvyp", exact: true })
     .click();
   await expect(page.locator("#destination-id")).toHaveText("ksuunvyp");
-  await page.screenshot({
-    path: ".planka-artifacts/mobile.png",
-    fullPage: true,
-  });
+
   assert.deepEqual(errors, [], "no uncaught browser errors");
   assert.deepEqual(
     requests,

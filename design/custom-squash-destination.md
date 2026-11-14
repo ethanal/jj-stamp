@@ -92,8 +92,19 @@ From the repository root, with npm dependencies and Playwright Chromium installe
 node design/custom-squash-destination.e2e.mjs
 ```
 
-The check generates a standalone HTML/font bundle and five PNGs in the ignored
-`.planka-artifacts/` directory. It checks all three selection paths, source and
+The check generates a standalone HTML/font bundle, a self-contained
+`interactive-mockups.html` for Shelley's `output_iframe`, and three browser
+screenshots in the ignored `.planka-artifacts/` directory:
+
+- `option-a-inline-log-action.png`: a custom target selected in the compact log.
+- `option-b-choose-in-log.png`: explicit log-picking mode with the parent default.
+- `option-c-search-destination.png`: the searchable destination picker.
+
+Attach these screenshots directly to the ticket for comparison; present the
+interactive document using `output_iframe` in the linked Shelley conversation.
+Raw HTML/sandbox links are not an interactive preview inside Planka.
+
+The check exercises both HTML bundles, all three selection paths, source and
 line-selection preservation, default/reset, cancellation and focus return,
 keyboard controls, unavailable candidates, search/no results, queued-work locks,
 off-filter destinations, narrow layout, and standalone preview interaction.
