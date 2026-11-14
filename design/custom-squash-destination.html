@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>jj-stamp · Squash destination arrow</title>
+    <title>jj-stamp · Following a squash destination revset</title>
     <style>
       @font-face {
         font-family: Source;
@@ -338,59 +338,67 @@
         font-size: 10px;
       }
       .destination-bar {
-        min-height: 32px;
+        min-height: 39px;
         padding: 5px 12px;
         display: flex;
         align-items: center;
-        gap: 10px;
+        gap: 8px;
         border-bottom: 1px solid var(--border);
-        background: #1c2026;
       }
-      .target-summary {
-        min-width: 0;
-        flex: 1;
+      .destination-bar label {
+        color: var(--muted);
+        font-size: 10px;
         white-space: nowrap;
       }
-      .target-label {
-        color: var(--muted);
-        font-size: 10px;
-        margin-right: 6px;
+      .destination-bar input {
+        min-width: 0;
+        flex: 1;
+        width: 12ch;
+        max-width: 190px;
+        height: 27px;
+        padding: 3px 7px;
+        border: 1px solid #4c5968;
+        border-radius: 4px;
+        color: var(--fg);
+        background: var(--bg);
+        font: inherit;
+      }
+      .destination-bar input[aria-invalid="true"] {
+        border-color: #c18c66;
+      }
+      .destination-bar input:disabled {
+        opacity: 0.65;
       }
       .target-id {
-        font-size: 12px;
+        font-size: 11px;
         color: var(--amber);
+        white-space: nowrap;
       }
-      .target-summary .default-note {
+      .destination-bar button {
         font-size: 10px;
-        color: var(--muted);
-        margin-left: 6px;
-      }
-      .target-actions {
-        display: flex;
-        gap: 6px;
-        align-items: center;
-      }
-      .target-actions button {
-        font-size: 10px;
-        padding: 5px 8px;
+        padding: 5px 7px;
       }
       .reset {
         border-color: transparent;
         background: transparent !important;
         color: var(--muted);
       }
-      .pick-banner {
-        padding: 10px 12px;
-        border-bottom: 1px solid #526e86;
-        background: #182b3c;
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        font-size: 11px;
-        color: #c8e4fc;
-      }
-      .pick-banner button {
+      .revset-error {
+        padding: 8px 12px;
+        color: #e6b192;
+        background: #32271f;
+        border-bottom: 1px solid #63432e;
         font-size: 10px;
+        line-height: 1.6;
+      }
+      .demo-controls {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 10px;
+      }
+      .demo-controls button {
+        font-size: 11px;
       }
       /* Match the production jj log: one unwrapped monospace line per row.
          Annotations and actions must never change the graph's cell metrics. */
@@ -455,9 +463,6 @@
       .current .row-title {
         color: #e2eff9;
       }
-      .revision.candidate:not(.target) {
-        background: #242a31;
-      }
       .log-viewport {
         position: relative;
         display: flex;
@@ -501,17 +506,6 @@
       }
       .route-handle.preview .route-shaft {
         stroke-dasharray: 3 2;
-      }
-      .pick-banner {
-        gap: 8px;
-        padding: 6px 12px;
-        font-size: 10px;
-      }
-      .pick-banner > span {
-        flex: 1;
-      }
-      .pick-banner button {
-        padding: 4px 6px;
       }
       .log-tip {
         font-size: 10px;
@@ -559,85 +553,6 @@
       .notes .number {
         color: var(--blue);
         margin-right: 7px;
-      }
-      .picker {
-        position: absolute;
-        right: 10px;
-        top: 74px;
-        width: min(430px, calc(100% - 20px));
-        padding: 13px;
-        background: #1b222b;
-        border: 1px solid #637184;
-        border-radius: 6px;
-        box-shadow: 0 14px 40px #0008;
-        z-index: 2;
-      }
-      .picker-header {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        font-size: 12px;
-        margin-bottom: 12px;
-      }
-      .picker-header button {
-        padding: 1px 6px;
-        color: var(--muted);
-      }
-      .picker input {
-        width: 100%;
-        height: 34px;
-        background: var(--bg);
-        color: var(--fg);
-        border: 1px solid #637184;
-        border-radius: 4px;
-        padding: 7px 10px;
-        font-size: 11px;
-      }
-      .picker-help {
-        color: var(--muted);
-        font-size: 10px;
-        line-height: 1.6;
-        margin: 10px 0;
-      }
-      .results {
-        display: grid;
-        gap: 3px;
-        max-height: 240px;
-        overflow: auto;
-      }
-      .result {
-        text-align: left;
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        gap: 10px;
-        padding: 9px 8px;
-        font-size: 10px;
-      }
-      .result b {
-        color: var(--blue);
-        font-weight: 400;
-      }
-      .result .result-title {
-        display: block;
-        color: var(--muted);
-        margin-top: 5px;
-      }
-      .result small {
-        font-size: 9px;
-        color: var(--muted);
-      }
-      .result:disabled b {
-        color: var(--muted);
-      }
-      .no-results {
-        padding: 15px 3px;
-        color: var(--muted);
-        font-size: 11px;
-        line-height: 1.7;
-      }
-      .demo-toast {
-        color: var(--blue) !important;
       }
       .locked-banner {
         padding: 9px 12px;
@@ -744,9 +659,6 @@
         .status .optional {
           display: none;
         }
-        .picker {
-          top: 74px;
-        }
         h1 {
           font-size: 23px;
         }
@@ -771,10 +683,10 @@
       <header class="intro">
         <div>
           <div class="eyebrow">jj-stamp / interaction studies</div>
-          <h1>Follow the arrow. Choose where it lands.</h1>
+          <h1>Save the expression. Let the destination follow.</h1>
           <p class="muted">
-            A quiet arrow connects source to destination. Click it to choose
-            another commit, without changing the review.
+            A revset stays in the field. Its resolved commit and the margin
+            arrow update when the working copy moves.
           </p>
         </div>
         <span class="prototype"
@@ -784,30 +696,35 @@
       <nav class="options" aria-label="Interaction walkthrough">
         <button class="option" data-view="default" aria-pressed="true">
           <b>1 · Parent by default</b
-          ><span>The arrow lands on the immediate parent.</span>
-        </button>
-        <button class="option" data-view="picking" aria-pressed="false">
-          <b>2 · Click the arrow to choose</b
-          ><span>Point at a row. Click or press Enter to set it.</span>
+          ><span>@- initially resolves to the commit below.</span>
         </button>
         <button class="option" data-view="custom" aria-pressed="false">
-          <b>3 · A different destination</b
-          ><span>The arrow moves. Your review stays put.</span>
+          <b>2 · Enter a revset</b
+          ><span>Apply @--, resolving to exactly one commit.</span>
+        </button>
+        <button class="option" data-view="following" aria-pressed="false">
+          <b>3 · It follows @</b
+          ><span>The same @-- expression resolves again after a move.</span>
         </button>
       </nav>
       <div class="controls">
         <span class="hint" id="try-hint"
-          >Try: click the amber arrow → click another commit.</span
-        ><label
-          >Example state
-          <select id="scenario" aria-label="Example state">
-            <option value="default">Immediate parent (default)</option>
-            <option value="picking">Choosing another commit</option>
-            <option value="custom">Older destination</option>
-            <option value="queued">Queue in progress</option>
-            <option value="hidden">Destination outside log filter</option>
-          </select></label
+          >Try: enter @-- → Enter → Move @ (demo).</span
         >
+        <div class="demo-controls">
+          <button id="move-working-copy">Move @ (demo)</button
+          ><label
+            >Example state
+            <select id="scenario" aria-label="Example state">
+              <option value="default">Immediate parent (default)</option>
+              <option value="custom">Applied @--</option>
+              <option value="following">After @ moves</option>
+              <option value="invalid">Multiple matches</option>
+              <option value="queued">Queue in progress</option>
+              <option value="hidden">Target outside log filter</option>
+            </select>
+          </label>
+        </div>
       </div>
       <section class="app" aria-label="Mock review workspace">
         <header class="app-header">
@@ -877,41 +794,55 @@
           </section>
           <aside class="log" aria-label="Revision log">
             <div class="heading">jj log <span>›</span></div>
-            <div class="destination-bar">
-              <div class="target-summary">
-                <span class="target-label">Squash →</span
-                ><code class="target-id" id="destination-id">pqxvqmoo</code
-                ><span class="default-note" id="destination-kind"
-                  >immediate parent</span
-                >
-              </div>
-              <div class="target-actions">
-                <button class="reset" id="reset" hidden>Reset</button
-                ><button id="change">Change…</button>
-              </div>
-            </div>
+            <form
+              class="destination-bar"
+              id="revset-form"
+              aria-label="Squash destination"
+            >
+              <label for="destination-revset">Squash into</label>
+              <input
+                id="destination-revset"
+                value="@-"
+                aria-label="Destination revset"
+                aria-describedby="revset-error log-tip"
+                aria-invalid="false"
+                autocomplete="off"
+                spellcheck="false"
+              />
+              <span class="muted" aria-hidden="true">→</span
+              ><output
+                class="target-id"
+                id="destination-id"
+                aria-label="Resolved destination ID"
+                >pqxvqmoo</output
+              >
+              <button id="apply-revset" type="submit" hidden>Apply</button
+              ><button class="reset" id="reset" type="button" hidden>
+                Reset
+              </button>
+            </form>
+            <div
+              class="revset-error"
+              id="revset-error"
+              role="status"
+              aria-live="polite"
+              hidden
+            ></div>
             <div class="locked-banner" id="locked" hidden>
-              2 squash batches queued · destination locked until drained
+              2 squash batches queued · destination pinned until drained
             </div>
             <div class="hidden-target" id="outside" hidden>
-              ↓ <code>nukxtrvy</code> · Extract delivery transport<br /><span
-                class="muted"
-                >Outside current log filter · destination stays explicit</span
-              >
-            </div>
-            <div class="pick-banner" id="pick-banner" hidden>
-              <span>Pick a row · ↑ / ↓ then Enter · Esc cancels</span>
-              <button id="find">Search…</button
-              ><button id="cancel-pick">Cancel</button>
+              Resolved target is outside the log filter. The revset remains
+              active.
             </div>
             <div class="log-viewport" id="log-viewport">
               <div class="route-gutter">
                 <button
                   id="route-handle"
                   class="route-handle"
-                  aria-label="Change squash destination"
-                  aria-controls="log-list"
-                  title="Change squash destination"
+                  aria-label="Edit destination revset"
+                  aria-controls="destination-revset"
+                  title="Edit destination revset"
                 >
                   <svg
                     id="route-svg"
@@ -947,33 +878,6 @@
               <strong>Click an ID to review.</strong> Use the separate row
               action to choose where selected lines go.
             </div>
-            <section
-              class="picker"
-              id="picker"
-              aria-label="Choose squash destination"
-              hidden
-            >
-              <div class="picker-header">
-                <span>Choose squash destination</span
-                ><button
-                  id="close-picker"
-                  aria-label="Close destination picker"
-                >
-                  ×
-                </button>
-              </div>
-              <input
-                id="search"
-                aria-label="Search destinations"
-                placeholder="Search title or change ID…"
-                autocomplete="off"
-              />
-              <p class="picker-help">
-                Changing destination does not switch the reviewed commit.<br />Fixture
-                results only · ↑ / ↓ to navigate · Esc to cancel
-              </p>
-              <div class="results" id="results"></div>
-            </section>
           </aside>
         </div>
         <footer class="status">
@@ -984,29 +888,27 @@
       </section>
       <section class="notes" aria-label="Design rationale">
         <article>
-          <h2 id="rationale-title">
-            <span class="number">01</span>Keep the log direct
-          </h2>
-          <p id="rationale">
-            The ID still opens a review. Click the amber arrow (or Change…) to
-            choose a destination. Then click a commit row. No dragging, no
-            modifier keys, and no immediate squash.
+          <h2><span class="number">01</span>Save a rule, not an ID</h2>
+          <p>
+            Enter a revset and press Enter. It must resolve to exactly one
+            eligible commit. A dashed arrow previews edits; applying makes it
+            solid. A change ID works too, for a fixed target.
           </p>
         </article>
         <article>
-          <h2><span class="number">02</span>Less ink, same relationship</h2>
+          <h2><span class="number">02</span>@ is the working copy</h2>
           <p>
-            Keep the destination tint, but remove the stripe and role labels. A
-            thin arrow in the existing left margin connects the blue source to
-            its amber destination. Normal monospace rows stay untouched.
+            @-- means two parents behind @, not behind the selected review. Move
+            @ in the demo: the expression stays @-- while its resolved ID and
+            the arrow change. Your review stays pinned.
           </p>
         </article>
         <article>
-          <h2><span class="number">03</span>A safe, visible default</h2>
+          <h2><span class="number">03</span>No silent fallback</h2>
           <p>
-            Start with the immediate parent—not the next filtered row. Reset
-            restores it. Lock destination changes during queued work; explain
-            unavailable commits in place.
+            Zero matches, multiple matches, or an ineligible target block
+            squash. Queued batches keep their pinned destination; a moving
+            expression never reroutes work already accepted.
           </p>
         </article>
       </section>
@@ -1014,7 +916,7 @@
     <script>
       const revisions = [
         { id: "vqkqszmu", title: "Polish notification delivery", source: true },
-        { id: "pqxvqmoo", title: "Add notification preferences", parent: true },
+        { id: "pqxvqmoo", title: "Add notification preferences" },
         { id: "rwpxovrz", title: "Build notification delivery service" },
         {
           id: "ksuunvyp",
@@ -1028,56 +930,95 @@
           bookmark: "main",
         },
       ];
+      const newWorkingCopy = {
+        id: "xmturvkn",
+        title: "Continue notification work",
+      };
       const external = { id: "nukxtrvy", title: "Extract delivery transport" };
       const byId = (id) => document.getElementById(id);
-      const eligible = revisions.filter((r) => !r.source && !r.immutable);
-      let target = "pqxvqmoo",
-        candidate = target,
-        picking = false,
+      let moved = false,
         queued = false,
-        pickerOpen = false;
+        applied = "@-",
+        pinned = null;
+      const graphRevisions = () =>
+        moved ? [newWorkingCopy, ...revisions] : revisions;
+      const defaultRevset = () => (moved ? "vqkqszmu-" : "@-");
+      // This is deliberately a fixture resolver, NOT a jj revset parser. Real
+      // validation must be performed by jj against one captured operation.
+      function resolve(expression) {
+        const value = expression.trim(),
+          graph = graphRevisions();
+        if (!value)
+          return {
+            error: "Enter a revset that resolves to exactly one commit.",
+          };
+        if (value.includes("—") || value.includes("–"))
+          return {
+            error: "Use ASCII hyphens, for example @-- (two parent steps).",
+          };
+        let matches;
+        if (/^@-*$/.test(value))
+          matches = [graph[value.length - 1]].filter(Boolean);
+        else if (value === "all()") matches = graph;
+        else if (value === "none()") matches = [];
+        else if (["vqkqszmu-", "parents(vqkqszmu)"].includes(value))
+          matches = [revisions[1]];
+        else if ([...graph, external].some((r) => r.id === value))
+          matches = [...graph, external].filter((r) => r.id === value);
+        else
+          return {
+            error:
+              "Not a supported fixture expression. Try @-, @--, a listed ID, all(), or none().",
+          };
+        if (matches.length !== 1)
+          return {
+            error: `Resolved to ${matches.length} commits. Expected exactly one; squash is blocked.`,
+          };
+        const revision = matches[0];
+        if (revision.source)
+          return {
+            error: `Resolves to the reviewed source ${revision.id}. Choose a different destination.`,
+          };
+        if (revision.immutable)
+          return {
+            error: `Resolved commit ${revision.id} is immutable. Squash is blocked.`,
+          };
+        if (revision.id === newWorkingCopy.id)
+          return {
+            error:
+              "This fixture only offers older ancestors as squash destinations.",
+          };
+        return { id: revision.id };
+      }
       function tell(text) {
         byId("status").textContent = text;
       }
-      function choose(id) {
-        const revision = [...revisions, external].find((r) => r.id === id);
-        if (queued || !revision || revision.source || revision.immutable)
-          return;
-        target = candidate = id;
-        picking = pickerOpen = false;
-        render();
-        tell(
-          `Destination set to ${id} · still reviewing vqkqszmu · no squash performed`,
-        );
-        byId("change").focus();
+      function currentResult() {
+        return queued ? pinned : resolve(byId("destination-revset").value);
       }
-      // Keep the SVG entirely in the existing 20px margin. Its endpoints follow
-      // actual row centers, not an assumed font/line-height or array index.
+      function dirty() {
+        return byId("destination-revset").value !== applied;
+      }
       function drawRoute() {
+        const result = currentResult(),
+          handle = byId("route-handle");
         const sourceRow = document.querySelector(".revision.current");
         const destinationRow = [...document.querySelectorAll(".revision")].find(
-          (row) => row.dataset.revision === (picking ? candidate : target),
+          (row) => row.dataset.revision === result.id,
         );
-        const handle = byId("route-handle");
-        handle.hidden = !sourceRow || !destinationRow;
+        handle.hidden = !result.id || !sourceRow || !destinationRow;
         if (handle.hidden) return;
         const viewport = byId("log-viewport").getBoundingClientRect();
         const source = sourceRow.getBoundingClientRect(),
           destination = destinationRow.getBoundingClientRect();
         const sourceY = source.top + source.height / 2,
           destinationY = destination.top + destination.height / 2;
-        // Fixture destinations are older ancestors, below the reviewed source.
         const delta = destinationY - sourceY,
           height = delta + 12;
         handle.style.top = `${sourceY - viewport.top - 6}px`;
         handle.style.height = `${height}px`;
-        handle.classList.toggle("preview", picking);
+        handle.classList.toggle("preview", dirty());
         handle.disabled = queued;
-        handle.setAttribute("aria-expanded", String(picking));
-        handle.setAttribute(
-          "aria-label",
-          `Change squash destination, currently ${target}`,
-        );
         byId("route-svg").setAttribute("viewBox", `0 0 18 ${height}`);
         byId("route-shaft").setAttribute(
           "d",
@@ -1087,70 +1028,16 @@
           "d",
           `M12 ${delta + 3} L16 ${delta + 6} L12 ${delta + 9}`,
         );
-        handle.dataset.sourceY = sourceY;
-        handle.dataset.destinationY = destinationY;
-        handle.dataset.destination = picking ? candidate : target;
-      }
-      function preview(id) {
-        if (!picking || queued || !eligible.some((r) => r.id === id)) return;
-        candidate = id;
-        document
-          .querySelectorAll(".revision")
-          .forEach((row) =>
-            row.classList.toggle(
-              "candidate",
-              row.dataset.revision === candidate,
-            ),
-          );
-        drawRoute();
-      }
-      function beginPick() {
-        if (queued) return;
-        picking = true;
-        pickerOpen = false;
-        candidate = eligible.some((r) => r.id === target)
-          ? target
-          : eligible[0].id;
-        render();
-        document
-          .querySelector(`[data-revision="${candidate}"] .review-id`)
-          .focus({ preventScroll: true });
-        tell(
-          "Choose where the arrow lands · click a row or use ↑ / ↓ and Enter · Esc cancels",
-        );
-      }
-      function cancel() {
-        const wasOpen = picking || pickerOpen;
-        picking = pickerOpen = false;
-        candidate = target;
-        render();
-        if (wasOpen) {
-          tell(`Destination unchanged · ${target}`);
-          byId("change").focus();
-        }
-      }
-      function loadExample(state) {
-        queued = state === "queued";
-        target =
-          state === "hidden"
-            ? external.id
-            : state === "custom" || queued
-              ? "rwpxovrz"
-              : "pqxvqmoo";
-        candidate = state === "picking" ? "rwpxovrz" : target;
-        picking = state === "picking";
-        pickerOpen = false;
-        render();
-        tell(
-          queued
-            ? `Queue preview only · 2 batches pinned to ${target} · target controls locked`
-            : `Example loaded · still reviewing vqkqszmu`,
-        );
+        handle.dataset.destination = result.id;
       }
       function render() {
-        const view = picking
-          ? "picking"
-          : target === "pqxvqmoo"
+        const field = byId("destination-revset"),
+          result = currentResult(),
+          pending = dirty();
+        const blocked = !!result.error || pending || queued;
+        const view = moved
+          ? "following"
+          : applied === "@-"
             ? "default"
             : "custom";
         document
@@ -1158,81 +1045,77 @@
           .forEach((button) =>
             button.setAttribute("aria-pressed", button.dataset.view === view),
           );
-        byId("try-hint").textContent = picking
-          ? "Try: point at a commit → preview the arrow → click to set."
-          : "Try: click the amber arrow → click another commit.";
-        byId("rationale-title").innerHTML =
-          '<span class="number">01</span>Click the arrow, then a row';
         byId("scenario").value = queued
           ? "queued"
-          : target === external.id
-            ? "hidden"
-            : view;
-        byId("destination-id").textContent = target;
-        byId("destination-kind").textContent =
-          target === "pqxvqmoo" ? "immediate parent" : "custom";
+          : result.error
+            ? "invalid"
+            : result.id === external.id
+              ? "hidden"
+              : view;
+        byId("try-hint").textContent = moved
+          ? "@ moved. The expression stayed; the destination resolved again."
+          : "Try: enter @-- → Enter → Move @ (demo).";
+        field.disabled = queued;
+        field.setAttribute("aria-invalid", String(!!result.error));
+        byId("destination-id").textContent = result.id || "—";
         byId("selection-target").textContent = byId(
           "footer-destination",
-        ).textContent = target;
-        byId("reset").hidden = target === "pqxvqmoo";
-        byId("reset").disabled =
-          byId("change").disabled =
-          byId("squash-demo").disabled =
-            queued;
-        byId("change").textContent = "Change…";
-        byId("change").setAttribute("aria-expanded", String(picking));
-        byId("change").setAttribute("aria-controls", "log-list");
+        ).textContent = result.id || "—";
+        byId("apply-revset").hidden = !pending;
+        byId("apply-revset").disabled = !!result.error || queued;
+        byId("reset").hidden = field.value === defaultRevset();
+        byId("reset").disabled = queued;
+        byId("revset-error").hidden = !result.error;
+        byId("revset-error").textContent = result.error || "";
         byId("locked").hidden = !queued;
-        byId("outside").hidden = target !== external.id;
-        byId("pick-banner").hidden = !picking;
-        byId("picker").hidden = !pickerOpen;
+        byId("locked").textContent =
+          `2 squash batches queued · destination pinned to ${pinned?.id || "—"}`;
+        byId("outside").hidden = result.id !== external.id;
+        byId("move-working-copy").disabled = moved || queued;
+        byId("squash-demo").disabled = blocked;
+        byId("squash-demo").title = queued
+          ? "Destination is pinned while queued work drains"
+          : result.error ||
+            (pending
+              ? "Apply the edited revset first"
+              : `Squash into ${result.id}`);
         byId("log-list").replaceChildren();
-        revisions.forEach((revision) => {
-          const isTarget = revision.id === target,
-            row = document.createElement("div");
-          row.className = `revision${revision.source ? " current" : ""}${isTarget ? " target" : ""}${picking && revision.id === candidate ? " candidate" : ""}`;
+        graphRevisions().forEach((revision) => {
+          const row = document.createElement("div");
+          row.className = `revision${revision.source ? " current" : ""}${revision.id === result.id ? " target" : ""}`;
           row.dataset.revision = revision.id;
           const graph = document.createElement("span");
           graph.className = "graph";
           graph.setAttribute("aria-hidden", "true");
-          graph.textContent = revision.source
-            ? "@  "
-            : revision.immutable
-              ? "◆  "
-              : "○  ";
+          graph.textContent =
+            revision.id === (moved ? newWorkingCopy.id : revisions[0].id)
+              ? "@  "
+              : revision.immutable
+                ? "◆  "
+                : "○  ";
           const review = document.createElement("button");
           review.className = "review-id";
           review.textContent = revision.id;
-          review.setAttribute(
-            "aria-label",
-            `${picking ? "Choose destination" : "Review change"} ${revision.id}`,
-          );
+          review.setAttribute("aria-label", `Review change ${revision.id}`);
           review.setAttribute(
             "aria-description",
             revision.source
               ? "Reviewed source"
-              : isTarget
-                ? "Squash destination"
+              : revision.id === result.id
+                ? "Resolved squash destination"
                 : revision.immutable
-                  ? "Immutable commit; unavailable as a squash destination"
+                  ? "Immutable commit"
                   : "Mutable commit",
           );
-          review.disabled = picking && (revision.source || revision.immutable);
           review.title = revision.source
-            ? "Reviewed source"
-            : revision.immutable
-              ? "Immutable commit; unavailable as a squash destination"
-              : isTarget
-                ? "Squash destination"
-                : picking
-                  ? "Set squash destination"
-                  : "Review this change";
+            ? "Reviewed source (pinned, independently of @)"
+            : revision.id === result.id
+              ? `Resolved from ${field.value}`
+              : "Review this change";
           review.onclick = () =>
-            picking
-              ? choose(revision.id)
-              : tell(
-                  "Review navigation is not simulated · still reviewing vqkqszmu",
-                );
+            tell(
+              "Review navigation is not simulated · still reviewing vqkqszmu",
+            );
           row.append(graph, review, document.createTextNode(" "));
           const title = document.createElement("span");
           title.className = "row-title";
@@ -1244,146 +1127,95 @@
           }
           title.append(document.createTextNode(revision.title));
           row.append(title);
-          if (picking && !revision.source && !revision.immutable) {
-            row.style.cursor = "pointer";
-            row.onpointerenter = () => preview(revision.id);
-            review.onfocus = () => preview(revision.id);
-            row.onclick = (event) => {
-              if (!event.target.closest("button")) choose(revision.id);
-            };
-          }
           byId("log-list").append(row);
         });
-        byId("log-tip").textContent = picking
-          ? "Dashed arrow = preview only. Click a row or press Enter to set it. Nothing is squashed yet."
-          : "Click the amber arrow or Change… to pick a destination. Commit IDs still open reviews.";
-        if (pickerOpen) renderResults();
+        byId("log-tip").textContent = result.error
+          ? "No destination fallback. Fix the revset before squashing."
+          : pending
+            ? "Preview only · Enter or Apply saves the expression · Esc restores it."
+            : queued
+              ? "Queued work keeps its resolved destination. Re-evaluate the expression after the queue drains."
+              : "The expression stays saved; its destination resolves again when @ changes. Fixture evaluator only.";
         drawRoute();
       }
-      function renderResults() {
-        const query = byId("search").value.trim().toLowerCase();
-        const matches = [...revisions, external].filter((r) =>
-          `${r.id} ${r.title}`.toLowerCase().includes(query),
+      function apply() {
+        if (queued || resolve(byId("destination-revset").value).error) return;
+        applied = byId("destination-revset").value;
+        render();
+        tell(
+          `Saved revset ${applied} · resolved to ${currentResult().id} · no squash performed`,
         );
-        byId("results").replaceChildren();
-        if (!matches.length) {
-          const empty = document.createElement("p");
-          empty.className = "no-results";
-          empty.textContent =
-            "No matching fixture commits. Try “delivery” or “types”.";
-          byId("results").append(empty);
-          return;
-        }
-        matches.forEach((revision) => {
-          const button = document.createElement("button");
-          button.className = "result";
-          button.disabled = !!(revision.source || revision.immutable);
-          button.setAttribute("aria-label", `Choose ${revision.id}`);
-          const text = document.createElement("span"),
-            id = document.createElement("b"),
-            title = document.createElement("span"),
-            note = document.createElement("small");
-          id.textContent = revision.id;
-          title.className = "result-title";
-          title.textContent = revision.title;
-          text.append(id, title);
-          note.textContent = revision.source
-            ? "Source"
-            : revision.immutable
-              ? "Immutable"
-              : revision.parent
-                ? "Default"
-                : revision.id === external.id
-                  ? "Outside log"
-                  : "Choose";
-          button.append(text, note);
-          button.onclick = () => choose(revision.id);
-          byId("results").append(button);
-        });
       }
+      function loadExample(state) {
+        moved = state === "following";
+        queued = state === "queued";
+        applied =
+          state === "default" ? "@-" : state === "hidden" ? external.id : "@--";
+        byId("destination-revset").value =
+          state === "invalid" ? "all()" : applied;
+        pinned = queued ? resolve(applied) : null;
+        render();
+        tell(
+          state === "following"
+            ? "Working copy moved to xmturvkn · saved @-- now resolves to pqxvqmoo · source unchanged"
+            : "Fixture example loaded · no repository writes",
+        );
+      }
+      byId("revset-form").onsubmit = (event) => {
+        event.preventDefault();
+        apply();
+      };
+      byId("destination-revset").oninput = render;
+      byId("destination-revset").onkeydown = (event) => {
+        if (event.key === "Escape" && !queued) {
+          event.preventDefault();
+          byId("destination-revset").value = applied;
+          render();
+          tell(`Restored saved expression ${applied}`);
+        }
+      };
+      byId("route-handle").onclick = () => {
+        if (!queued) {
+          byId("destination-revset").focus();
+          byId("destination-revset").select();
+        }
+      };
+      byId("reset").onclick = () => {
+        if (!queued) {
+          byId("destination-revset").value = defaultRevset();
+          apply();
+        }
+      };
+      byId("move-working-copy").onclick = () => {
+        if (queued || moved) return;
+        moved = true;
+        render();
+        tell(
+          `Working copy moved to xmturvkn · saved expression ${applied} re-evaluated · source stays vqkqszmu`,
+        );
+      };
       document
         .querySelectorAll("[data-view]")
         .forEach(
           (button) => (button.onclick = () => loadExample(button.dataset.view)),
         );
       byId("scenario").onchange = () => loadExample(byId("scenario").value);
-      byId("route-handle").onclick = byId("change").onclick = beginPick;
-      byId("cancel-pick").onclick = byId("close-picker").onclick = cancel;
-      byId("reset").onclick = () => choose("pqxvqmoo");
-      byId("find").onclick = () => {
-        if (queued) return;
-        pickerOpen = true;
-        byId("search").value = "";
-        render();
-        byId("search").focus();
-      };
-      byId("search").oninput = renderResults;
-      byId("picker").onkeydown = (event) => {
-        if (!["ArrowDown", "ArrowUp"].includes(event.key)) return;
-        event.preventDefault();
-        const buttons = [
-          ...byId("results").querySelectorAll("button:not(:disabled)"),
-        ];
-        if (!buttons.length) return;
-        const index = buttons.indexOf(document.activeElement),
-          step = event.key === "ArrowDown" ? 1 : -1;
-        buttons[
-          index < 0
-            ? step === 1
-              ? 0
-              : buttons.length - 1
-            : Math.max(0, Math.min(buttons.length - 1, index + step))
-        ].focus();
-      };
-      byId("log-list").onkeydown = (event) => {
-        if (
-          !picking ||
-          pickerOpen ||
-          !["ArrowDown", "ArrowUp", "Enter"].includes(event.key)
-        )
-          return;
-        event.preventDefault();
-        if (event.key === "Enter") {
-          choose(candidate);
-          return;
-        }
-        const index = eligible.findIndex((r) => r.id === candidate),
-          step = event.key === "ArrowDown" ? 1 : -1;
-        const next =
-          eligible[Math.max(0, Math.min(eligible.length - 1, index + step))];
-        preview(next.id);
-        document
-          .querySelector(`[data-revision="${next.id}"] .review-id`)
-          .focus({ preventScroll: true });
-      };
-      document.addEventListener("keydown", (event) => {
-        if (event.key === "Escape" && (picking || pickerOpen)) {
-          event.preventDefault();
-          cancel();
-        }
-      });
-      document.addEventListener("click", (event) => {
-        if (
-          pickerOpen &&
-          !event.target.closest("#picker") &&
-          !event.target.closest("#find")
-        )
-          cancel();
-      });
       byId("log-list").addEventListener("scroll", drawRoute);
       new ResizeObserver(drawRoute).observe(byId("log-list"));
       document.fonts.ready.then(drawRoute);
-      byId("squash-demo").onclick = () =>
-        tell(
-          `Mockup only · would squash 3 selected lines from vqkqszmu into ${target} · no repository writes`,
-        );
+      byId("squash-demo").onclick = () => {
+        if (!byId("squash-demo").disabled)
+          tell(
+            `Mockup only · would squash 3 selected lines into ${currentResult().id} from saved revset ${applied} · no repository writes`,
+          );
+      };
       document
         .querySelectorAll("[data-demo]")
         .forEach(
           (button) =>
             (button.onclick = () =>
               tell(
-                `${button.dataset.demo} is outside this destination-selection mockup`,
+                `${button.dataset.demo} is outside this destination-revset mockup`,
               )),
         );
       render();

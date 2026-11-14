@@ -1,76 +1,95 @@
-# Squash destination: margin-arrow refinement
+# Squash destination: a saved, moving revset
 
-Design only. No production UI, API, or squash behavior changed. This refines the
-previous three concepts in response to feedback: keep the destination color,
-remove the left stripe and visually heavy role labels, and connect the source to
-the destination with an arrow in the log's left margin.
+Design only. No production UI, API, or squash behavior changed. This iteration
+makes a revset text box the primary destination control, retaining the amber tint
+and the thin source-to-destination arrow without stripes or role labels.
 
 Open `design/custom-squash-destination.html`, or display the generated
 `.planka-artifacts/interactive-mockups.html` with Shelley's `output_iframe`.
 
-## Visual treatment
+## Interaction
 
-- Retain the source's blue highlight and the destination's quiet amber tint.
-  Remove the destination stripe and all `[reviewing]`, `[target]`, and
-  `[immutable]` annotations from the graph. Accessible names/descriptions and
-  tooltips still identify roles and unavailable destinations.
-- A thin amber elbow arrow starts at the source's row center and points at the
-  destination's row center. It occupies the **existing 20px left margin**, not a
-  new graph column. It is distinct from jj's graph glyphs.
-- Preserve the existing **monospace graph with normal line height**. Each graph
-  prefix, change ID, bookmark, and description stays on a single line, with no
-  row padding, cards, extra connector rows, or title truncation. Long lines scroll
-  horizontally while the arrow remains in the fixed margin.
-- Default to the source's immediate parent—not the next filtered row. The example
-  starts at `vqkqszmu → pqxvqmoo`. Reset restores that parent.
-- Keep a compact destination summary above the log and the destination ID beside
-  the squash action and in the existing file-sidebar footer.
+- The compact **Squash into** field starts at `@-` in this fixture, where the
+  reviewed source is initially `@`. The resolved change ID appears next to it.
+- Edit the expression. A valid one-commit result previews with a dashed arrow;
+  squash stays disabled while the edit is unapplied. **Enter** or **Apply** saves
+  the expression, not its current result. **Escape** restores the saved expression.
+- Applying `@--` first resolves to `rwpxovrz`. Click **Move @ (demo)** above the
+  mock workspace: the same `@--` then resolves to `pqxvqmoo`. The arrow and tint
+  update; the reviewed source and selected lines remain unchanged.
+- `@--` uses two ASCII hyphens and means two parent steps behind the working-copy
+  commit. `@` is **not** an alias for the currently selected review. The example
+  deliberately keeps the blue reviewed source fixed while moving the `@` marker
+  to a newly created child row.
+- Enter a specific change ID to keep a fixed target instead. The demo checks this
+  contrast: `rwpxovrz` stays the destination when `@` moves.
+- Clicking the arrow now focuses/selects the revset field. It no longer enters a
+  competing graph-picking mode. Commit IDs retain their review-navigation role.
 
-## How to choose a destination
+This prototype saves the expression only in its runtime state; durable settings
+across reloads/restarts are not implemented. **Move @** and the walkthrough are
+fixture controls, not production repository operations.
 
-1. **Click the amber arrow**, or use the explicit **Change…** button. No dragging
-   or modifier key is required. The arrow button is also reachable with Tab.
-2. Move over an eligible commit row. A **dashed arrow** previews its destination;
-   the confirmed destination retains its tint and ID until the choice is made.
-3. **Click the row to set it.** The arrow becomes solid and the amber tint moves.
-   The source diff and selected lines stay in place; nothing is squashed yet.
+## Resolve exactly one eligible commit, or block
 
-Keyboard: Enter on the arrow opens the picker; Up/Down moves among eligible
-rows; Enter sets the destination. Escape or Cancel leaves the previous target
-unchanged and returns focus to Change…. Source/immutable rows are unavailable.
+The expression must resolve to exactly one commit. Zero matches, multiple matches,
+unsupported fixture syntax, the source itself, and immutable/ineligible targets
+show an inline reason and disable squash. Invalid drafts hide the arrow, tint,
+and resolved ID; **never silently fall back to the previous destination**.
 
-Commit IDs keep their review-navigation role **outside** pick mode. During pick
-mode, the banner makes the temporary destination-selection behavior explicit.
-The walkthrough at the top shows the default, picking, and custom-target states
-of this single recommendation—not three competing designs.
+An applied expression can become invalid after a working-copy move. In particular,
+when `@` advances to a new child of the still-reviewed source, `@-` now names that
+source. The prototype blocks squash instead of substituting an older ancestor.
+Reset explicitly restores the selected source's actual parent: initially `@-`,
+or `vqkqszmu-` once the working copy has moved in this example.
 
-For older or off-filter targets, **Search…** is available inside pick mode. The
-fixture picker accepts a title or change ID and supports Up/Down + Enter. Empty
-results, Escape, Close, or clicking outside never change the confirmed target.
-An off-filter target gets a compact summary instead of an invented graph arrow.
-Change… remains available to choose a visible target again.
+A valid target outside the log filter gets a compact notice. The field and
+resolved ID remain visible; don't draw an arrow to a nonexistent row or silently
+change the filter.
 
-## Guardrails and limitations
+## Preserve the log
 
-These are fixtures, not live jj reads. Squash only reports what would happen;
-review navigation, Go to, and Settings are intentionally not simulated. The
-example-state selector also demonstrates queued work and an off-filter target.
+- Keep the source's blue highlight and destination's quiet amber tint. No left
+  stripe or inline `[reviewing]` / `[target]` / `[immutable]` labels.
+- The thin amber elbow arrow occupies the existing 20px left margin, not a new
+  graph column. It connects real row centers and stays in the fixed margin while
+  long text scrolls horizontally.
+- Graph prefixes, IDs, bookmarks, and descriptions retain the existing monospace
+  font and **normal line height**. No commit cards, extra vertical padding,
+  invented connector rows, wrapping, or title truncation.
+- Repeat the resolved ID next to the squash selection and in the file-sidebar
+  footer. Unapplied edits and invalid resolution cannot authorize squash.
 
-For production implementation after design approval:
+## Production semantics to implement after approval
 
-- Scope an override to the reviewed source. Switching sources should begin with
-  that source's immediate-parent default, not inherit a hidden target.
-- Pin each queued batch's source and destination. Lock the arrow, Change…, and
-  Reset until the queue drains, as illustrated in the mockup.
-- Resolve by full change identity and revalidate/pin commit IDs at mutation time.
-  A graph row or search result is not write authority.
-- Multiple parents or an immutable parent require an explicit no-default reason,
-  never substitution of the next visible row. This fixture has one mutable parent.
-- Decide allowed relationships (ancestors versus other branches), conflict
-  handling, descriptions, undo, and stale/missing target recovery before adding
-  custom squash. The illustration only offers older mutable ancestors.
-- The backend and native selection engine remain immediate-parent-only; this
-  design is not a claim that custom-destination mutations already work.
+- Use **jj**, not this fixture resolver, to evaluate arbitrary revsets. Require
+  exactly one visible, non-divergent, eligible commit at a captured operation.
+  The mockup recognizes only `@` plus parent steps, its listed full short IDs,
+  `vqkqszmu-`, `parents(vqkqszmu)`, `all()`, and `none()`. It is not a jj parser;
+  unknown expressions are labeled as unsupported by this fixture, not necessarily
+  invalid jj syntax. `all()` counts fixture commits, not a live repository.
+- Retain the expression as the user's destination rule, separately from the
+  resolved change/commit IDs. Re-evaluate on validated refreshes, working-copy
+  moves, and after completed rewrites, with another check immediately before
+  accepting a new squash. Display the new resolution or block; don't pin a moving
+  expression forever to its first match.
+- **Pin accepted queued batches** to their validated source and destination IDs.
+  A moving revset must not reroute work already accepted. The demo locks its field,
+  arrow, Reset, and movement control during a pinned queue; re-evaluation for new
+  work happens after draining. External history changes still require backend
+  stale-state checks, not reliance on disabled browser controls.
+- Decide persistence scope (for example, workspace-level preference) explicitly.
+  Custom `@` expressions stay working-copy-relative across review navigation.
+  A source-parent default for non-`@` reviews needs an explicit source-relative
+  expression, not reinterpretation of `@` or substitution of the next log row.
+- Preserve source selection, line selections, and queue recovery rules where safe;
+  destination resolution is not permission to switch source or replay a mutation.
+- Resolve allowed relationships (ancestors versus other branches), conflicts,
+  descriptions, undo, and vanished/divergent destinations before adding mutations.
+  This fixture only offers older mutable ancestors plus an off-filter example.
+- The backend/native selection engine remain immediate-parent-only. Multiple
+  parents or an immutable parent need an explicit no-default reason. This mockup
+  does not claim custom-destination squashing already works.
 
 ## Checks and presentation
 
@@ -80,25 +99,25 @@ With npm dependencies and Playwright Chromium installed, run from repository roo
 node design/custom-squash-destination.e2e.mjs
 ```
 
-The check generates the local HTML/font bundle, the self-contained
-`interactive-mockups.html`, and three browser screenshots cropped to the actual
-log pane in the ignored `.planka-artifacts/` directory:
+The check generates local and iframe-ready HTML bundles and three actual browser
+screenshots of the mock log in ignored `.planka-artifacts/`:
 
-- `arrow-01-parent-default.png`: solid arrow to the default immediate parent.
-- `arrow-02-choose-destination.png`: dashed candidate preview, before confirming.
-- `arrow-03-custom-destination.png`: solid arrow and retained tint on a new target.
+- `revset-01-saved-expression.png`: applied `@--`, resolving to `rwpxovrz`.
+- `revset-02-follows-working-copy.png`: unchanged `@--`, resolving to `pqxvqmoo`
+  after `@` moves, while the reviewed source remains fixed.
+- `revset-03-multiple-matches.png`: a multi-result draft blocks squash with an
+  inline error instead of keeping a stale target.
 
-Attach screenshots directly to the ticket; display the interactive document with
-`output_iframe` in the linked Shelley conversation. Planka cannot display raw
+Attach screenshots directly to the ticket. Present the interactive document with
+`output_iframe` in the linked Shelley conversation; Planka cannot display raw
 HTML/sandbox links as interactive previews.
 
-Checks exercise click-arrow/full-row selection, keyboard navigation, cancellation,
-reset, source/selection preservation, absent labels/stripe, retained color, search,
-queue locking, off-filter targets, both HTML bundles, and narrow layouts. They
-verify arrow endpoints against real row centers, unchanged compact graph metrics,
-and a fixed arrow margin during horizontal scrolling. Uncaught page errors and
-HTTP/API requests fail the check.
+Checks cover moving versus fixed expressions, Enter/Apply/Escape, invalid or
+ineligible results and fail-closed behavior, dynamic invalidation, explicit reset,
+queue pinning, off-filter targets, source/selection preservation, compact graph
+metrics, arrow geometry, mobile scrolling, and both HTML bundles. Uncaught page
+errors and HTTP/API requests fail the check.
 
-The existing local Source Code Pro font is bundled without CDN dependencies.
-No production build, backend tests, or real-jj mutations are needed to exercise
-these design files.
+The existing local Source Code Pro font is bundled without CDNs. These are design
+fixtures: no actual jj revset evaluation, repository mutation, production build,
+or backend tests are performed by this mockup check.

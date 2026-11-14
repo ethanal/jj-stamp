@@ -36,7 +36,7 @@ await copyFile(
 );
 
 const browser = await chromium.launch({ args: ["--no-sandbox"] });
-async function expectCompactGraph(page) {
+async function expectCompactGraph(page, expectedRows = 5) {
   const geometry = await page.locator("#log-list").evaluate((log) => {
     const probe = document.createElement("div");
     probe.textContent = "@  normal line height";
@@ -79,7 +79,7 @@ async function expectCompactGraph(page) {
   });
   assert.equal(geometry.lineHeight, "normal");
   assert.equal(geometry.whiteSpace, "pre");
-  assert.equal(geometry.rows.length, 5);
+  assert.equal(geometry.rows.length, expectedRows);
   for (const [index, row] of geometry.rows.entries()) {
     assert.equal(row.height, geometry.normalHeight, "no padded/tall log rows");
     assert.equal(row.titleTop, row.idTop, "description stays on the ID's line");
@@ -167,11 +167,18 @@ try {
     new URL("./custom-squash-destination.html", import.meta.url).href,
   );
   await page.evaluate(() => document.fonts.ready);
+  const field = page.getByRole("textbox", {
+    name: "Destination revset",
+    exact: true,
+  });
   const target = page.locator("#destination-id");
   const source = page.locator(".revision.current .review-id");
+  const squash = page.locator("#squash-demo");
   await expectCompactGraph(page);
   await expectRoute(page, "pqxvqmoo");
+  await expect(field).toHaveValue("@-");
   await expect(target).toHaveText("pqxvqmoo");
+  await expect(squash).toBeEnabled();
   await expect(page.locator("#reset")).toBeHidden();
   await expect(page.locator(".role, .row-note, .row-action")).toHaveCount(0);
   await expect(page.locator(".revision.target")).toHaveCSS(
@@ -186,121 +193,128 @@ try {
     "background-color",
     "rgb(41, 38, 31)",
   );
-  await captureLog(page, "arrow-01-parent-default.png");
 
-  // The arrow itself is the destination picker; selecting never changes source.
+  // Editing is a blocked, dashed preview until Enter/Apply saves the expression.
   await page
-    .getByRole("button", { name: /Change squash destination, currently/ })
+    .getByRole("button", { name: "Edit destination revset", exact: true })
     .click();
-  await expect(page.locator("#pick-banner")).toBeVisible();
-  await expect(
-    page.getByRole("button", {
-      name: "Choose destination vqkqszmu",
-      exact: true,
-    }),
-  ).toBeDisabled();
-  await expect(
-    page.getByRole("button", {
-      name: "Choose destination zzzzzzzz",
-      exact: true,
-    }),
-  ).toBeDisabled();
-  await page.locator('[data-revision="rwpxovrz"] .row-title').hover();
+  await expect(field).toBeFocused();
+  await field.fill("@--");
   await expectRoute(page, "rwpxovrz", true);
-  await expect(target).toHaveText("pqxvqmoo");
-  await expect(page.locator(".revision.target")).toHaveAttribute(
-    "data-revision",
-    "pqxvqmoo",
-  );
-  await expectCompactGraph(page);
-  await captureLog(page, "arrow-02-choose-destination.png");
-  await page.keyboard.press("Escape");
-  await expect(target).toHaveText("pqxvqmoo");
-  await expectRoute(page, "pqxvqmoo");
-  await expect(page.locator("#change")).toBeFocused();
-  await page.locator("#change").click();
-  await page.locator('[data-revision="rwpxovrz"] .row-title').click();
-  await expect(target).toHaveText("rwpxovrz");
-  await expect(page.locator("#pick-banner")).toBeHidden();
+  await expect(squash).toBeDisabled();
+  await expect(page.locator("#apply-revset")).toBeVisible();
+  await field.press("Enter");
   await expectRoute(page, "rwpxovrz");
+  await expect(field).toHaveValue("@--");
+  await expect(squash).toBeEnabled();
+  await expect(page.locator("#apply-revset")).toBeHidden();
   await expect(source).toHaveText("vqkqszmu");
   await expect(page.locator(".line.sel")).toHaveCount(3);
   await expect(page.locator("#selection-target")).toHaveText("rwpxovrz");
   await expect(page.locator("#footer-destination")).toHaveText("rwpxovrz");
   await expectCompactGraph(page);
-  await captureLog(page, "arrow-03-custom-destination.png");
-  await page.locator("#reset").click();
+  await captureLog(page, "revset-01-saved-expression.png");
+
+  // Move @, not the selected review. The same expression must resolve afresh.
+  await page.locator("#move-working-copy").click();
+  await expect(field).toHaveValue("@--");
+  await expect(target).toHaveText("pqxvqmoo");
   await expectRoute(page, "pqxvqmoo");
+  await expect(source).toHaveText("vqkqszmu");
+  await expect(page.locator(".line.sel")).toHaveCount(3);
+  await expect(page.locator('[data-revision="xmturvkn"] .graph')).toHaveText(
+    "@  ",
+  );
+  await expect(page.locator(".revision.current .graph")).toHaveText("○  ");
+  await expectCompactGraph(page, 6);
+  await captureLog(page, "revset-02-follows-working-copy.png");
 
-  // Keyboard entry and bounded candidate navigation, skipping source/immutable.
-  await page.locator("#route-handle").focus();
-  await page.keyboard.press("Enter");
-  await page.keyboard.press("ArrowUp");
-  await expectRoute(page, "pqxvqmoo", true);
-  await page.keyboard.press("ArrowDown");
-  await expectRoute(page, "rwpxovrz", true);
-  await page.keyboard.press("ArrowDown");
-  await page.keyboard.press("ArrowDown");
-  await expectRoute(page, "ksuunvyp", true);
-  await page.keyboard.press("Enter");
-  await expect(target).toHaveText("ksuunvyp");
-  await expectRoute(page, "ksuunvyp");
-  await page.locator("#change").click();
-  await page.locator("#cancel-pick").click();
-  await expect(target).toHaveText("ksuunvyp");
+  // An unresolved draft never falls back to the old destination, even on Enter.
+  await field.fill("all()");
+  await expect(page.locator("#revset-error")).toContainText(
+    "Resolved to 6 commits",
+  );
+  await expect(field).toHaveAttribute("aria-invalid", "true");
+  await expect(squash).toBeDisabled();
+  await expect(page.locator("#apply-revset")).toBeDisabled();
+  await expect(target).toHaveText("—");
+  await expect(page.locator("#route-handle")).toBeHidden();
+  await expect(page.locator(".revision.target")).toHaveCount(0);
+  await captureLog(page, "revset-03-multiple-matches.png");
+  await field.press("Enter");
+  await expect(target).toHaveText("—");
+  await field.press("Escape");
+  await expect(field).toHaveValue("@--");
+  await expectRoute(page, "pqxvqmoo");
+  for (const [expression, message] of [
+    ["none()", "Resolved to 0 commits"],
+    ["@—", "Use ASCII hyphens"],
+    ["@[", "Not a supported fixture expression"],
+    ["", "Enter a revset"],
+    ["vqkqszmu", "reviewed source"],
+    ["zzzzzzzz", "immutable"],
+    ["xmturvkn", "older ancestors"],
+  ]) {
+    await field.fill(expression);
+    await expect(page.locator("#revset-error")).toContainText(message);
+    await expect(squash).toBeDisabled();
+    await expect(target).toHaveText("—");
+    await field.press("Escape");
+    await expect(field).toHaveValue("@--");
+    await expect(squash).toBeEnabled();
+  }
 
-  // Search is available inside pick mode, including off-filter fixture commits.
-  await page.locator("#change").click();
-  await page.locator("#find").click();
-  await expect(page.locator("#search")).toBeFocused();
-  await expect(
-    page.getByRole("button", { name: "Choose vqkqszmu", exact: true }),
-  ).toBeDisabled();
-  await expect(
-    page.getByRole("button", { name: "Choose zzzzzzzz", exact: true }),
-  ).toBeDisabled();
-  await page.locator("#search").fill("no matching commit");
-  await expect(page.locator(".no-results")).toBeVisible();
-  await page.locator("#search").fill("delivery");
-  await expect(page.locator(".result")).toHaveCount(3);
-  await page.keyboard.press("ArrowDown");
-  await page.keyboard.press("ArrowDown");
-  await page.keyboard.press("Enter");
+  // A fixed ID stays fixed while @ moves, unlike a saved moving expression.
+  await page.locator('[data-view="default"]').click();
+  await field.fill("rwpxovrz");
+  await page.locator("#apply-revset").click();
+  await page.locator("#move-working-copy").click();
+  await expect(field).toHaveValue("rwpxovrz");
+  await expectRoute(page, "rwpxovrz");
+  // Default @- now points at the source: block it, don't invent another target.
+  await page.locator('[data-view="default"]').click();
+  await page.locator("#move-working-copy").click();
+  await expect(field).toHaveValue("@-");
+  await expect(page.locator("#revset-error")).toContainText("reviewed source");
+  await expect(squash).toBeDisabled();
+  await expect(page.locator("#route-handle")).toBeHidden();
+  await page.locator("#reset").click();
+  await expect(field).toHaveValue("vqkqszmu-");
+  await expectRoute(page, "pqxvqmoo");
+  await expect(squash).toBeEnabled();
+
+  // Off-filter targets can be expressed without silently changing the graph.
+  await field.fill("nukxtrvy");
+  await field.press("Enter");
   await expect(target).toHaveText("nukxtrvy");
   await expect(page.locator("#outside")).toBeVisible();
   await expect(page.locator("#route-handle")).toBeHidden();
   await expect(page.locator(".revision.target")).toHaveCount(0);
-  await page.locator("#change").click();
-  await page.locator("#find").click();
-  await page.locator("h1").click();
-  await expect(page.locator("#picker")).toBeHidden();
-  await expect(target).toHaveText("nukxtrvy");
-  await page.locator("#change").click();
-  await page.locator("#find").click();
-  await page.locator("#close-picker").click();
-  await expect(target).toHaveText("nukxtrvy");
+  await expect(squash).toBeEnabled();
   await page.locator("#reset").click();
+  await expectRoute(page, "pqxvqmoo");
 
-  // Illustrative queue pins the destination, including the new arrow handle.
+  // Queued work locks the editor and pins a resolved ID, not a moving revset.
   await page.locator("#scenario").selectOption("queued");
-  await expect(page.locator("#locked")).toBeVisible();
-  for (const id of ["route-handle", "change", "reset", "squash-demo"])
-    await expect(page.locator(`#${id}`)).toBeDisabled();
+  await expect(field).toHaveValue("@--");
   await expectRoute(page, "rwpxovrz");
-  await page.locator("#scenario").selectOption("default");
-  await page.locator("#squash-demo").click();
+  for (const id of [
+    "destination-revset",
+    "route-handle",
+    "reset",
+    "squash-demo",
+    "move-working-copy",
+  ])
+    await expect(page.locator(`#${id}`)).toBeDisabled();
+  await expect(page.locator("#locked")).toContainText("pinned to rwpxovrz");
+  await page.locator("#move-working-copy").dispatchEvent("click");
+  await expect(target).toHaveText("rwpxovrz");
+  await expectCompactGraph(page);
+  await page.locator("#scenario").selectOption("custom");
+  await squash.click();
   await expect(page.locator("#status")).toContainText("no repository writes");
 
-  // Each walkthrough state and the same iframe-ready standalone presentation.
-  for (const state of ["default", "picking", "custom"]) {
-    await page.locator(`[data-view="${state}"]`).click();
-    await expectCompactGraph(page);
-    await expectRoute(
-      page,
-      state === "default" ? "pqxvqmoo" : "rwpxovrz",
-      state === "picking",
-    );
-  }
+  // Both the file bundle and the exact iframe presentation remain standalone.
   for (const name of ["index.html", "interactive-mockups.html"]) {
     await page.goto(
       new URL(`../.planka-artifacts/${name}`, import.meta.url).href,
@@ -332,16 +346,21 @@ try {
   assert.equal(
     beforeScroll.x,
     afterScroll.x,
-    "arrow remains in fixed margin during horizontal scroll",
+    "arrow stays in fixed margin during horizontal scroll",
   );
   await page.locator("#route-handle").click();
-  await page.locator('[data-revision="ksuunvyp"] .row-title').click();
-  await expect(target).toHaveText("ksuunvyp");
-  await expectRoute(page, "ksuunvyp");
+  await expect(field).toBeFocused();
+  await field.fill("@--");
+  await field.press("Enter");
+  await expectRoute(page, "rwpxovrz");
+  await page.locator("#move-working-copy").click();
+  await expect(field).toHaveValue("@--");
+  await expectRoute(page, "pqxvqmoo");
+  await expectCompactGraph(page, 6);
   assert.deepEqual(errors, [], "no uncaught browser errors");
   assert.deepEqual(requests, [], "no HTTP/API requests");
   console.log(
-    "PASS: arrow geometry/default/custom/preview, click-arrow and keyboard destination choice, cancel/reset, unchanged compact graph/source/selection, no role labels/stripe, search, queue lock, off-filter target, mobile scrolling, both presentation bundles; zero page errors or HTTP requests.",
+    "PASS: saved revset and moving @ resolution, fixed-ID contrast, Enter/Apply/Escape, zero/multiple/unsupported/ineligible matches fail closed, queue pinning, off-filter target, source/selection preservation, compact graph and arrow geometry, mobile scrolling, both presentation bundles; zero page errors or HTTP requests.",
   );
 } finally {
   await browser.close();
