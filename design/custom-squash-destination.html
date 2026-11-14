@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>jj-stamp · Custom squash destination concepts</title>
+    <title>jj-stamp · Squash destination arrow</title>
     <style>
       @font-face {
         font-family: Source;
@@ -399,7 +399,8 @@
         min-height: 0;
         overflow: auto;
         margin: 0;
-        padding: 14px 12px 14px 20px;
+        padding: 14px 12px 14px 0;
+        min-width: 0;
         font: inherit;
         line-height: normal;
         white-space: pre;
@@ -422,7 +423,6 @@
         color: white;
       }
       .revision.target {
-        box-shadow: inset 2px 0 var(--amber);
         background: #29261f;
       }
       .graph {
@@ -435,8 +435,7 @@
       .revision.target .graph {
         color: var(--amber);
       }
-      .review-id,
-      .row-action {
+      .review-id {
         font: inherit;
         line-height: inherit;
         padding: 0;
@@ -456,33 +455,63 @@
       .current .row-title {
         color: #e2eff9;
       }
-      .role {
-        color: #d0eaff;
+      .revision.candidate:not(.target) {
+        background: #242a31;
       }
-      .role.dest {
-        color: var(--amber);
+      .log-viewport {
+        position: relative;
+        display: flex;
+        flex: 1;
+        min-height: 0;
       }
-      .row-action {
+      .route-gutter {
+        flex: 0 0 20px;
+        position: relative;
+        overflow: hidden;
+      }
+      .route-handle {
+        position: absolute;
+        left: 2px;
+        width: 18px;
+        padding: 0;
+        border: 0;
+        border-radius: 3px;
         color: var(--amber);
-        opacity: 0;
+        background: transparent;
+        z-index: 1;
+      }
+      .route-handle:hover:not(:disabled) {
+        color: #ffe0a8;
+        background: #e2bd7e0b;
+      }
+      .route-handle:focus-visible {
+        outline-offset: 1px;
+        outline: 1px dashed var(--amber);
+      }
+      .route-handle svg {
+        display: block;
+        width: 100%;
+        height: 100%;
+        overflow: visible;
         pointer-events: none;
       }
-      .revision:hover .row-action,
-      .revision:focus-within .row-action,
-      .revision.suggested .row-action,
-      .picking .row-action {
-        opacity: 1;
-        pointer-events: auto;
+      .route-handle:disabled {
+        color: var(--amber);
+        opacity: 0.6;
       }
-      .row-action:disabled {
-        opacity: 1;
-        pointer-events: none;
+      .route-handle.preview .route-shaft {
+        stroke-dasharray: 3 2;
       }
-      .row-action:focus-visible {
-        pointer-events: auto;
+      .pick-banner {
+        gap: 8px;
+        padding: 6px 12px;
+        font-size: 10px;
       }
-      .row-note {
-        color: var(--muted);
+      .pick-banner > span {
+        flex: 1;
+      }
+      .pick-banner button {
+        padding: 4px 6px;
       }
       .log-tip {
         font-size: 10px;
@@ -715,10 +744,6 @@
         .status .optional {
           display: none;
         }
-        .row-action {
-          opacity: 1;
-          pointer-events: auto;
-        }
         .picker {
           top: 74px;
         }
@@ -746,39 +771,38 @@
       <header class="intro">
         <div>
           <div class="eyebrow">jj-stamp / interaction studies</div>
-          <h1>A destination, not a different review.</h1>
+          <h1>Follow the arrow. Choose where it lands.</h1>
           <p class="muted">
-            Squash into the commit below by default. Pick another without losing
-            your place.
+            A quiet arrow connects source to destination. Click it to choose
+            another commit, without changing the review.
           </p>
         </div>
         <span class="prototype"
           >Interactive mockups · no repository writes</span
         >
       </header>
-      <nav class="options" aria-label="Design concepts">
-        <button class="option" data-concept="row" aria-pressed="true">
-          <b
-            >A · Direct row action
-            <small class="recommended">RECOMMENDED</small></b
-          ><span>Point at a commit. Set it as the destination.</span>
+      <nav class="options" aria-label="Interaction walkthrough">
+        <button class="option" data-view="default" aria-pressed="true">
+          <b>1 · Parent by default</b
+          ><span>The arrow lands on the immediate parent.</span>
         </button>
-        <button class="option" data-concept="mode" aria-pressed="false">
-          <b>B · Pick in the log</b
-          ><span>Choose a row without leaving the graph.</span>
+        <button class="option" data-view="picking" aria-pressed="false">
+          <b>2 · Click the arrow to choose</b
+          ><span>Point at a row. Click or press Enter to set it.</span>
         </button>
-        <button class="option" data-concept="search" aria-pressed="false">
-          <b>C · Compact search picker</b
-          ><span>Find an older commit by title or change ID.</span>
+        <button class="option" data-view="custom" aria-pressed="false">
+          <b>3 · A different destination</b
+          ><span>The arrow moves. Your review stays put.</span>
         </button>
       </nav>
       <div class="controls">
         <span class="hint" id="try-hint"
-          >Try: hover a log row → [↓] sets destination → Reset.</span
+          >Try: click the amber arrow → click another commit.</span
         ><label
           >Example state
           <select id="scenario" aria-label="Example state">
             <option value="default">Immediate parent (default)</option>
+            <option value="picking">Choosing another commit</option>
             <option value="custom">Older destination</option>
             <option value="queued">Queue in progress</option>
             <option value="hidden">Destination outside log filter</option>
@@ -852,9 +876,7 @@
             </div>
           </section>
           <aside class="log" aria-label="Revision log">
-            <div class="heading">
-              jj log <span>source ≠ destination　 ›</span>
-            </div>
+            <div class="heading">jj log <span>›</span></div>
             <div class="destination-bar">
               <div class="target-summary">
                 <span class="target-label">Squash →</span
@@ -878,16 +900,49 @@
               >
             </div>
             <div class="pick-banner" id="pick-banner" hidden>
-              <span>Choose a squash destination, not a review.</span
+              <span>Pick a row · ↑ / ↓ then Enter · Esc cancels</span>
+              <button id="find">Search…</button
               ><button id="cancel-pick">Cancel</button>
             </div>
-            <div
-              class="log-list"
-              id="log-list"
-              tabindex="0"
-              role="region"
-              aria-label="Monospace jj log graph"
-            ></div>
+            <div class="log-viewport" id="log-viewport">
+              <div class="route-gutter">
+                <button
+                  id="route-handle"
+                  class="route-handle"
+                  aria-label="Change squash destination"
+                  aria-controls="log-list"
+                  title="Change squash destination"
+                >
+                  <svg
+                    id="route-svg"
+                    aria-hidden="true"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="1.25"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                  >
+                    <circle
+                      id="route-source"
+                      cx="16"
+                      cy="6"
+                      r="1.4"
+                      fill="currentColor"
+                      stroke="none"
+                    ></circle>
+                    <path id="route-shaft" class="route-shaft"></path>
+                    <path id="route-tip"></path>
+                  </svg>
+                </button>
+              </div>
+              <div
+                class="log-list"
+                id="log-list"
+                tabindex="0"
+                role="region"
+                aria-label="Monospace jj log graph"
+              ></div>
+            </div>
             <div class="log-tip" id="log-tip">
               <strong>Click an ID to review.</strong> Use the separate row
               action to choose where selected lines go.
@@ -933,17 +988,17 @@
             <span class="number">01</span>Keep the log direct
           </h2>
           <p id="rationale">
-            The ID still opens a review. A separate inline [↓] destination
-            action appears on hover or keyboard focus, with the next older
-            candidate exposed for discoverability.
+            The ID still opens a review. Click the amber arrow (or Change…) to
+            choose a destination. Then click a commit row. No dragging, no
+            modifier keys, and no immediate squash.
           </p>
         </article>
         <article>
-          <h2><span class="number">02</span>Two roles, two treatments</h2>
+          <h2><span class="number">02</span>Less ink, same relationship</h2>
           <p>
-            Keep the normal monospace graph and line height. Blue marks the
-            reviewed source; an amber edge and inline [target] label mark the
-            target. No cards, wrapped descriptions, or extra graph rows.
+            Keep the destination tint, but remove the stripe and role labels. A
+            thin arrow in the existing left margin connects the blue source to
+            its amber destination. Normal monospace rows stay untouched.
           </p>
         </article>
         <article>
@@ -975,102 +1030,167 @@
       ];
       const external = { id: "nukxtrvy", title: "Extract delivery transport" };
       const byId = (id) => document.getElementById(id);
-      let concept = "row",
-        target = "pqxvqmoo",
+      const eligible = revisions.filter((r) => !r.source && !r.immutable);
+      let target = "pqxvqmoo",
+        candidate = target,
         picking = false,
         queued = false,
         pickerOpen = false;
-      const conceptCopy = {
-        row: [
-          "Try: hover a log row → [↓] sets destination → Reset.",
-          "Keep the log direct",
-          "The ID still opens a review. A separate inline [↓] destination action appears on hover or keyboard focus, with the next older candidate exposed for discoverability.",
-        ],
-        mode: [
-          "Try: Change… → pick an older row → Reset.",
-          "Make intent explicit",
-          "Change… temporarily turns the log into a destination picker. IDs stop navigating until you pick or cancel. Rows keep their normal line height; the existing whole row is clickable.",
-        ],
-        search: [
-          "Try: Change… → search “delivery” → choose a result.",
-          "Find targets without scrolling",
-          "A compact picker lives beside the destination summary. Search the fixture by title or change ID, including one commit outside the visible log. Choosing a result leaves the source diff in place.",
-        ],
-      };
       function tell(text) {
         byId("status").textContent = text;
-        byId("status").classList.remove("demo-toast");
       }
       function choose(id) {
         const revision = [...revisions, external].find((r) => r.id === id);
         if (queued || !revision || revision.source || revision.immutable)
           return;
-        target = id;
-        picking = false;
-        pickerOpen = false;
+        target = candidate = id;
+        picking = pickerOpen = false;
         render();
         tell(
           `Destination set to ${id} · still reviewing vqkqszmu · no squash performed`,
         );
         byId("change").focus();
       }
-      function render() {
+      // Keep the SVG entirely in the existing 20px margin. Its endpoints follow
+      // actual row centers, not an assumed font/line-height or array index.
+      function drawRoute() {
+        const sourceRow = document.querySelector(".revision.current");
+        const destinationRow = [...document.querySelectorAll(".revision")].find(
+          (row) => row.dataset.revision === (picking ? candidate : target),
+        );
+        const handle = byId("route-handle");
+        handle.hidden = !sourceRow || !destinationRow;
+        if (handle.hidden) return;
+        const viewport = byId("log-viewport").getBoundingClientRect();
+        const source = sourceRow.getBoundingClientRect(),
+          destination = destinationRow.getBoundingClientRect();
+        const sourceY = source.top + source.height / 2,
+          destinationY = destination.top + destination.height / 2;
+        // Fixture destinations are older ancestors, below the reviewed source.
+        const delta = destinationY - sourceY,
+          height = delta + 12;
+        handle.style.top = `${sourceY - viewport.top - 6}px`;
+        handle.style.height = `${height}px`;
+        handle.classList.toggle("preview", picking);
+        handle.disabled = queued;
+        handle.setAttribute("aria-expanded", String(picking));
+        handle.setAttribute(
+          "aria-label",
+          `Change squash destination, currently ${target}`,
+        );
+        byId("route-svg").setAttribute("viewBox", `0 0 18 ${height}`);
+        byId("route-shaft").setAttribute(
+          "d",
+          `M16 6 H8 Q4 6 4 10 V${delta + 2} Q4 ${delta + 6} 8 ${delta + 6} H16`,
+        );
+        byId("route-tip").setAttribute(
+          "d",
+          `M12 ${delta + 3} L16 ${delta + 6} L12 ${delta + 9}`,
+        );
+        handle.dataset.sourceY = sourceY;
+        handle.dataset.destinationY = destinationY;
+        handle.dataset.destination = picking ? candidate : target;
+      }
+      function preview(id) {
+        if (!picking || queued || !eligible.some((r) => r.id === id)) return;
+        candidate = id;
         document
-          .querySelectorAll("[data-concept]")
-          .forEach((button) =>
-            button.setAttribute(
-              "aria-pressed",
-              button.dataset.concept === concept,
+          .querySelectorAll(".revision")
+          .forEach((row) =>
+            row.classList.toggle(
+              "candidate",
+              row.dataset.revision === candidate,
             ),
           );
-        const [hint, title, body] = conceptCopy[concept];
-        byId("try-hint").textContent = hint;
-        byId("rationale-title").replaceChildren();
-        const number = document.createElement("span");
-        number.className = "number";
-        number.textContent = "01";
-        byId("rationale-title").append(number, document.createTextNode(title));
-        byId("rationale").textContent = body;
+        drawRoute();
+      }
+      function beginPick() {
+        if (queued) return;
+        picking = true;
+        pickerOpen = false;
+        candidate = eligible.some((r) => r.id === target)
+          ? target
+          : eligible[0].id;
+        render();
+        document
+          .querySelector(`[data-revision="${candidate}"] .review-id`)
+          .focus({ preventScroll: true });
+        tell(
+          "Choose where the arrow lands · click a row or use ↑ / ↓ and Enter · Esc cancels",
+        );
+      }
+      function cancel() {
+        const wasOpen = picking || pickerOpen;
+        picking = pickerOpen = false;
+        candidate = target;
+        render();
+        if (wasOpen) {
+          tell(`Destination unchanged · ${target}`);
+          byId("change").focus();
+        }
+      }
+      function loadExample(state) {
+        queued = state === "queued";
+        target =
+          state === "hidden"
+            ? external.id
+            : state === "custom" || queued
+              ? "rwpxovrz"
+              : "pqxvqmoo";
+        candidate = state === "picking" ? "rwpxovrz" : target;
+        picking = state === "picking";
+        pickerOpen = false;
+        render();
+        tell(
+          queued
+            ? `Queue preview only · 2 batches pinned to ${target} · target controls locked`
+            : `Example loaded · still reviewing vqkqszmu`,
+        );
+      }
+      function render() {
+        const view = picking
+          ? "picking"
+          : target === "pqxvqmoo"
+            ? "default"
+            : "custom";
+        document
+          .querySelectorAll("[data-view]")
+          .forEach((button) =>
+            button.setAttribute("aria-pressed", button.dataset.view === view),
+          );
+        byId("try-hint").textContent = picking
+          ? "Try: point at a commit → preview the arrow → click to set."
+          : "Try: click the amber arrow → click another commit.";
+        byId("rationale-title").innerHTML =
+          '<span class="number">01</span>Click the arrow, then a row';
         byId("scenario").value = queued
           ? "queued"
           : target === external.id
             ? "hidden"
-            : target === "pqxvqmoo"
-              ? "default"
-              : "custom";
+            : view;
         byId("destination-id").textContent = target;
         byId("destination-kind").textContent =
           target === "pqxvqmoo" ? "immediate parent" : "custom";
-        byId("selection-target").textContent = target;
-        byId("footer-destination").textContent = target;
+        byId("selection-target").textContent = byId(
+          "footer-destination",
+        ).textContent = target;
         byId("reset").hidden = target === "pqxvqmoo";
-        byId("reset").disabled = queued;
-        byId("change").disabled = queued;
-        byId("change").textContent =
-          concept === "search"
-            ? "Change…"
-            : concept === "mode"
-              ? "Change…"
-              : "Pick in log";
-        byId("change").setAttribute(
-          "aria-expanded",
-          String(picking || pickerOpen),
-        );
-        byId("change").setAttribute(
-          "aria-controls",
-          concept === "search" ? "picker" : "log-list",
-        );
+        byId("reset").disabled =
+          byId("change").disabled =
+          byId("squash-demo").disabled =
+            queued;
+        byId("change").textContent = "Change…";
+        byId("change").setAttribute("aria-expanded", String(picking));
+        byId("change").setAttribute("aria-controls", "log-list");
         byId("locked").hidden = !queued;
         byId("outside").hidden = target !== external.id;
-        byId("squash-demo").disabled = queued;
         byId("pick-banner").hidden = !picking;
         byId("picker").hidden = !pickerOpen;
-        byId("log-list").classList.toggle("picking", picking);
         byId("log-list").replaceChildren();
-        revisions.forEach((revision, index) => {
-          const isTarget = revision.id === target;
-          const row = document.createElement("div");
-          row.className = `revision${revision.source ? " current" : ""}${isTarget ? " target" : ""}${concept === "row" && index === 2 ? " suggested" : ""}`;
+        revisions.forEach((revision) => {
+          const isTarget = revision.id === target,
+            row = document.createElement("div");
+          row.className = `revision${revision.source ? " current" : ""}${isTarget ? " target" : ""}${picking && revision.id === candidate ? " candidate" : ""}`;
           row.dataset.revision = revision.id;
           const graph = document.createElement("span");
           graph.className = "graph";
@@ -1080,7 +1200,6 @@
             : revision.immutable
               ? "◆  "
               : "○  ";
-          row.append(graph);
           const review = document.createElement("button");
           review.className = "review-id";
           review.textContent = revision.id;
@@ -1088,15 +1207,33 @@
             "aria-label",
             `${picking ? "Choose destination" : "Review change"} ${revision.id}`,
           );
-          review.disabled =
-            picking && (revision.source || revision.immutable || queued);
+          review.setAttribute(
+            "aria-description",
+            revision.source
+              ? "Reviewed source"
+              : isTarget
+                ? "Squash destination"
+                : revision.immutable
+                  ? "Immutable commit; unavailable as a squash destination"
+                  : "Mutable commit",
+          );
+          review.disabled = picking && (revision.source || revision.immutable);
+          review.title = revision.source
+            ? "Reviewed source"
+            : revision.immutable
+              ? "Immutable commit; unavailable as a squash destination"
+              : isTarget
+                ? "Squash destination"
+                : picking
+                  ? "Set squash destination"
+                  : "Review this change";
           review.onclick = () =>
             picking
               ? choose(revision.id)
               : tell(
-                  "Review navigation is not simulated · this mockup stays on vqkqszmu",
+                  "Review navigation is not simulated · still reviewing vqkqszmu",
                 );
-          row.append(review, document.createTextNode(" "));
+          row.append(graph, review, document.createTextNode(" "));
           const title = document.createElement("span");
           title.className = "row-title";
           if (revision.bookmark) {
@@ -1106,44 +1243,22 @@
             title.append(bookmark);
           }
           title.append(document.createTextNode(revision.title));
-          row.append(title, document.createTextNode("  "));
-          if (revision.source || isTarget) {
-            const badge = document.createElement("span");
-            badge.className = `role${isTarget ? " dest" : ""}`;
-            badge.textContent = revision.source ? "[reviewing]" : "[target]";
-            badge.title = revision.source
-              ? "Reviewed source"
-              : "Squash destination";
-            row.append(badge);
-          } else if (revision.immutable) {
-            const note = document.createElement("span");
-            note.className = "row-note";
-            note.textContent = "[immutable]";
-            row.append(note);
-          } else if (concept === "row" || picking) {
-            const action = document.createElement("button");
-            action.className = "row-action";
-            action.textContent = "[↓]";
-            action.title = "Set squash destination";
-            action.disabled = queued;
-            action.setAttribute("aria-label", `Set destination ${revision.id}`);
-            action.onclick = () => choose(revision.id);
-            row.append(action);
-          }
+          row.append(title);
           if (picking && !revision.source && !revision.immutable) {
             row.style.cursor = "pointer";
+            row.onpointerenter = () => preview(revision.id);
+            review.onfocus = () => preview(revision.id);
             row.onclick = (event) => {
               if (!event.target.closest("button")) choose(revision.id);
             };
           }
           byId("log-list").append(row);
         });
-        byId("log-tip").innerHTML = picking
-          ? "Choose a mutable commit. <strong>Esc cancels</strong> and leaves your destination unchanged."
-          : concept === "search"
-            ? "<strong>Click an ID to review.</strong> Use Change… to search for a different squash destination."
-            : "<strong>Click an ID to review.</strong> Use the separate destination control to choose where selected lines go.";
+        byId("log-tip").textContent = picking
+          ? "Dashed arrow = preview only. Click a row or press Enter to set it. Nothing is squashed yet."
+          : "Click the amber arrow or Change… to pick a destination. Commit IDs still open reviews.";
         if (pickerOpen) renderResults();
+        drawRoute();
       }
       function renderResults() {
         const query = byId("search").value.trim().toLowerCase();
@@ -1155,7 +1270,7 @@
           const empty = document.createElement("p");
           empty.className = "no-results";
           empty.textContent =
-            "No matching fixture commits. Try “delivery”, “types”, or a listed change ID.";
+            "No matching fixture commits. Try “delivery” or “types”.";
           byId("results").append(empty);
           return;
         }
@@ -1166,12 +1281,12 @@
           button.setAttribute("aria-label", `Choose ${revision.id}`);
           const text = document.createElement("span"),
             id = document.createElement("b"),
-            title = document.createElement("span");
+            title = document.createElement("span"),
+            note = document.createElement("small");
           id.textContent = revision.id;
           title.className = "result-title";
           title.textContent = revision.title;
           text.append(id, title);
-          const note = document.createElement("small");
           note.textContent = revision.source
             ? "Source"
             : revision.immutable
@@ -1180,55 +1295,28 @@
                 ? "Default"
                 : revision.id === external.id
                   ? "Outside log"
-                  : revision.id === target
-                    ? "Selected"
-                    : "Choose";
+                  : "Choose";
           button.append(text, note);
           button.onclick = () => choose(revision.id);
           byId("results").append(button);
         });
       }
-      document.querySelectorAll("[data-concept]").forEach(
-        (button) =>
-          (button.onclick = () => {
-            concept = button.dataset.concept;
-            picking = false;
-            pickerOpen = false;
-            render();
-            tell(
-              `Concept ${concept === "row" ? "A" : concept === "mode" ? "B" : "C"} · destination remains ${target}`,
-            );
-          }),
-      );
-      byId("change").onclick = () => {
-        if (queued) return;
-        if (concept === "search") {
-          pickerOpen = !pickerOpen;
-          picking = false;
-          byId("search").value = "";
-          render();
-          if (pickerOpen) byId("search").focus();
-        } else {
-          picking = !picking;
-          pickerOpen = false;
-          render();
-          if (picking)
-            document.querySelector(".row-action:not(:disabled)")?.focus();
-        }
-      };
-      function cancel() {
-        const wasOpen = picking || pickerOpen;
-        picking = false;
-        pickerOpen = false;
-        render();
-        if (wasOpen) {
-          tell(`Destination unchanged · ${target}`);
-          byId("change").focus();
-        }
-      }
-      byId("cancel-pick").onclick = cancel;
-      byId("close-picker").onclick = cancel;
+      document
+        .querySelectorAll("[data-view]")
+        .forEach(
+          (button) => (button.onclick = () => loadExample(button.dataset.view)),
+        );
+      byId("scenario").onchange = () => loadExample(byId("scenario").value);
+      byId("route-handle").onclick = byId("change").onclick = beginPick;
+      byId("cancel-pick").onclick = byId("close-picker").onclick = cancel;
       byId("reset").onclick = () => choose("pqxvqmoo");
+      byId("find").onclick = () => {
+        if (queued) return;
+        pickerOpen = true;
+        byId("search").value = "";
+        render();
+        byId("search").focus();
+      };
       byId("search").oninput = renderResults;
       byId("picker").onkeydown = (event) => {
         if (!["ArrowDown", "ArrowUp"].includes(event.key)) return;
@@ -1247,6 +1335,27 @@
             : Math.max(0, Math.min(buttons.length - 1, index + step))
         ].focus();
       };
+      byId("log-list").onkeydown = (event) => {
+        if (
+          !picking ||
+          pickerOpen ||
+          !["ArrowDown", "ArrowUp", "Enter"].includes(event.key)
+        )
+          return;
+        event.preventDefault();
+        if (event.key === "Enter") {
+          choose(candidate);
+          return;
+        }
+        const index = eligible.findIndex((r) => r.id === candidate),
+          step = event.key === "ArrowDown" ? 1 : -1;
+        const next =
+          eligible[Math.max(0, Math.min(eligible.length - 1, index + step))];
+        preview(next.id);
+        document
+          .querySelector(`[data-revision="${next.id}"] .review-id`)
+          .focus({ preventScroll: true });
+      };
       document.addEventListener("keydown", (event) => {
         if (event.key === "Escape" && (picking || pickerOpen)) {
           event.preventDefault();
@@ -1257,28 +1366,13 @@
         if (
           pickerOpen &&
           !event.target.closest("#picker") &&
-          !event.target.closest("#change")
+          !event.target.closest("#find")
         )
           cancel();
       });
-      byId("scenario").onchange = () => {
-        const state = byId("scenario").value;
-        queued = state === "queued";
-        target =
-          state === "hidden"
-            ? external.id
-            : state === "custom" || queued
-              ? "rwpxovrz"
-              : "pqxvqmoo";
-        picking = false;
-        pickerOpen = false;
-        render();
-        tell(
-          queued
-            ? `Queue preview only · 2 batches pinned to ${target} · target controls locked`
-            : `Example loaded · destination ${target} · still reviewing vqkqszmu`,
-        );
-      };
+      byId("log-list").addEventListener("scroll", drawRoute);
+      new ResizeObserver(drawRoute).observe(byId("log-list"));
+      document.fonts.ready.then(drawRoute);
       byId("squash-demo").onclick = () =>
         tell(
           `Mockup only · would squash 3 selected lines from vqkqszmu into ${target} · no repository writes`,

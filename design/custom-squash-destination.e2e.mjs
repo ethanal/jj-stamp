@@ -108,12 +108,57 @@ async function expectCompactGraph(page) {
       );
   }
 }
+async function expectRoute(page, destination, preview = false) {
+  const handle = page.locator("#route-handle");
+  await expect(handle).toBeVisible();
+  await expect(handle).toHaveAttribute("data-destination", destination);
+  await expect(handle).toHaveClass(preview ? /preview/ : /^(?!.*preview)/);
+  const geometry = await handle.evaluate((button, id) => {
+    const source = document
+      .querySelector(".revision.current")
+      .getBoundingClientRect();
+    const target = document
+      .querySelector(`[data-revision="${id}"]`)
+      .getBoundingClientRect();
+    const bounds = button.getBoundingClientRect();
+    const graphViewport = document
+      .querySelector("#log-list")
+      .getBoundingClientRect();
+    return {
+      sourceError: Math.abs(bounds.top + 6 - (source.top + source.height / 2)),
+      destinationError: Math.abs(
+        bounds.bottom - 6 - (target.top + target.height / 2),
+      ),
+      staysInMargin: bounds.right <= graphViewport.left,
+    };
+  }, destination);
+  assert.ok(
+    geometry.sourceError < 0.1,
+    "arrow starts at the source row center",
+  );
+  assert.ok(
+    geometry.destinationError < 0.1,
+    "arrow lands at the destination row center",
+  );
+  assert.equal(
+    geometry.staysInMargin,
+    true,
+    "arrow never displaces or overlaps the jj graph",
+  );
+}
+async function captureLog(page, filename) {
+  const bounds = await page.locator(".log").boundingBox();
+  await page.screenshot({
+    path: `.planka-artifacts/${filename}`,
+    clip: { ...bounds, height: 275 },
+  });
+}
 try {
   const page = await browser.newPage({
     viewport: { width: 1440, height: 1080 },
   });
-  const errors = [];
-  const requests = [];
+  const errors = [],
+    requests = [];
   page.on("pageerror", (error) => errors.push(error.message));
   page.on("request", (request) => {
     if (/^https?:/.test(request.url())) requests.push(request.url());
@@ -122,57 +167,32 @@ try {
     new URL("./custom-squash-destination.html", import.meta.url).href,
   );
   await page.evaluate(() => document.fonts.ready);
-  for (const line of await page.locator(".line").all()) {
-    await expect(line).toHaveCSS("height", "23px");
-  }
-  await expectCompactGraph(page);
   const target = page.locator("#destination-id");
   const source = page.locator(".revision.current .review-id");
+  await expectCompactGraph(page);
+  await expectRoute(page, "pqxvqmoo");
   await expect(target).toHaveText("pqxvqmoo");
-  await expect(page.locator(".revision.target")).toHaveAttribute(
-    "data-revision",
-    "pqxvqmoo",
-  );
   await expect(page.locator("#reset")).toBeHidden();
-  await expect(source).toHaveText("vqkqszmu");
+  await expect(page.locator(".role, .row-note, .row-action")).toHaveCount(0);
+  await expect(page.locator(".revision.target")).toHaveCSS(
+    "box-shadow",
+    "none",
+  );
+  await expect(page.locator(".revision.target")).toHaveCSS(
+    "border-left-width",
+    "0px",
+  );
+  await expect(page.locator(".revision.target")).toHaveCSS(
+    "background-color",
+    "rgb(41, 38, 31)",
+  );
+  await captureLog(page, "arrow-01-parent-default.png");
 
-  // A: explicit row action changes only the destination, not the source/selection.
+  // The arrow itself is the destination picker; selecting never changes source.
   await page
-    .getByRole("button", { name: "Set destination rwpxovrz", exact: true })
+    .getByRole("button", { name: /Change squash destination, currently/ })
     .click();
-  await expect(target).toHaveText("rwpxovrz");
-  await expect(page.locator("#destination-kind")).toHaveText("custom");
-  await expect(page.locator("#selection-target")).toHaveText("rwpxovrz");
-  await expect(source).toHaveText("vqkqszmu");
-  await expect(page.locator(".line.sel")).toHaveCount(3);
-  await expect(page.locator(".revision.target .role")).toHaveText("[target]");
-  await expectCompactGraph(page);
-  // Present the selected target and the independent inline action together.
-  await page.locator('[data-revision="pqxvqmoo"]').hover();
-  await page.screenshot({
-    path: ".planka-artifacts/option-a-inline-log-action.png",
-    fullPage: true,
-  });
-  await page.getByRole("button", { name: "Reset", exact: true }).click();
-  await expect(target).toHaveText("pqxvqmoo");
-  await expect(page.locator("#scenario")).toHaveValue("default");
-
-  // Keyboard focus exposes A's otherwise hover-only row control.
-  const older = page.getByRole("button", {
-    name: "Set destination ksuunvyp",
-    exact: true,
-  });
-  await older.focus();
-  await expect(older).toHaveCSS("opacity", "1");
-  await page.keyboard.press("Enter");
-  await expect(target).toHaveText("ksuunvyp");
-  await page.getByRole("button", { name: "Reset", exact: true }).click();
-
-  // B: explicit mode, click a row, cancel/Escape without changing the destination.
-  await page.locator('[data-concept="mode"]').click();
-  await page.locator("#change").click();
   await expect(page.locator("#pick-banner")).toBeVisible();
-  await expectCompactGraph(page);
   await expect(
     page.getByRole("button", {
       name: "Choose destination vqkqszmu",
@@ -185,24 +205,53 @@ try {
       exact: true,
     }),
   ).toBeDisabled();
-  await page.screenshot({
-    path: ".planka-artifacts/option-b-choose-in-log.png",
-    fullPage: true,
-  });
+  await page.locator('[data-revision="rwpxovrz"] .row-title').hover();
+  await expectRoute(page, "rwpxovrz", true);
+  await expect(target).toHaveText("pqxvqmoo");
+  await expect(page.locator(".revision.target")).toHaveAttribute(
+    "data-revision",
+    "pqxvqmoo",
+  );
+  await expectCompactGraph(page);
+  await captureLog(page, "arrow-02-choose-destination.png");
   await page.keyboard.press("Escape");
   await expect(target).toHaveText("pqxvqmoo");
+  await expectRoute(page, "pqxvqmoo");
   await expect(page.locator("#change")).toBeFocused();
   await page.locator("#change").click();
-  await page.locator('[data-revision="ksuunvyp"] .row-title').click();
-  await expect(target).toHaveText("ksuunvyp");
+  await page.locator('[data-revision="rwpxovrz"] .row-title').click();
+  await expect(target).toHaveText("rwpxovrz");
   await expect(page.locator("#pick-banner")).toBeHidden();
+  await expectRoute(page, "rwpxovrz");
   await expect(source).toHaveText("vqkqszmu");
-
-  // C: fixture search, unavailable rows, empty results, keyboard selection, external target.
-  await page.locator('[data-concept="search"]').click();
-  await page.getByRole("button", { name: "Reset", exact: true }).click();
+  await expect(page.locator(".line.sel")).toHaveCount(3);
+  await expect(page.locator("#selection-target")).toHaveText("rwpxovrz");
+  await expect(page.locator("#footer-destination")).toHaveText("rwpxovrz");
   await expectCompactGraph(page);
+  await captureLog(page, "arrow-03-custom-destination.png");
+  await page.locator("#reset").click();
+  await expectRoute(page, "pqxvqmoo");
+
+  // Keyboard entry and bounded candidate navigation, skipping source/immutable.
+  await page.locator("#route-handle").focus();
+  await page.keyboard.press("Enter");
+  await page.keyboard.press("ArrowUp");
+  await expectRoute(page, "pqxvqmoo", true);
+  await page.keyboard.press("ArrowDown");
+  await expectRoute(page, "rwpxovrz", true);
+  await page.keyboard.press("ArrowDown");
+  await page.keyboard.press("ArrowDown");
+  await expectRoute(page, "ksuunvyp", true);
+  await page.keyboard.press("Enter");
+  await expect(target).toHaveText("ksuunvyp");
+  await expectRoute(page, "ksuunvyp");
   await page.locator("#change").click();
+  await page.locator("#cancel-pick").click();
+  await expect(target).toHaveText("ksuunvyp");
+
+  // Search is available inside pick mode, including off-filter fixture commits.
+  await page.locator("#change").click();
+  await page.locator("#find").click();
   await expect(page.locator("#search")).toBeFocused();
   await expect(
     page.getByRole("button", { name: "Choose vqkqszmu", exact: true }),
@@ -210,109 +259,89 @@ try {
   await expect(
     page.getByRole("button", { name: "Choose zzzzzzzz", exact: true }),
   ).toBeDisabled();
-  await page.locator("#search").fill("no such commit");
+  await page.locator("#search").fill("no matching commit");
   await expect(page.locator(".no-results")).toBeVisible();
   await page.locator("#search").fill("delivery");
   await expect(page.locator(".result")).toHaveCount(3);
-  await page.screenshot({
-    path: ".planka-artifacts/option-c-search-destination.png",
-    fullPage: true,
-  });
   await page.keyboard.press("ArrowDown");
-  await expect(
-    page.getByRole("button", { name: "Choose rwpxovrz", exact: true }),
-  ).toBeFocused();
   await page.keyboard.press("ArrowDown");
   await page.keyboard.press("Enter");
   await expect(target).toHaveText("nukxtrvy");
   await expect(page.locator("#outside")).toBeVisible();
+  await expect(page.locator("#route-handle")).toBeHidden();
   await expect(page.locator(".revision.target")).toHaveCount(0);
-  await expect(source).toHaveText("vqkqszmu");
   await page.locator("#change").click();
-  await page.locator("#search").fill("types");
-  await page.locator("#close-picker").click();
-  await expect(target).toHaveText("nukxtrvy");
-  await expect(page.locator("#picker")).toBeHidden();
-  await expect(page.locator("#change")).toBeFocused();
-  await page.locator("#change").click();
+  await page.locator("#find").click();
   await page.locator("h1").click();
   await expect(page.locator("#picker")).toBeHidden();
   await expect(target).toHaveText("nukxtrvy");
+  await page.locator("#change").click();
+  await page.locator("#find").click();
+  await page.locator("#close-picker").click();
+  await expect(target).toHaveText("nukxtrvy");
+  await page.locator("#reset").click();
 
-  // All concepts freeze destination while the illustrative queue is active.
-  for (const concept of ["row", "mode", "search"]) {
-    await page.locator(`[data-concept="${concept}"]`).click();
-    await page.locator("#scenario").selectOption("queued");
-    await expect(page.locator("#locked")).toBeVisible();
-    await expect(page.locator("#change")).toBeDisabled();
-    await expect(page.locator("#reset")).toBeDisabled();
-    await expect(page.locator("#squash-demo")).toBeDisabled();
-    for (const action of await page.locator(".row-action").all())
-      await expect(action).toBeDisabled();
-    await expect(target).toHaveText("rwpxovrz");
-    await page.locator("#scenario").selectOption("default");
-  }
+  // Illustrative queue pins the destination, including the new arrow handle.
+  await page.locator("#scenario").selectOption("queued");
+  await expect(page.locator("#locked")).toBeVisible();
+  for (const id of ["route-handle", "change", "reset", "squash-demo"])
+    await expect(page.locator(`#${id}`)).toBeDisabled();
+  await expectRoute(page, "rwpxovrz");
+  await page.locator("#scenario").selectOption("default");
   await page.locator("#squash-demo").click();
   await expect(page.locator("#status")).toContainText("no repository writes");
 
-  // Preview bundle is independently usable, with no font/asset failure.
-  await page.goto(
-    new URL("../.planka-artifacts/index.html", import.meta.url).href,
-  );
-  await page.evaluate(() => document.fonts.ready);
-  assert.equal(
-    await page.evaluate(() => document.fonts.check("13px Source")),
-    true,
-  );
-  await expect(page.locator("#destination-id")).toHaveText("pqxvqmoo");
-  // Exercise the same self-contained document displayed by output_iframe.
-  await page.goto(
-    new URL("../.planka-artifacts/interactive-mockups.html", import.meta.url)
-      .href,
-  );
-  await page.evaluate(() => document.fonts.ready);
-  assert.equal(
-    await page.evaluate(() => document.fonts.check("13px Source")),
-    true,
-  );
-  await expectCompactGraph(page);
-  await page
-    .getByRole("button", { name: "Set destination rwpxovrz", exact: true })
-    .click();
-  await expect(page.locator("#destination-id")).toHaveText("rwpxovrz");
+  // Each walkthrough state and the same iframe-ready standalone presentation.
+  for (const state of ["default", "picking", "custom"]) {
+    await page.locator(`[data-view="${state}"]`).click();
+    await expectCompactGraph(page);
+    await expectRoute(
+      page,
+      state === "default" ? "pqxvqmoo" : "rwpxovrz",
+      state === "picking",
+    );
+  }
+  for (const name of ["index.html", "interactive-mockups.html"]) {
+    await page.goto(
+      new URL(`../.planka-artifacts/${name}`, import.meta.url).href,
+    );
+    await page.evaluate(() => document.fonts.ready);
+    assert.equal(
+      await page.evaluate(() => document.fonts.check("13px Source")),
+      true,
+    );
+    await expectCompactGraph(page);
+    await expectRoute(page, "pqxvqmoo");
+  }
   await page.setViewportSize({ width: 390, height: 844 });
   assert.equal(
     await page.evaluate(
       () => document.documentElement.scrollWidth <= innerWidth,
     ),
     true,
-    "narrow preview should not overflow",
+    "narrow preview must not overflow",
   );
   await expectCompactGraph(page);
+  await expectRoute(page, "pqxvqmoo");
+  const beforeScroll = await page.locator("#route-handle").boundingBox();
+  await page.locator("#log-list").evaluate((log) => {
+    log.scrollLeft = 100;
+  });
+  await expectRoute(page, "pqxvqmoo");
+  const afterScroll = await page.locator("#route-handle").boundingBox();
   assert.equal(
-    await page
-      .locator("#log-list")
-      .evaluate((log) => log.scrollWidth > log.clientWidth),
-    true,
-    "long monospace lines scroll inside the log instead of wrapping or truncating",
+    beforeScroll.x,
+    afterScroll.x,
+    "arrow remains in fixed margin during horizontal scroll",
   );
-  await page.locator('[data-concept="search"]').click();
-  await page.locator("#change").click();
-  await expect(page.locator("#search")).toBeVisible();
-  await page.locator("#search").fill("types");
-  await page
-    .getByRole("button", { name: "Choose ksuunvyp", exact: true })
-    .click();
-  await expect(page.locator("#destination-id")).toHaveText("ksuunvyp");
-
+  await page.locator("#route-handle").click();
+  await page.locator('[data-revision="ksuunvyp"] .row-title').click();
+  await expect(target).toHaveText("ksuunvyp");
+  await expectRoute(page, "ksuunvyp");
   assert.deepEqual(errors, [], "no uncaught browser errors");
-  assert.deepEqual(
-    requests,
-    [],
-    "mockups must not call APIs or external services",
-  );
+  assert.deepEqual(requests, [], "no HTTP/API requests");
   console.log(
-    "PASS: compact monospace/normal-line-height graph across A/B/C and mobile, inline source/target controls, destination choice, selection preservation, reset, keyboard, cancellation, search, unavailable rows, queue lock, external target, standalone bundle; zero page errors or HTTP requests.",
+    "PASS: arrow geometry/default/custom/preview, click-arrow and keyboard destination choice, cancel/reset, unchanged compact graph/source/selection, no role labels/stripe, search, queue lock, off-filter target, mobile scrolling, both presentation bundles; zero page errors or HTTP requests.",
   );
 } finally {
   await browser.close();
