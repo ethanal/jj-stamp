@@ -40,10 +40,10 @@ export function materializeSelection(
   if (Buffer.from(input.patch, "utf8").toString("utf8") !== input.patch)
     throw new Error("Patch is not lossless UTF-8 text.");
   const file = parseFile(input.patch, input.path);
-  // The single-path scratch plan cannot preserve a rename. Review parsing is
-  // deliberately broader than native mutation support; never silently drop it.
-  if (file.oldPath !== undefined)
-    throw new Error("Line squash is not supported for renamed files.");
+  // Select content independently of the move: the parent keeps the old path,
+  // while jj leaves the rename and unselected edits in the source change.
+  // The caller must account for BOTH paths in the scratch inventories.
+  const resultPath = file.oldPath ?? input.path;
   const baseLines = textLines(base, "Base file");
   const sourceLines = textLines(source, "Source file");
   const headerLines = input.patch.split("\n").slice(
@@ -199,9 +199,9 @@ export function materializeSelection(
         ? "deleted file mode 100644\n"
         : "";
   const preview =
-    `diff --git a/${input.path} b/${input.path}\n${mode}` +
-    `--- ${base === null ? "/dev/null" : `a/${input.path}`}\n` +
-    `+++ ${result === null ? "/dev/null" : `b/${input.path}`}\n` +
+    `diff --git a/${resultPath} b/${resultPath}\n${mode}` +
+    `--- ${base === null ? "/dev/null" : `a/${resultPath}`}\n` +
+    `+++ ${result === null ? "/dev/null" : `b/${resultPath}`}\n` +
     previewHunks.join("");
   return { result, preview };
 }

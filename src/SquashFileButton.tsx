@@ -21,7 +21,10 @@ export function SquashFileButton({
       className="squash-file"
       aria-label={`Squash file ${file.path}`}
       title={
-        reason || "Squash all changes in this file into the immediate parent"
+        reason ||
+        (file.oldPath
+          ? "Squash all text edits into the original path; keep the rename in this change"
+          : "Squash all changes in this file into the immediate parent")
       }
       disabled={disabled || !!reason || !(file.additions + file.deletions)}
       onClick={() => onSquash(file.path)}

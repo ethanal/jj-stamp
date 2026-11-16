@@ -315,14 +315,27 @@ function projectFile(
       ...contractHunk(hunk, rows, oldFirst, newFirst, match[5], reservedIds),
     );
   }
-  if (!hunks.length) return null;
+  if (!hunks.length) {
+    if (file.oldPath === undefined) return null;
+    // Text edits can disappear, but the unsquashed move remains reviewable.
+    return {
+      ...file,
+      hunks: [],
+      additions: 0,
+      deletions: 0,
+      patch: `diff --git a/${file.oldPath} b/${file.path}\nrename from ${file.oldPath}\nrename to ${file.path}\n`,
+    };
+  }
   const isNew = /^--- \/dev\/null$/m.test(file.patch) && movedAdditions === 0;
   const isDeleted = /^\+\+\+ \/dev\/null$/m.test(file.patch);
   const prefix = [
-    `diff --git a/${file.path} b/${file.path}`,
+    `diff --git a/${file.oldPath ?? file.path} b/${file.path}`,
+    ...(file.oldPath === undefined
+      ? []
+      : [`rename from ${file.oldPath}`, `rename to ${file.path}`]),
     ...(isNew ? ["new file mode 100644"] : []),
     ...(isDeleted ? ["deleted file mode 100644"] : []),
-    `--- ${isNew ? "/dev/null" : `a/${file.path}`}`,
+    `--- ${isNew ? "/dev/null" : `a/${file.oldPath ?? file.path}`}`,
     `+++ ${isDeleted ? "/dev/null" : `b/${file.path}`}`,
   ];
   let additions = 0,
