@@ -30,6 +30,7 @@ async function reviewWorkingCopy() {
   apiRouter = createApi(service);
 }
 const initial = await service.getState();
+const repositoryTitle = `jj-stamp: ${path.basename(initial.repo.path)}`;
 const app = express();
 app.use("/api", (req, res, next) => apiRouter(req, res, next));
 const fixture = await createBrowserFixture({
@@ -176,9 +177,7 @@ try {
   await expect(page.getByRole("checkbox")).toHaveCount(0);
   await expect(page.getByRole("button", { name: "reset demo" })).toHaveCount(0);
   await expect(codeLine(21)).toBeVisible();
-  await expect(page).toHaveTitle(
-    `${initial.source.description} (${initial.source.changeId.slice(0, 8)} ${initial.repo.path})`,
-  );
+  await expect(page).toHaveTitle(repositoryTitle);
   await expect(page.getByLabel("Repository path")).toHaveText(
     initial.repo.path,
   );
@@ -1092,24 +1091,24 @@ try {
     "Updated commit title\n\nDescription body",
   ]);
   const described = await refreshState();
-  await expect(page).toHaveTitle(
-    `Updated commit title (${described.source.changeId.slice(0, 8)} ${initial.repo.path})`,
+  await expect(page).toHaveTitle(repositoryTitle);
+  await expect(page.locator(".source-description")).toContainText(
+    "Updated commit title",
   );
   await jj(initial.repo.path, ["new", "-m", "Next change"]);
   const stillReviewed = await refreshState();
   assert.equal(stillReviewed.source.changeId, described.source.changeId);
-  await expect(page).toHaveTitle(
-    `Updated commit title (${described.source.changeId.slice(0, 8)} ${initial.repo.path})`,
-  );
+  await expect(page).toHaveTitle(repositoryTitle);
   await reviewWorkingCopy();
   const next = await refreshState();
   assert.notEqual(next.source.changeId, described.source.changeId);
   await expect(page.locator(".file-tree [role=treeitem]")).toHaveCount(0);
-  await expect(page).toHaveTitle(
-    `Next change (${next.source.changeId.slice(0, 8)} ${initial.repo.path})`,
+  await expect(page).toHaveTitle(repositoryTitle);
+  await expect(page.locator(".source-description")).toContainText(
+    "Next change",
   );
   console.log(
-    "✓ Page title follows the short change ID and commit title on refresh",
+    "✓ Repository page title stays stable while revision headings follow refresh and navigation",
   );
   // Tree structure follows real repository changes, including duplicate
   // basenames, read-only files, and removal/restoration of a whole file.

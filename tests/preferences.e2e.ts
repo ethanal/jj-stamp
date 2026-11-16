@@ -222,9 +222,7 @@ try {
     "font-family",
     '"Source Code Pro", monospace',
   );
-  await expect(page).toHaveTitle(
-    `${source.description} (abcdefgh /home/reviewer/full/path/example)`,
-  );
+  await expect(page).toHaveTitle("jj-stamp: example");
   await expect(
     page.getByLabel("Current change ID").locator("strong"),
   ).toHaveCount(0);
