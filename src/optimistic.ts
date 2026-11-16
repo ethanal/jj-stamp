@@ -1,9 +1,10 @@
 import type { DiffFile, Hunk, RepoState, Row, Selections } from "./types";
+import { pureRenameSelectionId } from "./file-selection";
 
-/** Coordinates are in the version of the diff in which the selection was made. */
+/** Coordinates are in the selected diff. Renames use line 0 and the old path as text. */
 export type RowRef = {
   path: string;
-  kind: "+" | "-";
+  kind: "+" | "-" | "rename";
   line: number;
   text: string;
   noNewline?: boolean;
@@ -12,6 +13,10 @@ export type SquashSpec = { id: string; lines: number[] };
 
 const key = (ref: RowRef): string =>
   JSON.stringify([ref.path, ref.kind, ref.line, ref.text, !!ref.noNewline]);
+
+function renameRef(file: DiffFile): RowRef {
+  return { path: file.path, kind: "rename", line: 0, text: file.oldPath! };
+}
 
 function rowRef(path: string, row: Row): RowRef {
   const kind = row.raw[0];
@@ -41,9 +46,11 @@ function checkedKeys(refs: RowRef[]): Set<string> {
       typeof ref.path !== "string" ||
       typeof ref.text !== "string" ||
       (ref.noNewline !== undefined && typeof ref.noNewline !== "boolean") ||
-      (ref.kind !== "+" && ref.kind !== "-") ||
-      !Number.isSafeInteger(ref.line) ||
-      ref.line < 1
+      (ref.kind === "rename"
+        ? ref.line !== 0 || ref.noNewline !== undefined
+        : (ref.kind !== "+" && ref.kind !== "-") ||
+          !Number.isSafeInteger(ref.line) ||
+          ref.line < 1)
     )
       throw new Error("Invalid changed-row reference.");
     const value = key(ref);
@@ -94,12 +101,17 @@ export function refsFromSelection(
   return refs;
 }
 
-/** Select every remaining changed row in one file from the current optimistic view. */
+/** Select all remaining text changes, or a pure rename, in the optimistic view. */
 export function refsFromFile(state: RepoState, path: string): RowRef[] {
   const file = state.files.find((entry) => entry.path === path);
   if (!file) throw new Error("Selected file no longer exists.");
   if (file.unsupported) throw new Error("Selected file is unsupported.");
   if (file.squashUnsupported) throw new Error(file.squashUnsupported);
+  if (pureRenameSelectionId(file) !== undefined) {
+    const refs = [renameRef(file)];
+    specsForRefs(state, refs);
+    return refs;
+  }
   return refsFromSelection(
     state,
     Object.fromEntries(
@@ -119,7 +131,18 @@ export function specsForRefs(state: RepoState, refs: RowRef[]): SquashSpec[] {
   const matches = new Set<string>();
   const specs: SquashSpec[] = [];
   const ids = new Set<string>();
-  for (const file of state.files)
+  for (const file of state.files) {
+    const renameId = pureRenameSelectionId(file);
+    if (renameId !== undefined) {
+      const renameKey = key(renameRef(file));
+      if (wanted.has(renameKey)) {
+        if (file.squashUnsupported) throw new Error(file.squashUnsupported);
+        if (matches.has(renameKey))
+          throw new Error("Rename reference is ambiguous.");
+        matches.add(renameKey);
+        specs.push({ id: renameId, lines: [] });
+      }
+    }
     for (const hunk of file.hunks) {
       if (ids.has(hunk.id)) throw new Error("Ambiguous hunk ID.");
       ids.add(hunk.id);
@@ -148,6 +171,7 @@ export function specsForRefs(state: RepoState, refs: RowRef[]): SquashSpec[] {
       }
       if (lines.length) specs.push({ id: hunk.id, lines });
     }
+  }
   if (matches.size !== wanted.size)
     throw new Error(
       "Selected changes no longer match the repository; refresh before squashing.",
@@ -155,14 +179,16 @@ export function specsForRefs(state: RepoState, refs: RowRef[]): SquashSpec[] {
   return specs;
 }
 
-/** Context, hunk boundaries, IDs, and metadata deliberately do not participate. */
+/** Context, hunk boundaries and IDs do not participate; moves are changes too. */
 export function changeSignature(state: RepoState): string {
   const keys: string[] = [];
-  for (const file of state.files)
+  for (const file of state.files) {
+    if (file.oldPath !== undefined) keys.push(key(renameRef(file)));
     for (const hunk of file.hunks)
       for (const row of hunk.rows)
         if (row.raw[0] === "+" || row.raw[0] === "-")
           keys.push(key(rowRef(file.path, row)));
+  }
   return JSON.stringify(keys.sort());
 }
 
@@ -178,6 +204,16 @@ export function combineSquashRefs(
   const combined = [...selected];
   const matched = new Set<string>();
   for (const file of state.files) {
+    if (pureRenameSelectionId(file) !== undefined) {
+      const original = renameRef(file);
+      const value = key(original);
+      if (!moved.has(value) && wanted.has(value)) {
+        if (matched.has(value))
+          throw new Error("Rename reference is ambiguous.");
+        matched.add(value);
+        combined.push(original);
+      }
+    }
     // Squashing only changes the parent side. Carry its offset across hunks,
     // but never across files; additions retain their source coordinates.
     let delta = 0;

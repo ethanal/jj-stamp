@@ -4,6 +4,7 @@ import path from "node:path";
 import { parseFile, ranges } from "./diff.ts";
 import type { Row } from "./diff.ts";
 import { materializeSelection } from "./selection.ts";
+import { pureRenameSelectionId } from "../src/file-selection.ts";
 import { validateDiffEditorPlan, withDiffEditor } from "./diff-editor.ts";
 import type { DiffEditorPlan } from "./diff-editor.ts";
 import { editorExpression, resolveEditorPath } from "./editor.ts";
@@ -1538,7 +1539,7 @@ export class ReviewService {
       throw new ApiError(
         400,
         "INVALID_SELECTION",
-        "Select at least one changed line.",
+        "Select at least one changed line or rename.",
       );
     const byId = new Map<string, number[]>();
     for (const selection of input.selections) {
@@ -1547,7 +1548,6 @@ export class ReviewService {
         typeof selection.id !== "string" ||
         byId.has(selection.id) ||
         !Array.isArray(selection.lines) ||
-        !selection.lines.length ||
         selection.lines.length > 100000 ||
         selection.lines.some((n) => !Number.isSafeInteger(n) || n < 1) ||
         new Set(selection.lines).size !== selection.lines.length
@@ -1555,7 +1555,7 @@ export class ReviewService {
         throw new ApiError(
           400,
           "INVALID_SELECTION",
-          "Selections must contain unique hunks and unique, positive patch-body line indices.",
+          "Selections must contain unique hunks or rename IDs and unique, positive patch-body line indices.",
         );
       }
       byId.set(
@@ -1566,12 +1566,26 @@ export class ReviewService {
     const picked: Array<{
       patch: string;
       path: string;
-      hunk: ReviewHunk;
+      hunk?: ReviewHunk;
       lines: number[];
     }> = [];
     const specs: string[] = [];
     let selectedLines = 0;
-    for (const file of state.files)
+    for (const file of state.files) {
+      const renameId = pureRenameSelectionId(file);
+      if (renameId !== undefined && byId.has(renameId)) {
+        if (file.squashUnsupported)
+          throw new ApiError(422, "SQUASH_UNSUPPORTED", file.squashUnsupported);
+        if (byId.get(renameId)!.length)
+          throw new ApiError(
+            400,
+            "INVALID_SELECTION",
+            "A pure rename selection must contain no text rows.",
+          );
+        picked.push({ patch: file.patch, path: file.path, lines: [] });
+        specs.push(renameId);
+        byId.delete(renameId);
+      }
       for (const hunk of file.hunks) {
         const lines = byId.get(hunk.id);
         if (!lines) continue;
@@ -1581,7 +1595,7 @@ export class ReviewService {
           throw new ApiError(422, "SQUASH_UNSUPPORTED", file.squashUnsupported);
         const changed = hunk.rows.filter((row) => /^[+-]/.test(row.raw));
         const changedIndices = new Set(changed.map((row) => row.index));
-        if (lines.some((index) => !changedIndices.has(index)))
+        if (!lines.length || lines.some((index) => !changedIndices.has(index)))
           throw new ApiError(
             400,
             "INVALID_SELECTION",
@@ -1596,6 +1610,7 @@ export class ReviewService {
         selectedLines += lines.length;
         byId.delete(hunk.id);
       }
+    }
     if (byId.size || !specs.length)
       throw new ApiError(
         400,
@@ -1649,10 +1664,16 @@ export class ReviewService {
           {
             path: file.path,
             patch: file.patch,
-            selections: selections.map((pick) => ({
-              hunk: file.hunks.indexOf(pick.hunk),
-              lines: pick.lines,
-            })),
+            selections: selections.flatMap((pick) =>
+              pick.hunk
+                ? [
+                    {
+                      hunk: file.hunks.indexOf(pick.hunk),
+                      lines: pick.lines,
+                    },
+                  ]
+                : [],
+            ),
           },
           base,
           source,

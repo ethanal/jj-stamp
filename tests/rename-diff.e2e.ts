@@ -3,6 +3,7 @@ import {
   mkdir,
   mkdtemp,
   readFile,
+  readdir,
   rename,
   rm,
   writeFile,
@@ -28,7 +29,10 @@ const repoPath = await createDemo(directory);
 await jj(repoPath, ["commit", "-m", "Polish notification delivery"]);
 const oldPath = "src/notifications.ts";
 const newPath = "src/delivery.ts";
+const pureOldPath = "src/preferences.ts";
+const pureNewPath = "src/settings.ts";
 const original = await readFile(path.join(repoPath, oldPath), "utf8");
+const pureOriginal = await readFile(path.join(repoPath, pureOldPath));
 await rename(path.join(repoPath, oldPath), path.join(repoPath, newPath));
 await writeFile(
   path.join(repoPath, newPath),
@@ -41,8 +45,8 @@ await writeFile(
     ),
 );
 await rename(
-  path.join(repoPath, "src/preferences.ts"),
-  path.join(repoPath, "src/settings.ts"),
+  path.join(repoPath, pureOldPath),
+  path.join(repoPath, pureNewPath),
 );
 await writeFile(
   path.join(repoPath, "README.md"),
@@ -72,9 +76,21 @@ await page.addInitScript(() => {
   document.hasFocus = () => false;
 });
 const mutations: string[] = [];
+const mutationRequests: Array<{
+  method: string;
+  path: string;
+  body: unknown;
+}> = [];
 page.on("request", (request) => {
   if (/\/api\/(squash|preview)/.test(request.url()))
     mutations.push(request.url());
+  const pathname = new URL(request.url()).pathname;
+  if (/^\/api\/(?:squash-lines|squash|preview|undo)$/.test(pathname))
+    mutationRequests.push({
+      method: request.method(),
+      path: pathname,
+      body: request.postDataJSON(),
+    });
 });
 const treeRow = (name: string) =>
   page.locator(`.file-tree [role="treeitem"][data-item-path="${name}"]`);
@@ -83,6 +99,34 @@ const changedLine = (value: string) =>
     .locator('[data-line-type="change-addition"]')
     .filter({ hasText: value })
     .last();
+const revisionTree = async (revision: string) =>
+  (
+    await jj(repoPath, [
+      "diff",
+      "--from",
+      "root()",
+      "--to",
+      revision,
+      "--git",
+      "--ignore-working-copy",
+    ])
+  ).stdout;
+async function workspaceFiles(directory = repoPath): Promise<unknown[]> {
+  const entries = await readdir(directory, { withFileTypes: true });
+  return Promise.all(
+    entries
+      .filter((entry) => ![".jj", ".git"].includes(entry.name))
+      .sort((a, b) => a.name.localeCompare(b.name))
+      .map(async (entry) => [
+        entry.name,
+        entry.isDirectory()
+          ? await workspaceFiles(path.join(directory, entry.name))
+          : (await readFile(path.join(directory, entry.name))).toString(
+              "base64",
+            ),
+      ]),
+  );
+}
 try {
   await page.goto(url);
   await treeRow(newPath).click();
@@ -217,7 +261,7 @@ try {
   await treeRow(newPath).click();
   await expect(changedLine("MAX_ATTEMPTS = 5")).toBeVisible();
 
-  await treeRow("src/settings.ts").click();
+  await treeRow(pureNewPath).click();
   await expect(page.locator(".file-bar-filename")).toHaveText(
     "src/preferences.ts → src/settings.ts",
   );
@@ -227,12 +271,131 @@ try {
   await expect(page.locator(".code-surface")).toHaveCount(0);
   await expect(
     page.getByRole("button", {
-      name: "Squash file src/settings.ts",
+      name: `Squash file ${pureNewPath}`,
       exact: true,
     }),
-  ).toBeDisabled();
+  ).toBeEnabled();
 
-  await page.getByRole("button", { name: "All files", exact: true }).click();
+  const beforePure = await service.getState();
+  const sourceTree = await revisionTree(beforePure.source.changeId);
+  const parentTree = await revisionTree(beforePure.parent!.commitId);
+  const workspace = await workspaceFiles();
+  const pureToken = `rename:${JSON.stringify([pureOldPath, pureNewPath])}`;
+  for (const view of ["single", "all"] as const) {
+    if (view === "all") {
+      await page
+        .getByRole("button", { name: "All files", exact: true })
+        .click();
+      await expect(
+        page.locator(`[data-file-path="${pureNewPath}"] h2`),
+      ).toHaveText(`${pureOldPath} → ${pureNewPath}`);
+    }
+    const before = await service.getState();
+    const requestStart = mutationRequests.length;
+    await page
+      .getByRole("button", {
+        name: `Squash file ${pureNewPath}`,
+        exact: true,
+      })
+      .scrollIntoViewIfNeeded();
+    await page.screenshot({
+      path: path.join(screenshots, `pure-rename-${view}-before.png`),
+    });
+    await page
+      .getByRole("button", {
+        name: `Squash file ${pureNewPath}`,
+        exact: true,
+      })
+      .click();
+    await expect(treeRow(pureNewPath)).toHaveCount(0);
+    await expect(
+      page.getByRole("button", {
+        name: `Squash file ${pureNewPath}`,
+        exact: true,
+      }),
+    ).toHaveCount(0);
+    await expect(
+      page.getByRole("button", { name: "Undo", exact: true }),
+    ).toBeEnabled();
+    await expect(page.getByRole("alert")).toHaveCount(0);
+    const afterPure = await service.getState();
+    assert.equal(
+      afterPure.files.find((file) => file.path === pureNewPath),
+      undefined,
+    );
+    assert.deepEqual(
+      afterPure.files.map((file) => file.path),
+      before.files
+        .filter((file) => file.path !== pureNewPath)
+        .map((file) => file.path),
+    );
+    const paths = (
+      await jj(repoPath, [
+        "file",
+        "list",
+        "-r",
+        afterPure.parent!.commitId,
+        "--ignore-working-copy",
+      ])
+    ).stdout.split("\n");
+    assert.ok(paths.includes(pureNewPath));
+    assert.ok(!paths.includes(pureOldPath));
+    assert.equal(
+      (
+        await jj(repoPath, [
+          "file",
+          "show",
+          "-r",
+          afterPure.parent!.commitId,
+          "--ignore-working-copy",
+          "--",
+          `root-file:${JSON.stringify(pureNewPath)}`,
+        ])
+      ).stdout,
+      pureOriginal.toString("utf8"),
+    );
+    assert.equal(afterPure.source.changeId, beforePure.source.changeId);
+    assert.equal(await revisionTree(afterPure.source.changeId), sourceTree);
+    assert.deepEqual(await workspaceFiles(), workspace);
+    assert.deepEqual(mutationRequests.slice(requestStart), [
+      {
+        method: "POST",
+        path: "/api/squash-lines",
+        body: {
+          version: before.version,
+          selections: [{ id: pureToken, lines: [] }],
+        },
+      },
+    ]);
+    await page.screenshot({
+      path: path.join(screenshots, `pure-rename-${view}-after.png`),
+    });
+    await page.getByRole("button", { name: "Undo", exact: true }).click();
+    await expect(treeRow(pureNewPath)).toBeVisible();
+    await expect(
+      page.getByRole("button", {
+        name: `Squash file ${pureNewPath}`,
+        exact: true,
+      }),
+    ).toBeEnabled();
+    await expect(page.getByRole("alert")).toHaveCount(0);
+    const undone = await service.getState();
+    assert.equal(
+      undone.files.find((file) => file.path === pureNewPath)?.oldPath,
+      pureOldPath,
+    );
+    assert.equal(await revisionTree(undone.parent!.commitId), parentTree);
+    assert.equal(await revisionTree(undone.source.changeId), sourceTree);
+    assert.deepEqual(await workspaceFiles(), workspace);
+    assert.deepEqual(mutationRequests.slice(requestStart + 1), [
+      {
+        method: "POST",
+        path: "/api/undo",
+        body: { version: afterPure.version },
+      },
+    ]);
+  }
+
   await expect(page.locator(`[data-file-path="${newPath}"] h2`)).toHaveText(
     `${oldPath} → ${newPath}`,
   );
@@ -248,6 +411,7 @@ try {
   await page.screenshot({
     path: path.join(screenshots, "renamed-files-overview.png"),
   });
+  assert.equal(mutations.length, 4);
   assert.deepEqual(errors, []);
   console.log(`Rename browser regression passed. Screenshots: ${screenshots}`);
 } finally {

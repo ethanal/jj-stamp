@@ -15,21 +15,29 @@ import {
 
 const version = z.string().regex(/^[0-9a-f]{64}$/);
 const graphRevset = z.string().refine(validGraphRevset).optional();
+const selectionSchema = z.union([
+  z
+    .object({
+      id: z.string().regex(/^[0-9a-f]{7}(?:-\d+)?$/),
+      lines: z.array(z.number().int().positive()).min(1).max(100000),
+    })
+    .strict(),
+  // Exact paths and pure-rename eligibility are checked against the pinned diff.
+  z
+    .object({
+      id: z
+        .string()
+        .max(16384)
+        .regex(/^rename:\[.*\]$/),
+      lines: z.array(z.number()).length(0),
+    })
+    .strict(),
+]);
 const previewSchema = z
   .object({
     version,
     target: z.string().regex(/^[k-z]{1,64}$/),
-    selections: z
-      .array(
-        z
-          .object({
-            id: z.string().regex(/^[0-9a-f]{7}(?:-\d+)?$/),
-            lines: z.array(z.number().int().positive()).min(1).max(100000),
-          })
-          .strict(),
-      )
-      .min(1)
-      .max(2000),
+    selections: z.array(selectionSchema).min(1).max(2000),
   })
   .strict();
 
@@ -460,7 +468,7 @@ export function createApi(
     if (error instanceof z.ZodError) {
       res.status(400).json({
         error:
-          "Invalid request. Supply the current version and valid changed-line selections.",
+          "Invalid request. Supply the current version and valid changed-line or rename selections.",
         code: "INVALID_REQUEST",
       });
       return;
