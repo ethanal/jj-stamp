@@ -167,6 +167,56 @@ function checkMaterializedRename(
   return actual;
 }
 
+test("pure rename materialization preserves exact text bytes without synthetic hunks", () => {
+  const patch = renamePatch("old/file.txt", "new/file.txt", "");
+  for (const contents of [
+    "",
+    "same\n",
+    "same\r\nnext\r\n",
+    "雪\r\nlast",
+    "last\r",
+  ]) {
+    const actual = checkMaterializedRename(
+      patch,
+      contents,
+      contents,
+      [],
+      contents,
+    );
+    assert.ok(
+      actual.preview,
+      "a pure rename still has a metadata-only preview",
+    );
+    assert.deepEqual(parseFile(actual.preview, "new/file.txt"), {
+      path: "new/file.txt",
+      oldPath: "old/file.txt",
+      hunks: [],
+    });
+    assert.ok(!actual.preview.includes("@@ "));
+  }
+  const input = { path: "new/file.txt", patch, selections: [] };
+  for (const [base, source] of [
+    [null, Buffer.from("same\n")],
+    [Buffer.from("same\n"), null],
+    [null, null],
+    [Buffer.alloc(0), null],
+    [null, Buffer.alloc(0)],
+    [Buffer.from("same\n"), Buffer.from("different\n")],
+    [Buffer.from("same\n"), Buffer.from("same\r\n")],
+    [Buffer.from([0xff, 10]), Buffer.from([0xff, 10])],
+    [Buffer.from("binary\0"), Buffer.from("binary\0")],
+  ] as Array<[Buffer | null, Buffer | null]>)
+    assert.throws(() => materializeSelection(input, base, source));
+  for (const lines of [[], [1]])
+    assert.throws(() =>
+      materializeSelection(
+        { ...input, selections: [{ hunk: 0, lines }] },
+        Buffer.from("same\n"),
+        Buffer.from("same\n"),
+      ),
+    );
+});
+
 test("rename materialization previews the move together with exactly the selected edits", () => {
   const patch = renamePatch(
     "old/file.txt",
@@ -264,7 +314,11 @@ test("renamed EOF and CRLF edits preserve exact terminators and reject unsafe pa
   );
 });
 
-async function fixture(t: test.TestContext, crlfEof = false) {
+async function fixture(
+  t: test.TestContext,
+  crlfEof = false,
+  pure = Array.from({ length: 20 }, (_, i) => `pure move ${i}\n`).join(""),
+) {
   const repoPath = await mkdtemp(path.join(os.tmpdir(), "jj-stamp-rename-"));
   t.after(() => rm(repoPath, { recursive: true, force: true }));
   await jj(repoPath, ["git", "init", "--no-colocate", "."]);
@@ -299,9 +353,7 @@ async function fixture(t: test.TestContext, crlfEof = false) {
     base = base.replaceAll("\n", "\r\n").slice(0, -2);
     source = source.replaceAll("\n", "\r\n").slice(0, -2);
   }
-  const pure = Array.from({ length: 20 }, (_, i) => `pure move ${i}\n`).join(
-    "",
-  );
+
   const oldPath = "old/draft[1]:notes.txt";
   const newPath = "new/draft[1]:notes.txt";
   await writeFile(path.join(repoPath, oldPath), base);
@@ -769,6 +821,323 @@ test("first squash carries the rename and a second batch squashes ordinary remai
     });
 });
 
+test("direct and legacy pure rename squash preserve exact trees, workspace and undo without synthetic hunks", async (t) => {
+  const cases = [
+    { name: "LF", contents: "pure move\nunchanged\n", mixed: false },
+    { name: "empty", contents: "", mixed: false },
+    { name: "CRLF", contents: "pure move\r\nunchanged\r\n", mixed: false },
+    { name: "unterminated", contents: "pure move\r\n雪 tail", mixed: false },
+    {
+      name: "mixed text and pure rename",
+      contents: "pure move\n",
+      mixed: true,
+    },
+  ];
+  for (const api of ["direct", "legacy"] as const)
+    for (const { name, contents, mixed } of cases)
+      await t.test(`${api}, ${name}`, async (t) => {
+        const { repoPath, oldPath, newPath, base } = await fixture(
+          t,
+          false,
+          contents,
+        );
+        const calls: string[][] = [];
+        const service = new ReviewService({
+          repoPath,
+          toolRunner: (command, args, cwd) => {
+            calls.push(args);
+            return run(command, args, cwd);
+          },
+          jjRunner: (cwd, args, limits) => {
+            calls.push(args);
+            return jj(cwd, args, limits);
+          },
+        });
+        const state = await service.getState();
+        const originalParent = await treeAt(repoPath, state.parent!.commitId);
+        const originalSource = await treeAt(repoPath, state.source.commitId);
+        const pure = state.files.find((file) => file.path === "new/pure.txt")!;
+        assert.ok(
+          pure,
+          "fixture must exercise actual jj pure rename detection",
+        );
+        assert.equal(pure.oldPath, "old/pure.txt");
+        assert.equal(pure.unsupported, undefined);
+        assert.equal(pure.squashUnsupported, undefined);
+        assert.deepEqual(pure.hunks, []);
+        assert.equal(pure.additions, 0);
+        assert.equal(pure.deletions, 0);
+        const selections = [
+          {
+            id: `rename:${JSON.stringify([pure.oldPath, pure.path])}`,
+            lines: [] as number[],
+          },
+        ];
+        if (mixed) {
+          for (const name of [newPath, "regular.txt"]) {
+            const hunk = state.files.find((file) => file.path === name)!
+              .hunks[0];
+            selections.push({ id: hunk.id, lines: changes(hunk) });
+          }
+        }
+        const originalSelections = structuredClone(selections);
+        calls.length = 0;
+        const result =
+          api === "direct"
+            ? await service.squashLines({ version: state.version, selections })
+            : await (async () => {
+                const preview = await service.preview({
+                  version: state.version,
+                  target: state.parent!.changeId,
+                  selections,
+                });
+                assert.ok(
+                  preview.patch.includes(
+                    "diff --git a/old/pure.txt b/new/pure.txt\n",
+                  ),
+                );
+                assert.ok(preview.patch.includes("rename from old/pure.txt\n"));
+                assert.ok(preview.patch.includes("rename to new/pure.txt\n"));
+                if (!mixed) {
+                  assert.deepEqual(parseFile(preview.patch, pure.path), {
+                    path: pure.path,
+                    oldPath: pure.oldPath,
+                    hunks: [],
+                  });
+                  assert.equal(preview.selectedLines, 0);
+                }
+                assert.deepEqual(await service.getState(), state);
+                return service.squash(preview.token);
+              })();
+        assert.deepEqual(selections, originalSelections);
+        assert.equal(result.warning, undefined);
+        assert.equal(result.state.canUndo, true);
+        assert.equal(result.state.parent!.changeId, state.parent!.changeId);
+        assert.equal(result.state.source.changeId, state.source.changeId);
+        const mutations = calls.filter((args) => args[0] === "squash");
+        assert.equal(mutations.length, 1);
+        for (const name of ["old/pure.txt", "new/pure.txt"])
+          assert.ok(
+            mutations[0].includes(`root-file:${JSON.stringify(name)}`),
+            `literal scratch scope includes ${name}`,
+          );
+        let expectedParent = withRenamedFile(
+          originalParent,
+          "old/pure.txt",
+          "new/pure.txt",
+          contents,
+        );
+        if (mixed)
+          expectedParent = {
+            ...withRenamedFile(
+              expectedParent,
+              oldPath,
+              newPath,
+              base.replace("original line 10\n", "modified line 10\n"),
+            ),
+            "regular.txt": Buffer.from("regular new\n"),
+          };
+        assert.deepEqual(
+          await treeAt(repoPath, result.state.parent!.commitId),
+          expectedParent,
+        );
+        assert.deepEqual(
+          await treeAt(repoPath, result.state.source.commitId),
+          originalSource,
+        );
+        assert.equal(
+          result.state.files.find((file) => file.path === pure.path),
+          undefined,
+          "the selected pure rename leaves the source diff entirely",
+        );
+        await assert.rejects(
+          service.getFile({
+            version: result.state.version,
+            path: pure.path,
+          }),
+          code("INVALID_PATH"),
+        );
+        if (!mixed)
+          assert.deepEqual(
+            result.state.files,
+            state.files.filter((file) => file.path !== pure.path),
+          );
+        else {
+          const remaining = result.state.files.find(
+            (file) => file.path === newPath,
+          )!;
+          assert.equal(remaining.oldPath, undefined);
+          assert.equal(remaining.hunks.length, 1);
+          assert.equal(
+            result.state.files.some((file) => file.path === "regular.txt"),
+            false,
+          );
+        }
+        await assertWorkspace(repoPath, oldPath, originalSource);
+        const undone = await service.undo(result.state.version);
+        assert.equal(undone.state.canUndo, false);
+        assert.equal(undone.state.parent!.commitId, state.parent!.commitId);
+        assert.equal(undone.state.source.commitId, state.source.commitId);
+        assert.deepEqual(undone.state.files, state.files);
+        assert.deepEqual(
+          await treeAt(repoPath, undone.state.parent!.commitId),
+          originalParent,
+        );
+        assert.deepEqual(
+          await treeAt(repoPath, undone.state.source.commitId),
+          originalSource,
+        );
+        await assertWorkspace(repoPath, oldPath, originalSource);
+      });
+});
+
+test("a revision containing only a pure rename squashes to an empty preserved source and undoes exactly", async (t) => {
+  for (const api of ["direct", "legacy"] as const)
+    await t.test(api, async (t) => {
+      const { repoPath, oldPath, newPath, base, pure } = await fixture(t);
+      // Remove every text edit and the other rename: this revision is ONLY a move.
+      await rename(path.join(repoPath, newPath), path.join(repoPath, oldPath));
+      await writeFile(path.join(repoPath, oldPath), base);
+      await writeFile(path.join(repoPath, "regular.txt"), "regular old\n");
+      const service = new ReviewService({ repoPath });
+      const state = await service.getState();
+      assert.equal(state.files.length, 1);
+      const moved = state.files[0];
+      assert.equal(moved.path, "new/pure.txt");
+      assert.equal(moved.oldPath, "old/pure.txt");
+      assert.deepEqual(moved.hunks, []);
+      const originalParent = await treeAt(repoPath, state.parent!.commitId);
+      const originalSource = await treeAt(repoPath, state.source.commitId);
+      const selections = [
+        {
+          id: `rename:${JSON.stringify([moved.oldPath, moved.path])}`,
+          lines: [],
+        },
+      ];
+      const result =
+        api === "direct"
+          ? await service.squashLines({ version: state.version, selections })
+          : await service.squash(
+              (
+                await service.preview({
+                  version: state.version,
+                  target: state.parent!.changeId,
+                  selections,
+                })
+              ).token,
+            );
+      assert.equal(result.warning, undefined);
+      assert.equal(result.state.canUndo, true);
+      assert.deepEqual(result.state.files, []);
+      assert.equal(
+        result.state.source.changeId,
+        state.source.changeId,
+        "--keep-emptied preserves the selected source revision",
+      );
+      assert.equal(result.state.parent!.changeId, state.parent!.changeId);
+      assert.deepEqual(
+        await treeAt(repoPath, result.state.parent!.commitId),
+        withRenamedFile(originalParent, "old/pure.txt", "new/pure.txt", pure),
+      );
+      assert.deepEqual(
+        await treeAt(repoPath, result.state.source.commitId),
+        originalSource,
+      );
+      await assertWorkspace(repoPath, newPath, originalSource);
+      const undone = await service.undo(result.state.version);
+      assert.equal(undone.state.canUndo, false);
+      assert.equal(undone.state.source.commitId, state.source.commitId);
+      assert.equal(undone.state.parent!.commitId, state.parent!.commitId);
+      assert.deepEqual(undone.state.files, state.files);
+      assert.deepEqual(
+        await treeAt(repoPath, undone.state.parent!.commitId),
+        originalParent,
+      );
+      assert.deepEqual(
+        await treeAt(repoPath, undone.state.source.commitId),
+        originalSource,
+      );
+      await assertWorkspace(repoPath, newPath, originalSource);
+    });
+});
+
+test("pure rename selections reject unknown IDs, rows and empty ordinary-hunk selections before mutation", async (t) => {
+  const { repoPath, oldPath, newPath } = await fixture(t);
+  const calls: string[][] = [];
+  const service = new ReviewService({
+    toolRunner: (command, args, cwd) => {
+      calls.push(args);
+      return run(command, args, cwd);
+    },
+    jjRunner: (cwd, args, limits) => {
+      calls.push(args);
+      return jj(cwd, args, limits);
+    },
+    repoPath,
+  });
+  const state = await service.getState();
+  const pure = state.files.find((file) => file.path === "new/pure.txt")!;
+  const id = `rename:${JSON.stringify([pure.oldPath, pure.path])}`;
+  const regular = state.files.find((file) => file.path === "regular.txt")!
+    .hunks[0];
+  const renamed = state.files.find((file) => file.path === newPath)!;
+  const originalParent = await treeAt(repoPath, state.parent!.commitId);
+  const originalSource = await treeAt(repoPath, state.source.commitId);
+  const invalid = [
+    [{ id: "pure-rename", lines: [] }],
+    [{ id: "rename:not-json", lines: [] }],
+    [{ id: `rename:${JSON.stringify([pure.path, pure.oldPath])}`, lines: [] }],
+    [{ id: `rename:${JSON.stringify(["wrong.txt", pure.path])}`, lines: [] }],
+    [{ id: `rename:${JSON.stringify([oldPath, newPath])}`, lines: [] }],
+    [{ id: `rename:${JSON.stringify([null, "regular.txt"])}`, lines: [] }],
+    [{ id, lines: [1] }],
+    [{ id, lines: [0] }],
+    [
+      { id, lines: [] },
+      { id, lines: [] },
+    ],
+    [{ id: regular.id, lines: [] }],
+    [{ id: renamed.hunks[0].id, lines: [] }],
+    [
+      { id, lines: [] },
+      { id: regular.id, lines: [] },
+    ],
+  ];
+  calls.length = 0;
+  for (const selections of invalid)
+    for (const attempt of [
+      () => service.squashLines({ version: state.version, selections }),
+      () =>
+        service.preview({
+          version: state.version,
+          target: state.parent!.changeId,
+          selections,
+        }),
+    ])
+      await assert.rejects(attempt(), code("INVALID_SELECTION"));
+  assert.ok(!calls.some((args) => args[0] === "squash"));
+  assert.deepEqual(await service.getState(), state);
+  assert.deepEqual(
+    await treeAt(repoPath, state.parent!.commitId),
+    originalParent,
+  );
+  assert.deepEqual(
+    await treeAt(repoPath, state.source.commitId),
+    originalSource,
+  );
+  await assertWorkspace(repoPath, oldPath, originalSource);
+  // Validation failures must not install a pending recovery guard.
+  const result = await service.squashLines({
+    version: state.version,
+    selections: [{ id, lines: [] }],
+  });
+  assert.equal(result.state.canUndo, true);
+  assert.deepEqual(
+    (await service.undo(result.state.version)).state.files,
+    state.files,
+  );
+});
+
 test("pure renames have no selectable rows and unrelated squash preserves every rename", async (t) => {
   const { repoPath, oldPath, newPath } = await fixture(t);
   const service = new ReviewService({ repoPath });
@@ -1022,7 +1391,7 @@ test("live renamed file context still rejects intervening working-copy edits", a
   );
 });
 
-test("pure rename metadata never bypasses the lossless text boundary for file reads", async (t) => {
+test("pure rename metadata never bypasses the lossless text boundary for reads or squash", async (t) => {
   const { repoPath } = await fixture(t);
   await writeFile(
     path.join(repoPath, "binary-old.dat"),
@@ -1056,5 +1425,22 @@ test("pure rename metadata never bypasses the lossless text boundary for file re
       service.getCommitFile({ commitId: state.source.commitId, path: name }),
       code("UNSUPPORTED_DIFF"),
     );
+    const selections = [
+      {
+        id: `rename:${JSON.stringify([file.oldPath, file.path])}`,
+        lines: [],
+      },
+    ];
+    for (const attempt of [
+      () => service.squashLines({ version: state.version, selections }),
+      () =>
+        service.preview({
+          version: state.version,
+          target: state.parent!.changeId,
+          selections,
+        }),
+    ])
+      await assert.rejects(attempt(), code("UNSAFE_PREVIEW"));
   }
+  assert.deepEqual(await service.getState(), state);
 });

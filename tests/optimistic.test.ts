@@ -693,3 +693,130 @@ test("optimistic rename squash moves the rename with selected edits and leaves o
     ordinary,
   ]);
 });
+
+function pureRename(oldPath = "old.ts", path = "new.ts"): DiffFile {
+  const patch = `diff --git a/${oldPath} b/${path}\nrename from ${oldPath}\nrename to ${path}\n`;
+  const parsed = parseFile(patch, path);
+  return { ...parsed, patch, hunks: [], additions: 0, deletions: 0 };
+}
+
+test("pure renames have exact file-level references and empty-line specs, not fake text rows", () => {
+  const renamed = pureRename();
+  const ordinary = file("other.ts", "@@ -1 +1 @@\n-before\n+after");
+  const repo = state(renamed, ordinary);
+  const original = structuredClone(repo);
+  const refs = refsFromFile(repo, renamed.path);
+  assert.deepEqual(refs, [
+    { path: "new.ts", kind: "rename", line: 0, text: "old.ts" },
+  ]);
+  assert.deepEqual(specsForRefs(repo, refs), [
+    { id: 'rename:["old.ts","new.ts"]', lines: [] },
+  ]);
+  assert.deepEqual(refsFromSelection(repo, {}), []);
+  assert.deepEqual(projectSquash(repo, []).files, repo.files);
+  const projected = projectSquash(repo, refs);
+  assert.deepEqual(projected.files, [ordinary]);
+  assert.equal(projected.files[0], ordinary);
+  assert.deepEqual(repo, original);
+  assert.notEqual(changeSignature(repo), changeSignature(projected));
+});
+
+test("pure rename references reject duplicates, stale paths, modified files and unsupported files", () => {
+  const repo = state(pureRename());
+  const [ref] = refsFromFile(repo, "new.ts");
+  for (const refs of [
+    [ref, ref],
+    [{ ...ref, path: "elsewhere.ts" }],
+    [{ ...ref, text: "different-old.ts" }],
+    [{ ...ref, kind: "+" as const }],
+    [{ ...ref, line: 1 }],
+    [{ ...ref, noNewline: true }],
+  ]) {
+    assert.throws(() => specsForRefs(repo, refs));
+    assert.throws(() => projectSquash(repo, refs));
+  }
+  for (const changed of [
+    state(pureRename("different-old.ts")),
+    state(pureRename("old.ts", "elsewhere.ts")),
+    state({
+      ...file("new.ts", "@@ -1 +1 @@\n-old\n+new"),
+      oldPath: "old.ts",
+    }),
+    state({ ...pureRename(), oldPath: undefined }),
+    state({ ...pureRename(), unsupported: "Binary file" }),
+    state({ ...pureRename(), squashUnsupported: "Read-only rename" }),
+    state(),
+  ]) {
+    assert.throws(() => specsForRefs(changed, [ref]));
+    assert.throws(() => projectSquash(changed, [ref]));
+  }
+  for (const unsupported of [
+    { ...pureRename(), unsupported: "Binary file" },
+    { ...pureRename(), squashUnsupported: "Read-only rename" },
+  ])
+    assert.throws(() => refsFromFile(state(unsupported), "new.ts"));
+});
+
+test("signatures include old and new paths for pure and modified renames while ignoring presentation metadata", () => {
+  const renamed = pureRename();
+  const ordinary = file("other.ts", "@@ -1 +1 @@\n-before\n+after");
+  const repo = state(renamed, ordinary);
+  const reordered = state(ordinary, {
+    ...renamed,
+    patch: renamed.patch + "similarity index 100%\n",
+  });
+  assert.equal(changeSignature(repo), changeSignature(reordered));
+  for (const changed of [
+    state(ordinary),
+    state(pureRename("different-old.ts"), ordinary),
+    state(pureRename("old.ts", "different-new.ts"), ordinary),
+  ])
+    assert.notEqual(changeSignature(repo), changeSignature(changed));
+
+  const modified = file("new.ts", "@@ -1 +1 @@\n-old\n+new");
+  const renamedAndModified = { ...modified, oldPath: "old.ts" };
+  assert.notEqual(
+    changeSignature(state(modified)),
+    changeSignature(state(renamedAndModified)),
+  );
+  assert.notEqual(
+    changeSignature(state(renamedAndModified)),
+    changeSignature(state({ ...renamedAndModified, oldPath: "different.ts" })),
+  );
+});
+
+test("compaction combines pure renames with other renames and shifted text references in either order", () => {
+  const repo = state(
+    pureRename(),
+    pureRename("before.ts", "after.ts"),
+    file("text.ts", "@@ -1,2 +1,2 @@\n-first\n-second\n+one\n+two"),
+  );
+  for (const renameFirst of [false, true]) {
+    const first = renameFirst
+      ? refsFromFile(repo, "new.ts")
+      : select(repo, "text.ts-0", 1);
+    const partial = projectSquash(repo, first);
+    const next = [
+      ...refsFromFile(partial, "text.ts"),
+      ...(renameFirst ? [] : refsFromFile(partial, "new.ts")),
+      ...refsFromFile(partial, "after.ts"),
+    ];
+    const combined = combineSquashRefs(repo, first, next);
+    assert.equal(combined.length, first.length + next.length);
+    assert.deepEqual(
+      projectSquash(repo, combined),
+      projectSquash(partial, next),
+    );
+    assert.deepEqual(projectSquash(repo, combined).files, []);
+    assert.equal(
+      specsForRefs(repo, combined).filter((spec) => !spec.lines.length).length,
+      2,
+    );
+  }
+  const selected = refsFromFile(repo, "new.ts");
+  assert.throws(() => combineSquashRefs(repo, selected, selected));
+  assert.throws(() => combineSquashRefs(repo, [], [...selected, ...selected]));
+  assert.throws(() =>
+    combineSquashRefs(repo, [], [{ ...selected[0], text: "stale.ts" }]),
+  );
+});

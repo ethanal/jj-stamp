@@ -923,3 +923,146 @@ test("whole-file squash queues only remaining rows behind an in-flight partial s
   assert.equal(queue.getSnapshot().halted, false);
   assert.deepEqual(queue.getSnapshot().confirmed!.files, []);
 });
+
+test("pure rename squashes project immediately and compact with waiting text selections", async () => {
+  const { queue, posts, reads, state } = setup();
+  for (const [oldPath, path] of [
+    ["old.ts", "new.ts"],
+    ["before.ts", "after.ts"],
+  ]) {
+    const patch = `diff --git a/${oldPath} b/${path}\nrename from ${oldPath}\nrename to ${path}\n`;
+    state.files.push({
+      oldPath,
+      path,
+      patch,
+      hunks: [],
+      additions: 0,
+      deletions: 0,
+    });
+  }
+  queue.replace(state);
+  const first = refsFromFile(state, "new.ts");
+  queue.enqueue(first);
+  assert.deepEqual(posts[0].input, {
+    version: "v0",
+    selections: [{ id: 'rename:["old.ts","new.ts"]', lines: [] }],
+  });
+  assert.deepEqual(
+    queue.getSnapshot().view!.files.map((file) => file.path),
+    ["a", "after.ts"],
+  );
+  const second = refsFromFile(queue.getSnapshot().view!, "after.ts");
+  queue.enqueue(second);
+  const third = refsFromFile(queue.getSnapshot().view!, "a");
+  queue.enqueue(third);
+  assert.equal(posts.length, 1);
+  assert.equal(queue.getSnapshot().pending, 2);
+  assert.deepEqual(queue.getSnapshot().view!.files, []);
+
+  const firstAck = acknowledge(state, first, "v1");
+  posts[0].result.resolve({ state: firstAck });
+  await tick();
+  assert.equal(posts.length, 2);
+  assert.deepEqual(posts[1].input, {
+    version: "v1",
+    selections: [
+      { id: "authoritative-v1", lines: [2, 3, 4, 5] },
+      { id: 'rename:["before.ts","after.ts"]', lines: [] },
+    ],
+  });
+  const final = acknowledge(
+    acknowledge(firstAck, second, "intermediate"),
+    third,
+    "v2",
+  );
+  posts[1].result.resolve({ state: final });
+  await tick();
+  assert.equal(queue.getSnapshot().pending, 0);
+  assert.equal(queue.getSnapshot().halted, false);
+  assert.equal(queue.getSnapshot().error, "");
+  assert.equal(queue.getSnapshot().notice, "4 lines and 1 rename squashed.");
+  assert.deepEqual(queue.getSnapshot().confirmed!.files, []);
+  assert.deepEqual(queue.getSnapshot().view!.files, []);
+  assert.equal(reads.length, 0);
+  assert.equal(posts.length, 2);
+});
+
+test("a pure rename acknowledgement reports a rename, never a fake squashed line", async () => {
+  const { queue, posts, reads, state } = setup();
+  state.files = [
+    {
+      oldPath: "old.ts",
+      path: "new.ts",
+      patch:
+        "diff --git a/old.ts b/new.ts\nrename from old.ts\nrename to new.ts\n",
+      hunks: [],
+      additions: 0,
+      deletions: 0,
+    },
+  ];
+  queue.replace(state);
+  const selected = refsFromFile(state, "new.ts");
+  queue.enqueue(selected);
+  assert.deepEqual(queue.getSnapshot().view!.files, []);
+  posts[0].result.resolve({ state: acknowledge(state, selected, "v1") });
+  await tick();
+  assert.equal(queue.getSnapshot().pending, 0);
+  assert.equal(queue.getSnapshot().halted, false);
+  assert.equal(queue.getSnapshot().notice, "1 rename squashed.");
+  assert.equal(posts.length, 1);
+  assert.equal(reads.length, 0);
+});
+
+test("a successful response that retains the pure rename halts instead of masking a projection mismatch", async () => {
+  const { queue, posts, reads, state } = setup();
+  state.files.push({
+    oldPath: "old.ts",
+    path: "new.ts",
+    patch:
+      "diff --git a/old.ts b/new.ts\nrename from old.ts\nrename to new.ts\n",
+    hunks: [],
+    additions: 0,
+    deletions: 0,
+  });
+  queue.replace(state);
+  queue.enqueue(refsFromFile(state, "new.ts"));
+  queue.enqueue(refsFromFile(queue.getSnapshot().view!, "a"));
+  const unchanged = { ...structuredClone(state), version: "v1" };
+  posts[0].result.resolve({ state: unchanged });
+  await tick();
+  assert.equal(queue.getSnapshot().halted, true);
+  assert.equal(queue.getSnapshot().pending, 0);
+  assert.match(queue.getSnapshot().error, /differed from the projected/);
+  assert.equal(queue.getSnapshot().confirmed, unchanged);
+  assert.equal(queue.getSnapshot().view, unchanged);
+  assert.equal(posts.length, 1);
+  assert.equal(reads.length, 0);
+});
+
+test("unexpected rename metadata in a text-squash acknowledgement cancels waiting pure renames", async () => {
+  const { queue, posts, reads, state } = setup();
+  state.files.push({
+    oldPath: "old.ts",
+    path: "new.ts",
+    patch:
+      "diff --git a/old.ts b/new.ts\nrename from old.ts\nrename to new.ts\n",
+    hunks: [],
+    additions: 0,
+    deletions: 0,
+  });
+  queue.replace(state);
+  const selected = refs(state, 2);
+  queue.enqueue(selected);
+  queue.enqueue(refsFromFile(queue.getSnapshot().view!, "new.ts"));
+  const unexpected = acknowledge(state, selected, "v1");
+  unexpected.files[1].oldPath = "unexpected-old.ts";
+  posts[0].result.resolve({ state: unexpected });
+  await tick();
+  assert.equal(queue.getSnapshot().halted, true);
+  assert.equal(queue.getSnapshot().pending, 0);
+  assert.match(queue.getSnapshot().error, /differed from the projected/);
+  assert.equal(queue.getSnapshot().confirmed, unexpected);
+  assert.equal(queue.getSnapshot().view, unexpected);
+  assert.equal(posts.length, 1);
+  assert.equal(reads.length, 0);
+});

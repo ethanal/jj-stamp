@@ -1,5 +1,6 @@
 import { SquashIcon } from "./SquashIcon";
 import type { DiffFile } from "./types";
+import { pureRenameSelectionId } from "./file-selection";
 
 export function SquashFileButton({
   file,
@@ -23,10 +24,17 @@ export function SquashFileButton({
       title={
         reason ||
         (file.oldPath
-          ? "Squash the rename and all text edits into the immediate parent"
+          ? file.hunks.length
+            ? "Squash the rename and all text edits into the immediate parent"
+            : "Squash the rename into the immediate parent"
           : "Squash all changes in this file into the immediate parent")
       }
-      disabled={disabled || !!reason || !(file.additions + file.deletions)}
+      disabled={
+        disabled ||
+        !!reason ||
+        (!(file.additions + file.deletions) &&
+          pureRenameSelectionId(file) === undefined)
+      }
       onClick={() => onSquash(file.path)}
     >
       <SquashIcon />

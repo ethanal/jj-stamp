@@ -113,7 +113,7 @@ export class SquashQueue {
       );
     if (!view) throw new Error("Load repository state before squashing.");
     if (!refs.length)
-      throw new Error("Select at least one changed line to squash.");
+      throw new Error("Select at least one changed line or rename to squash.");
     // Validate and finish projection before changing any queue state.
     const saved = refs.map((ref) => ({ ...ref }));
     const beforeSignature = changeSignature(view);
@@ -247,13 +247,23 @@ export class SquashQueue {
         const view = idle
           ? { ...result.state, files: this.snapshot.view!.files }
           : this.snapshot.view;
+        const renameCount = job.refs.filter(
+          (ref) => ref.kind === "rename",
+        ).length;
+        const lineCount = job.count - renameCount;
+        const summary = [
+          ...(lineCount
+            ? [`${lineCount} ${lineCount === 1 ? "line" : "lines"}`]
+            : []),
+          ...(renameCount
+            ? [`${renameCount} ${renameCount === 1 ? "rename" : "renames"}`]
+            : []),
+        ].join(" and ");
         this.publish({
           confirmed: result.state,
           view,
           pending: this.jobs.length,
-          notice: idle
-            ? `${job.count} ${job.count === 1 ? "line" : "lines"} squashed.`
-            : "",
+          notice: idle ? `${summary} squashed.` : "",
         });
       }
     } catch (error) {

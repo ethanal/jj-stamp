@@ -45,6 +45,20 @@ export function materializeSelection(
   const oldPath = file.oldPath ?? input.path;
   const baseLines = textLines(base, "Base file");
   const sourceLines = textLines(source, "Source file");
+  if (file.oldPath !== undefined && file.hunks.length === 0) {
+    // No unified file headers or rows exist for a metadata-only rename. Both
+    // pinned sides must still be present, lossless text and byte-identical.
+    if (
+      input.selections.length ||
+      base === null ||
+      source === null ||
+      !base.equals(source)
+    )
+      throw new Error(
+        "Pure rename disagrees with pinned file bytes or selections.",
+      );
+    return { result: Buffer.from(source), preview: input.patch };
+  }
   const headerLines = input.patch.split("\n").slice(
     0,
     input.patch.split("\n").findIndex((line) => line.startsWith("@@ ")),
