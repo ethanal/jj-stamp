@@ -432,7 +432,7 @@ export function createApi(
   router.post("/squash-lines", async (req, res) => {
     res.json(
       await service.squashLines(
-        previewSchema.omit({ target: true }).parse(req.body),
+        previewSchema.partial({ target: true }).parse(req.body),
       ),
     );
   });
