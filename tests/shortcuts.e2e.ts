@@ -352,7 +352,7 @@ try {
       dialog.locator("kbd").getByText(key, { exact: true }),
     ).toHaveCount(1);
   await expect(
-    dialog.getByText("View commit by ID or revset; Enter opens it", {
+    dialog.getByText("Open revision by ID or revset; Enter opens it", {
       exact: true,
     }),
   ).toBeVisible();
