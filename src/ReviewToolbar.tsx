@@ -17,13 +17,9 @@ function shortChangeId({ changeId, changeIdPrefix }: Revision): string {
       : 8;
   return changeId.slice(0, length);
 }
-export function revisionPageTitle(
-  source: Revision | undefined,
-  repoPath: string | undefined,
-): string {
-  return source && repoPath
-    ? `${source.description || "(no description)"} (${shortChangeId(source)} ${repoPath})`
-    : "jj-stamp";
+export function repositoryPageTitle(repoPath: string | undefined): string {
+  const name = repoPath?.split(/[\\/]/).filter(Boolean).at(-1);
+  return name ? `jj-stamp: ${name}` : "jj-stamp";
 }
 export function ChangeId({ revision }: { revision?: Revision }) {
   return <>{revision ? shortChangeId(revision) : "—"}</>;

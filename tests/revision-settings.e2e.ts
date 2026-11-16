@@ -67,6 +67,7 @@ try {
   });
   await page.goto(url);
   await expect(page.locator(".log-row")).toHaveCount(2);
+  await expect(page).toHaveTitle("jj-stamp: settings-fixture");
   assert.equal(graphQueries.at(-1), undefined);
   await page.getByRole("button", { name: "Settings", exact: true }).click();
   const settings = page.getByRole("dialog", { name: "Settings", exact: true });
@@ -95,6 +96,7 @@ try {
     .toBe("none()");
   await page.keyboard.press("Escape");
   await page.reload();
+  await expect(page).toHaveTitle("jj-stamp: settings-fixture");
   await expect(
     page.getByLabel("Current change ID", { exact: true }),
   ).toHaveText(first.changeId);
@@ -134,6 +136,7 @@ try {
   await expect(
     page.getByLabel("Current change ID", { exact: true }),
   ).toHaveText(second.changeId);
+  await expect(page).toHaveTitle("jj-stamp: settings-fixture");
   assert.deepEqual(revisions, ["bad", "bbbb"]);
   await page.getByRole("button", { name: "Settings", exact: true }).click();
   await expect(input).toHaveValue("none()");
