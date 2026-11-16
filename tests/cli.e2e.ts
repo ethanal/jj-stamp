@@ -376,9 +376,9 @@ process.exit(result.status ?? 1);
     assert.deepEqual(args.slice(0, 9), [
       "squash",
       "--from",
-      initial.source.commitId,
+      `commit_id("${initial.source.commitId}")`,
       "--into",
-      initial.parent!.commitId,
+      `commit_id("${initial.parent!.commitId}")`,
       "--tool",
       "jj-stamp",
       "--use-destination-message",
