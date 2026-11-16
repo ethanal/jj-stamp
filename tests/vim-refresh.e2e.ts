@@ -63,6 +63,7 @@ app.post("/api/commit", (_request, response) =>
 );
 const fixture = await createBrowserFixture({
   app,
+  config: { "vim-mode": true },
   viewport: { width: 1280, height: 720 },
 });
 const { page, url, errors } = fixture;
@@ -102,9 +103,6 @@ async function update(file: DiffFile, automatic: boolean) {
   await expect(page.locator(".statusbar")).not.toContainText("Refreshing");
 }
 try {
-  await page.addInitScript(() => {
-    localStorage.setItem("jj-stamp.vim-mode", "true");
-  });
   await page.goto(url);
   await expect(surface.locator("[data-line]").first()).toBeAttached();
   await page.locator(".viewer-scroll").evaluate((element) => {

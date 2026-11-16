@@ -5,3 +5,4 @@ dist/
 .env
 result
 result-*
+.planka-artifacts/

@@ -9,6 +9,7 @@ import express from "express";
 import { build } from "vite";
 import { resolveTheme } from "@pierre/diffs";
 import { colorSchemes } from "../src/preferences.ts";
+import { createConfigFixture } from "./browser-fixture.ts";
 
 await using resources = new AsyncDisposableStack();
 const output = await mkdtemp(path.join(os.tmpdir(), "jj-stamp-diff-runtime-"));
@@ -31,13 +32,17 @@ await build({
   ],
   build: { outDir: output, emptyOutDir: true },
 });
-const server = createServer(express().use(express.static(output)));
-resources.defer(
-  () =>
-    new Promise<void>((resolve, reject) => {
-      server.close((error) => (error ? reject(error) : resolve()));
-    }),
-);
+const app = express();
+const config = await createConfigFixture(app);
+resources.defer(() => config.close());
+app.use(express.static(output));
+const server = createServer(app);
+resources.defer(async () => {
+  await config.close();
+  await new Promise<void>((resolve, reject) => {
+    server.close((error) => (error ? reject(error) : resolve()));
+  });
+});
 await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
 const address = server.address();
 assert(address && typeof address === "object");

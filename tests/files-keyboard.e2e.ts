@@ -177,6 +177,13 @@ try {
 
   // With Files 0, focus the toggle rather than an enormous empty panel.
   state = { ...state, version: "v2", files: [] };
+  await expect
+    .poll(() => fixture.readConfig())
+    .toMatchObject({
+      "files-expanded": true,
+      "vim-mode": true,
+      "hover-sidebars": true,
+    });
   await page.reload();
   await expect(page.locator(".empty")).toContainText(
     "No changes in this revision",

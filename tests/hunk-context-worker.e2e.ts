@@ -8,6 +8,7 @@ import { createServer } from "node:http";
 import express from "express";
 import { chromium } from "@playwright/test";
 import { build } from "vite";
+import { createConfigFixture } from "./browser-fixture.ts";
 
 await using cleanup = new AsyncDisposableStack();
 const directory = await mkdtemp(path.join(tmpdir(), "jj-stamp-scope-worker-"));
@@ -48,17 +49,19 @@ assert.ok(
   ),
 );
 const app = express();
+const config = await createConfigFixture(app);
+cleanup.defer(() => config.close());
 app.get("/", (_request, response) =>
   response.send("<!doctype html><title>Worker fixture</title>"),
 );
 app.use("/worker-test", express.static(directory));
 const server = createServer(app);
-cleanup.defer(
-  () =>
-    new Promise<void>((resolve, reject) =>
-      server.close((error) => (error ? reject(error) : resolve())),
-    ),
-);
+cleanup.defer(async () => {
+  await config.close();
+  await new Promise<void>((resolve, reject) =>
+    server.close((error) => (error ? reject(error) : resolve())),
+  );
+});
 await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
 const address = server.address();
 assert.ok(address && typeof address !== "string");

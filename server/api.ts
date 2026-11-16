@@ -5,6 +5,7 @@ import { ApiError, ReviewService } from "./service.ts";
 import { processFailureOutput, ProcessError } from "./process.ts";
 import { validRevisionSelection, validGraphRevset } from "./revision.ts";
 import { watchFailure, type WatchFailure } from "./watch-errors.ts";
+import { createConfigApi } from "./config.ts";
 import {
   watchFilesystemEvents,
   type FilesystemChange,
@@ -47,11 +48,13 @@ interface EventClient {
 
 export interface ApiRouter extends Router {
   closeEvents(): void;
+  drainConfig(): Promise<void>;
 }
 
 export interface ApiOptions {
   eventBackend?: FilesystemEventBackend;
   maxEventClients?: number;
+  configPath?: string;
 }
 
 function eventFrame(event: string, data: unknown) {
@@ -332,7 +335,12 @@ export function createApi(
     options.eventBackend ?? watchFilesystemEvents,
     options.maxEventClients ?? MAX_EVENT_CLIENTS,
   );
-  router.closeEvents = () => events.close();
+  const config = createConfigApi(options);
+  router.closeEvents = () => {
+    events.close();
+    config.close();
+  };
+  router.drainConfig = () => config.drain();
   router.use((_req, res, next) => {
     res.setHeader("Cache-Control", "no-store");
     next();
@@ -342,6 +350,7 @@ export function createApi(
   // a response that can never consume an event stream.
   router.head("/events", (_req, res) => res.status(204).end());
   router.get("/events", (req, res) => events.connect(req, res));
+  router.use("/config", config);
   router.get("/state", async (_req, res) => {
     res.json(await service.getState());
   });

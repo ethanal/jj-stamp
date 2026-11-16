@@ -117,9 +117,44 @@ History changes before attribution, unreadable operation metadata, and nonzero t
 
 External jj processes and file edits cannot be locked by this in-process queue. **This is not an atomic cross-process transaction.** An external edit can race final validation and tool execution; detection may occur after squash. Avoid concurrent edits/history operations and run only one app process per repository. Multiple browser tabs share the process's selected change; do not mutate concurrently across tabs.
 
+## Shared preference file
+
+`config.ts` owns preferences independently of `ReviewService`, repository
+selection, history bookkeeping and filesystem-refresh streams. The default path
+is `$XDG_CONFIG_HOME/jj-stamp/config.json` (absolute XDG base only), otherwise
+`~/.config/jj-stamp/config.json`. Embedders/tests can pass `configPath` to
+`startLocalServer` or `createApi` to isolate it. The JSON keys, strict validation
+and defaults are shared with the frontend in `src/config.ts`; partial files use
+defaults for omitted keys. See the root README for an example and supported
+values. Browser storage is neither read nor migrated.
+
+- `GET /config` returns the full effective config with `Cache-Control: no-store`.
+- `POST /config` accepts a strict partial typed config, merges against a fresh
+  validated file, and returns the full effective config. It retains the HTTP
+  server's same-origin, JSON and `X-Fold-Request: 1` protections.
+- `GET /config/events` is a separate bounded SSE stream. Named `config` events
+  contain full effective settings, initially and after a disk change; named
+  `config-error` events contain `{error}` and retain the last valid browser
+  snapshot. Streams remain connected while tabs are hidden/unfocused. HEAD
+  does not allocate an SSE subscriber. Connection failures reconnect normally.
+
+Each server checks only this bounded, regular config file every 250ms while
+subscribed; it does not scan repositories or spawn tools. Atomic editor saves,
+in-place edits, missing files, deletion and recreation are observed. Invalid
+JSON/values and read failures are never overwritten automatically; GET/POST
+return an error until repaired, and streams resume on repair. Missing files use
+defaults without creating a file/directory. Explicit patches create the config
+directory and use an exclusive cross-process `config.json.lock`, a private
+same-directory temporary file and atomic rename. The read/merge/write is locked,
+so distinct concurrent patches survive. External editors cannot be locked by
+this protocol. A bounded lock timeout reports stale locks; an uncatchable crash
+may require manually removing the lock after stopping all servers. Streams,
+queues and backpressure are bounded; shutdown ends streams and drains accepted
+config writes as well as repository work.
+
 ## In-memory operation state
 
-The backend stores no durable app state on disk (see the short-lived native callback manifest above). There is no `dataDir` option, app state directory, operation journal, startup journal read, or recovery-file migration. Neither `$XDG_STATE_HOME/jj-stamp` nor `~/.local/state/jj-stamp` is read or written. Existing `operations-*.json` files from older versions are ignored and left untouched; they are never deleted, interpreted as a guard, or used to restore undo.
+The backend stores no durable operation state on disk (see the short-lived native callback manifest above). There is no `dataDir` option, app state directory, operation journal, startup journal read, or recovery-file migration. Neither `$XDG_STATE_HOME/jj-stamp` nor `~/.local/state/jj-stamp` is read or written. Existing `operations-*.json` files from older versions are ignored and left untouched; they are never deleted, interpreted as a guard, or used to restore undo.
 
 Squashes and undo still make their normal changes to jj's repository and operation history. Those jj changes survive restart; app bookkeeping does not. A fresh service begins with no undo, pending guard or preview tokens, even if an older process stopped during an operation. This intentionally provides no durable crash-recovery guard: inspect `jj op log --no-pager` after an interrupted or ambiguous operation before submitting new work. Never blindly repeat the prior squash or use `jj op restore` as an automatic rollback.
 

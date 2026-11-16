@@ -48,11 +48,11 @@ The flake exposes a default package/app and development shell for x86_64/aarch64
 ## Review
 
 - **View a commit:** click **View commit** or press **`c`**, type a change ID or commit ID (full ID or unique prefix), or a revset matching exactly one commit (such as `@-` or `@+`), and press **Enter**. **Escape** dismisses the compact input. Invalid, empty, or multi-commit matches leave the displayed revision unchanged. The selected change is followed through later rewrites; this does not check out the revision. The input opens immediately in either keyboard mode; Vim’s `gg` remains dedicated to jumping to the first diff line. Lookup waits until queued squashes and other operations finish.
-- **Filter the log:** edit **Settings → jj log revset** and click **Apply**. The expression is validated before saving in this browser; errors keep the previous filter and graph. **Reset to default**, then **Apply**, restores the built-in review filter. Filtering never changes the displayed revision; View commit works even for IDs outside the graph.
+- **Filter the log:** edit **Settings → jj log revset** and click **Apply**. The expression is validated before saving to the shared config file; errors keep the previous filter and graph. **Reset to default**, then **Apply**, restores the built-in review filter. Filtering never changes the displayed revision; View commit works even for IDs outside the graph.
 - **Choose a change:** click its ID in the right-hand graph. Immutable and conflicted changes can be viewed quietly, with squash controls hidden. Pressing `s` explains why squashing is unavailable. The chosen change is followed by its full change ID through rewrites; moving the working copy or a bookmark does not silently select something else.
 - **See the destination:** the file-sidebar footer shows `source → parent`; hover either ID for its full value. A change with two parents, or an immutable parent, hides squash controls and cannot be squashed; pressing `s` shows the reason. No older ancestor is substituted.
 - **Select lines:** drag on code or line numbers to select changed lines for squash. **Shift+click/drag** extends the range from its anchor. A plain click/drag starts a new range; click a selected single line again to clear it. **Alt+drag** selects native browser text instead. Included context is highlighted but never squashed. Switching changes or files clears the selection. Mouse selection works the same in Vim mode.
-- **Vim mode:** opt in under **settings**; it is off by default and persists in `localStorage`. **`j` / `k`** moves the diff line cursor across file boundaries in either file view (skipping unsupported or empty diffs and stopping at either end), or reviews the next/previous revision when the log has focus (just like **↓ / ↑**, including key repeat and stopping at either end). Hovering over the log focuses its selected revision, including in hover previews, so no click is needed; typing fields and settings keep their focus. The line cursor spans the full diff width, including both Split panes. **`gg`** jumps to the first displayed line of the current diff; **`G`** (or **`GG`**) jumps to its last line, including virtualized rows. **Shift+V** toggles visual-line selection; motions extend or shrink it within the current file. **`s`** squashes the selected changed lines, exits visual mode, and moves the cursor to the next displayed line in navigation mode without selecting it. This skips context removed by hunk contraction, clamps at the last remaining line, and moves to the first remaining supported file if the current file disappears. **Escape** clears the selection and exits visual mode. With the Files sidebar focused, **`j` / `k`** moves between tree rows like **↓ / ↑**; **Enter** opens the focused file. Outside sidebar navigation, Vim keys target the focused diff, or the active file globally when focus is elsewhere. **`h`** is unbound; **`l`** toggles the log in both modes.
+- **Vim mode:** opt in under **settings**; it is off by default and persists in the shared config file. **`j` / `k`** moves the diff line cursor across file boundaries in either file view (skipping unsupported or empty diffs and stopping at either end), or reviews the next/previous revision when the log has focus (just like **↓ / ↑**, including key repeat and stopping at either end). Hovering over the log focuses its selected revision, including in hover previews, so no click is needed; typing fields and settings keep their focus. The line cursor spans the full diff width, including both Split panes. **`gg`** jumps to the first displayed line of the current diff; **`G`** (or **`GG`**) jumps to its last line, including virtualized rows. **Shift+V** toggles visual-line selection; motions extend or shrink it within the current file. **`s`** squashes the selected changed lines, exits visual mode, and moves the cursor to the next displayed line in navigation mode without selecting it. This skips context removed by hunk contraction, clamps at the last remaining line, and moves to the first remaining supported file if the current file disappears. **Escape** clears the selection and exits visual mode. With the Files sidebar focused, **`j` / `k`** moves between tree rows like **↓ / ↑**; **Enter** opens the focused file. Outside sidebar navigation, Vim keys target the focused diff, or the active file globally when focus is elsewhere. **`h`** is unbound; **`l`** toggles the log in both modes.
 - **Cmd/Ctrl+C:** copy the selected range’s right-hand/new-file code, without diff markers or deleted lines. Native text selections still copy normally.
 - **`e`:** open the line under the mouse pointer in your existing Neovim session at `127.0.0.1:4242` (start it with `nvim --listen 127.0.0.1:4242`). Opens the workspace file, not a historical snapshot; `nvim` must be on the CLI’s `PATH`.
 - **`s`:** selected changed lines disappear immediately and queue for squash. Real operations run one at a time; selections waiting behind the in-flight squash merge into one follow-up squash. The queue count reflects these batches, not individual selections. Continue selecting while they drain. You can also browse other revisions as read-only snapshots; the active squash source stays pinned until the queue finishes. Refresh, undo, and expanding the optimistic source's context still wait for an empty queue.
@@ -65,14 +65,14 @@ The flake exposes a default package/app and development shell for x86_64/aarch64
 - **Watch scope:** only the immediate directories containing files changed in the selected revision, plus narrowly filtered ancestor guards for directory replacement and jj’s operation heads. It never recursively walks the workspace or unrelated generated/dependency trees. Scope follows successful refreshes, revision selection, squash, and undo; an empty diff watches only jj heads. New edits outside those directories need a focus/manual refresh or a recorded jj operation to be discovered. Notification scope does not restrict jj’s working-copy snapshot scope. Symlink directories and `.jj`/`.git` workspace paths are excluded, and watch/resource limits still fall back to focus/manual refresh. Watcher failures include a diagnostic `code` and `message` in `/api/events`; the terminal logs the underlying error once without a UI alert.
 - The file tree compacts single-child folder chains into one row (for example, `src/components/ui`). It supports collapsible folders, arrow-key navigation, Enter to open a file, change-status indicators, and live **`+ / −` counts**. Folder choices survive refresh and squash/undo updates.
 - In **Split** layout, drag the center divider to adjust the left/right widths. Double-click to reset to equal widths, or focus it and use Left/Right (Shift for larger steps). The split is shared across files and remembered between visits.
-- **One file / All files** switches between separate file views and all diffs on one scrolling page. In All files, file headings stay pinned while scrolling through their diffs. Each heading has a collapse/expand button; collapsed files keep their counts and squash action visible, and search automatically expands matching files. The file tree jumps to each file’s heading; selecting lines in another file replaces the previous selection. The view preference persists in `localStorage`.
+- **One file / All files** switches between separate file views and all diffs on one scrolling page. In All files, file headings stay pinned while scrolling through their diffs. Each heading has a collapse/expand button; collapsed files keep their counts and squash action visible, and search automatically expands matching files. The file tree jumps to each file’s heading; selecting lines in another file replaces the previous selection. The view preference persists in the shared config file.
 - **Generated files:** mark paths with `linguist-generated` in `.gitattributes` (for example, `dist/** linguist-generated`). Their diffs start collapsed in both file views, with a **Generated** label and an expand button. Files remain in the sidebar and can still be reviewed or squashed. Manual expansion survives refreshes of the same change; search also reveals matching content. Nested `.gitattributes` files and `linguist-generated=false` overrides are supported; attributes come from the reviewed revision, not the current workspace.
 - **Split / Stacked** switches layouts without changing the exact selection. Split drags select aligned rows in both columns. Stacked lets you select an individual addition or deletion.
 - Diff separators use Tree-sitter to show the smallest confidently parsed enclosing function, method, class, interface, implementation, module, or namespace. Supported files are Rust, JavaScript/TypeScript/TSX, Python, Go, Java, C, C++, C#, Ruby, PHP, and Bash. Unsupported, oversized, or syntactically invalid files show no label instead of a heuristic guess; hover a truncated label to see it in full.
 - **↑ 10 / ↓ 10** reveals ten context lines at a time.
-- Both sidebars collapse to narrow rails; drag their inner edges to resize them, with no maximum width. Sidebar widths, collapsed states, and diff layout persist in browser `localStorage`.
-- Enable **Show collapsed sidebars on hover** under **settings** to temporarily slide either collapsed sidebar into view without moving the diff. Drag a preview’s inner edge to resize it, or focus the edge and use the arrow keys (Shift for larger steps). Preview widths are remembered independently of pinned widths, start at the defaults, and have no maximum width. Previews respect reduced-motion preferences. Move away to hide it, or use its pin button to keep it open at its saved width. This option is off by default and persists in `localStorage`.
-- Choose from **14 color schemes** under **settings**: **Dark**, **Dim**, **Light** (GitHub), **Solarized Dark / Light**, **Catppuccin Mocha / Latte**, **Gruvbox Dark / Light**, **One Dark / Light**, **Rosé Pine / Dawn**, and **Dracula**. Each palette applies to both the UI and syntax-highlighted diffs. The scheme preference persists in `localStorage` for this browser origin.
+- Both sidebars collapse to narrow rails; drag their inner edges to resize them, with no maximum width. Sidebar widths, collapsed states, and diff layout persist in the shared config file.
+- Enable **Show collapsed sidebars on hover** under **settings** to temporarily slide either collapsed sidebar into view without moving the diff. Drag a preview’s inner edge to resize it, or focus the edge and use the arrow keys (Shift for larger steps). Preview widths are remembered independently of pinned widths, start at the defaults, and have no maximum width. Previews respect reduced-motion preferences. Move away to hide it, or use its pin button to keep it open at its saved width. This option is off by default and persists in the shared config file.
+- Choose from **14 color schemes** under **settings**: **Dark**, **Dim**, **Light** (GitHub), **Solarized Dark / Light**, **Catppuccin Mocha / Latte**, **Gruvbox Dark / Light**, **One Dark / Light**, **Rosé Pine / Dawn**, and **Dracula**. Each palette applies to both the UI and syntax-highlighted diffs. The scheme preference persists in the shared config file across all local servers and windows.
 
 - Failed squashes show the API error code, working directory, full shell-quoted failed command, and full, selectable tool output. Nix builds print the absolute `/nix/store/…/bin/jj` path actually executed. Callback arguments reference a short-lived private manifest that is removed after the invocation; the command is diagnostic, **not a replayable retry**. Inspect history first if the error says it may have changed. If reloading also fails, the original squash diagnostics remain visible alongside the reload error. Dismissing an error never resumes or retries queued work.
 - A review stays pinned to its selected change while it exists. If that change disappears, refresh automatically selects the current `@`, including on window/tab focus, regardless of whether you were viewing the working copy or another change. Divergent changes still report an error with their full ID; resolve the divergence or select another visible change in the graph to resume review. Automatic following never bypasses a pending recovery guard or retries a squash.
@@ -80,6 +80,63 @@ The flake exposes a default package/app and development shell for x86_64/aarch64
 The heading groups the **change ID**, **title**, **commit ID**, and change line counts, without the author. The browser tab reads **`<title> (<short change ID> <full repo path>)`**. The graph is rendered by `jj`, with clickable change IDs and a high-contrast selected-change highlight. Bookmark (branch) names appear between each change ID and its description, followed by `|`; helper names ending in `-git-worktree` are hidden. jj’s remote qualifiers and tracking/conflict suffixes are preserved. It uses `visible() & (trunk() | (tracked_remote_bookmarks() & ~::trunk()) | (mutable() & mine())::)` instead of the default log revset or a 100-entry cap. The selected change and working copy are shown only when they match this revset. The graph loads at startup and stays updated even while its sidebar is collapsed, so hovering or pinning it does not trigger another read. Graph refreshes wait for queued operations to complete and show recorded history without snapshotting the working copy.
 
 There is no demo creation or reset endpoint. Test fixtures live only in temporary directories.
+
+## Shared settings
+
+All appearance, layout, Vim-mode and log-filter preferences are saved on the
+**server machine**, not in browser storage, at:
+
+- `$XDG_CONFIG_HOME/jj-stamp/config.json` when `XDG_CONFIG_HOME` is absolute;
+- otherwise `~/.config/jj-stamp/config.json`.
+
+Every jj-stamp process running as the same user shares this file, regardless of
+repository or port. Changes made in any window, or directly in an editor, update
+all connected windows, including background tabs, without reloading the page or
+changing the selected revision. The server checks this one small file every
+250ms while settings streams are connected; this does not poll repositories or
+run jj commands.
+
+The file is a JSON object with typed values. Omitted keys use defaults; for example:
+
+```json
+{
+  "color-scheme": "dim",
+  "font-size": 15,
+  "vim-mode": true,
+  "hover-sidebars": false,
+  "file-view": "single",
+  "diff-style": "split",
+  "files-expanded": true,
+  "log-expanded": true,
+  "files-width": 245,
+  "log-width": 350,
+  "files-peek-width": 245,
+  "log-peek-width": 350,
+  "split-diff-ratio": 50,
+  "log-revset": "all()"
+}
+```
+
+Use a listed color-scheme key, integer font sizes from 10–24, sidebar widths of
+at least 120px (Files) / 160px (Log), and a split ratio from 20–80. Unknown keys,
+wrong types, invalid JSON and files larger than 64KiB are rejected. A malformed
+edit leaves each connected window on its last valid settings and shows an error;
+repair the file to resume sync. Removing the file resets preferences to defaults.
+A manually edited log revset must be valid for the repositories using it; unlike
+the Settings dialog, a text editor cannot validate it against jj before saving.
+Unsaved log-filter drafts in open dialogs are preserved when other windows edit
+settings.
+
+No file is created just by opening the app. Explicit UI edits are briefly
+coalesced, merge only changed keys into the current file under a cross-process
+lock, and save by private atomic replacement. Simultaneous edits to different
+keys are preserved; for the same key, the last completed write wins. External
+editors do not participate in this lock, so avoid editing the file concurrently
+with UI saves. Failed saves are reported, not silently retried. An uncatchable
+server crash during a save may leave `config.json.lock`; if saves report a lock
+timeout, stop all jj-stamp servers before removing that leftover file. Existing
+browser-storage preferences are ignored, not imported; reselect them once in
+Settings if needed.
 
 ## Safety and recovery
 
@@ -93,7 +150,7 @@ This is a **single-user local tool**, not a network service. Host and Origin che
 - If a queued job fails, unsent jobs are canceled and the actual repository is reloaded. Completed jobs are not rolled back. Failed mutations are never automatically retried. A definite `STALE_STATE` rejection refreshes the diff, clears stale selections, and enables fresh selections without a manual refresh; a brief notice explains the cancellation. Other failures, or a failed recovery read, keep the queue paused.
 - Do not close the browser with queued work. An accepted request can finish after a disconnection, but unsent browser-local jobs are lost.
 
-The backend stores **no durable application state on disk**. A native squash temporarily writes a private manifest containing the pinned input and selected output bytes; it is removed after success or failure. An abrupt process/VM crash can leave that private temporary directory behind; it is not a recovery journal and is never reused. Selected revision, preview tokens, undo information and recovery guards exist only in the running process. Existing `operations-*.json` files from older versions are ignored and are not deleted automatically. Browser appearance preferences remain in `localStorage`.
+The backend stores **no durable operation state on disk**. A native squash temporarily writes a private manifest containing the pinned input and selected output bytes; it is removed after success or failure. An abrupt process/VM crash can leave that private temporary directory behind; it is not a recovery journal and is never reused. Selected revision, preview tokens, undo information and recovery guards exist only in the running process. Existing `operations-*.json` files from older versions are ignored and are not deleted automatically. Appearance and layout preferences are stored separately in the shared config file described above.
 
 An ambiguous history operation blocks further mutations and revision switching in that process. Inspect `jj op log` and the current diff before restarting; restarting clears only app bookkeeping, never rolls back history or retries a squash. Undo is available only for operations performed by the current process. Do not blindly repeat a selection after an uncertain result. See [backend notes](server/README.md).
 
