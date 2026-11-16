@@ -231,6 +231,8 @@ test("settings uses a labeled, initially closed native dialog and a named close 
       onHoverSidebarsChange() {},
       vimMode: false,
       onVimModeChange() {},
+      shell: "",
+      onShellChange() {},
     }),
   );
   assert.match(html, /aria-haspopup="dialog"/);

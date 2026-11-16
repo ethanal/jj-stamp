@@ -256,6 +256,7 @@ try {
   await expect(dialog).not.toBeVisible();
   await expect(actions).toHaveText([
     "Refresh",
+    "Terminal",
     "Settings",
     "Squash",
     "Undo",
@@ -286,13 +287,11 @@ try {
     }
     await expect(modal).toBeVisible();
     const box = await modal.boundingBox();
-    const background = await refresh.boundingBox();
-    assert(box && background);
+    assert(box);
     const inside = { x: box.x + 5, y: box.y + 5 };
-    const outside = {
-      x: background.x + background.width / 2,
-      y: background.y + background.height / 2,
-    };
+    // Toolbar actions can move as new controls are added. A viewport corner is
+    // reliably outside both centered dialogs, independent of button positions.
+    const outside = { x: 4, y: 4 };
     assert(
       outside.x < box.x ||
         outside.x >= box.x + box.width ||

@@ -94,6 +94,8 @@ export function SettingsDialog({
   onHoverSidebarsChange,
   vimMode,
   onVimModeChange,
+  shell,
+  onShellChange,
   persistenceError,
   disabled,
 }: {
@@ -105,12 +107,21 @@ export function SettingsDialog({
   onColorSchemeChange: (scheme: ColorScheme) => void;
   vimMode: boolean;
   onVimModeChange: (enabled: boolean) => void;
+  shell: string;
+  onShellChange: (shell: string) => void;
   hoverSidebars: boolean;
   onHoverSidebarsChange: (enabled: boolean) => void;
   persistenceError?: string;
   disabled: boolean;
 }) {
   const [revsetDraft, setRevsetDraft] = useState(logRevset);
+  const [shellDraft, setShellDraft] = useState(shell);
+  const savedShell = useRef(shell);
+  useEffect(() => {
+    const previous = savedShell.current;
+    savedShell.current = shell;
+    setShellDraft((draft) => (draft === previous ? shell : draft));
+  }, [shell]);
   const savedRevset = useRef(logRevset);
   useEffect(() => {
     const previous = savedRevset.current;
@@ -132,6 +143,7 @@ export function SettingsDialog({
         onClick={() => {
           setRevsetDraft(logRevset);
           setRevsetError("");
+          setShellDraft(shell);
           dialog.current?.showModal();
         }}
         disabled={disabled}
@@ -268,6 +280,50 @@ export function SettingsDialog({
               }
             >
               {savingRevset ? "Validating…" : "Apply"}
+            </button>
+          </div>
+        </form>
+        <form
+          className="settings-section log-revset-settings"
+          onSubmit={(event) => {
+            event.preventDefault();
+            onShellChange(shellDraft.trim());
+            setShellDraft(shellDraft.trim());
+          }}
+        >
+          <h3>
+            <label htmlFor={`${id}-shell`}>Terminal shell</label>
+          </h3>
+          <input
+            id={`${id}-shell`}
+            type="text"
+            value={shellDraft}
+            placeholder="Default: backend user's $SHELL"
+            maxLength={4096}
+            disabled={disabled}
+            autoComplete="off"
+            spellCheck={false}
+            aria-describedby={`${id}-shell-help`}
+            onChange={(event) => setShellDraft(event.target.value)}
+          />
+          <p className="settings-help" id={`${id}-shell-help`}>
+            Executable name or absolute path on the server, without arguments.
+            Leave empty for your native shell. Applies to new sessions; restart
+            the terminal to change an existing shell.
+          </p>
+          <div className="revset-actions">
+            <button
+              type="button"
+              disabled={disabled}
+              onClick={() => setShellDraft("")}
+            >
+              Use native shell
+            </button>
+            <button
+              type="submit"
+              disabled={disabled || shellDraft.trim() === shell}
+            >
+              Apply shell
             </button>
           </div>
         </form>

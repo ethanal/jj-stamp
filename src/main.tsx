@@ -52,6 +52,7 @@ import {
 } from "./ReviewToolbar";
 import { GoToRevision } from "./GoToRevision";
 import { ShortcutsDialog } from "./ShortcutsDialog";
+import { TerminalOverlay } from "./TerminalOverlay";
 import { useSidebarReveal } from "./useSidebarReveal";
 import { useScrollActiveFile } from "./useScrollActiveFile";
 import "./styles.css";
@@ -70,6 +71,8 @@ function App() {
     setFontSize,
     vimMode,
     setVimMode,
+    shell,
+    setShell,
     hoverSidebars,
     setHoverSidebars,
     fileView,
@@ -1095,6 +1098,12 @@ function App() {
           >
             Refresh
           </button>
+          <TerminalOverlay
+            disabled={dragging}
+            fontSize={fontSize}
+            colorScheme={colorScheme}
+            settingsSaving={configStatus.saving}
+          />
           <SettingsDialog
             logRevset={logRevset}
             onLogRevsetChange={applyLogRevset}
@@ -1106,6 +1115,8 @@ function App() {
             onHoverSidebarsChange={setHoverSidebars}
             vimMode={vimMode}
             onVimModeChange={setVimMode}
+            shell={shell}
+            onShellChange={setShell}
             persistenceError={configStatus.error}
             disabled={dragging}
           />

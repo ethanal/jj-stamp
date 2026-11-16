@@ -6,6 +6,50 @@ The CLI constructs `ReviewService({ repoPath, revision })` and passes it to `cre
 
 Unversioned UI files (especially `/` and `/index.html`) use `Cache-Control: no-store`, without ETag or Last-Modified validators. Nix normalizes file timestamps, and different entry pages can have identical sizes; stat-based validators could otherwise return a false 304 and leave the browser requesting obsolete hashed bundles after an upgrade. Content-hashed `/assets/` files retain conditional caching. Missing static files return uncached plain-text 404s, never an HTML fallback.
 
+## Interactive terminal
+
+`server/terminal.ts` handles WebSocket upgrades separately from Express at
+`/api/terminal?cols=80&rows=24`. Both initial dimensions are required: integer
+columns 1–500 and rows 1–300; repeated/unknown query parameters are rejected.
+Upgrade requests require the exact listening `127.0.0.1:port` Host and matching
+`http://127.0.0.1:port` Origin, even though ordinary HTTP GET requests may omit
+Origin. Cross-site upgrades, proxy-origin substitutions and unknown upgrade
+paths are rejected before allocating a terminal or reading repository metadata.
+
+Each accepted socket lazily starts one real PTY in the canonical workspace root,
+without snapshotting jj or changing the selected revision. The shared `shell`
+preference selects one literal executable (paths containing spaces are valid),
+with no command parsing, interpolation or arguments. Empty uses `$SHELL`, then
+the operating-system user's shell, then `/bin/sh`. The shell inherits the
+backend user's environment and permissions, with `TERM=xterm-256color`.
+Preferences are read once per new connection; changing them never replaces a
+running shell. Startup failures do not run a fallback executable or retry.
+
+Client text frames are strict JSON objects:
+
+- `{type:"input",data:string}` (at most 16 KiB UTF-8).
+- `{type:"resize",cols:number,rows:number}` (the same dimension bounds).
+
+Server text frames are `{type:"ready",shell:string,pid:number}`,
+`{type:"data",data:string}`, `{type:"exit",exitCode:number}`, or
+`{type:"error",message:string}`. Wait for `ready` before sending input; resize
+may arrive while startup is pending. Shell exit sends `exit` then closes the
+socket. Binary, malformed, oversized and unknown messages terminate the session;
+there are no exec/replay/reconnect commands. The server admits at most eight
+sessions, caps client frames at 64 KiB and output backlog at 1 MiB, and
+disconnects input floods (512 messages or 256 KiB per second).
+
+Hiding the overlay keeps its WebSocket and shell alive. Closing/reloading the
+page, disconnecting, or explicitly restarting ends that session; there is no
+cross-page session reattachment or durable terminal history. Shutdown closes
+upgrades and sockets and awaits shell exit, escalating HUP → TERM → KILL.
+Linux cleanup also snapshots the PTY session's process identities to terminate
+foreground/background job groups safely, rechecking session and process start
+time before each signal. Other POSIX systems use shell/process-group signaling.
+Intentionally detached processes outside the terminal session are not managed.
+Terminal commands execute directly as the backend user and can modify workspace
+files/history independently of the review API's mutation and recovery guards.
+
 ## Native diff editor (experimental branch)
 
 Only Node.js and `jj` are required. Pinned Git diffs are parsed locally and assigned deterministic hunk IDs (short hashes of exact path/header/rows, with collision suffixes). No third-party hunk listing, patch generation, GNU `patch`, or fuzzy matching is involved.

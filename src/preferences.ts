@@ -33,6 +33,7 @@ export function useAppearancePreferences() {
     document.documentElement.style.setProperty("--font-size", `${fontSize}px`);
   }, [fontSize]);
   const [vimMode, setVimMode] = usePreference("vim-mode");
+  const [shell, setShell] = usePreference("shell");
   const [hoverSidebars, setHoverSidebars] = usePreference("hover-sidebars");
   const [fileView, setFileView] = usePreference("file-view");
   const [colorScheme, setColorScheme] = usePreference("color-scheme");
@@ -50,6 +51,8 @@ export function useAppearancePreferences() {
     setFontSize,
     vimMode,
     setVimMode,
+    shell,
+    setShell,
     hoverSidebars,
     setHoverSidebars,
     fileView,

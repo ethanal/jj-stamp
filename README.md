@@ -37,7 +37,7 @@ Or run without installing, from this checkout:
 nix run . -- --repository /path/to/workspace
 ```
 
-The flake bundles the browser assets, Node.js, `jj`, and jj-stamp's native diff-editor callback. `flake.lock` pins the Nix inputs. The launcher pins its absolute `jj` executable via `JJ_STAMP_JJ`; callbacks use the same Node.js runtime as the server. There is no Rust/Cargo or GNU `patch` dependency in this branch.
+The flake bundles the browser assets, Ghostty WebAssembly terminal, native PTY addon, Node.js, `jj`, and jj-stamp's native diff-editor callback. `flake.lock` pins the Nix inputs. The launcher pins its absolute `jj` executable via `JJ_STAMP_JJ`; callbacks use the same Node.js runtime as the server. There is no Rust/Cargo or GNU `patch` dependency in this branch.
 
 No npm installation or runtime download of assets or bundled tools is needed. Builds may need network access. Your browser and any external helpers configured in jj (for example, signing tools) are not bundled. Linux browser launch uses bundled `xdg-open`; macOS uses system `open`.
 
@@ -55,6 +55,8 @@ The flake exposes a default package/app and development shell for x86_64/aarch64
 - **Vim mode:** opt in under **settings**; it is off by default and persists in the shared config file. **`j` / `k`** moves the diff line cursor across file boundaries in either file view (skipping unsupported or empty diffs and stopping at either end), or reviews the next/previous revision when the log has focus (just like **↓ / ↑**, including key repeat and stopping at either end). Hovering over the log focuses its selected revision, including in hover previews, so no click is needed; typing fields and settings keep their focus. The line cursor spans the full diff width, including both Split panes. **`gg`** jumps to the first displayed line of the current diff; **`G`** (or **`GG`**) jumps to its last line, including virtualized rows. **Shift+V** toggles visual-line selection; motions extend or shrink it within the current file. **`s`** squashes the selected changed lines, exits visual mode, and moves the cursor to the next displayed line in navigation mode without selecting it. This skips context removed by hunk contraction, clamps at the last remaining line, and moves to the first remaining supported file if the current file disappears. **Escape** clears the selection and exits visual mode. With the Files sidebar focused, **`j` / `k`** moves between tree rows like **↓ / ↑**; **Enter** opens the focused file. Outside sidebar navigation, Vim keys target the focused diff, or the active file globally when focus is elsewhere. **`h`** is unbound; **`l`** toggles the log in both modes.
 - **Cmd/Ctrl+C:** copy the selected range’s right-hand/new-file code, without diff markers or deleted lines. Native text selections still copy normally.
 - **`e`:** open the line under the mouse pointer in your existing Neovim session at `127.0.0.1:4242` (start it with `nvim --listen 127.0.0.1:4242`). Opens the workspace file, not a historical snapshot; `nvim` must be on the CLI’s `PATH`.
+- **`x`:** open a centered **Ghostty terminal** (or click **Terminal**). It runs the backend user's native shell in the repository root, connected to a real PTY. **Escape**, the close button, or the backdrop hides it without stopping commands or losing shell state/scrollback. Inside the terminal, review shortcuts are isolated and `x` types normally. Escape is reserved for hiding, including inside terminal programs; use Ctrl+[ when a program needs an Escape input. Each browser page owns an independent session; reload, disconnect, server shutdown, or **Restart shell** ends it. Connections are never automatically recreated or commands replayed.
+- **Customize the shell:** **Settings → Terminal shell → Apply shell** saves an executable name or absolute path on the backend (for example `/bin/zsh` or `fish`), without arguments, quoting or `~` expansion. Empty means `$SHELL`, then the account shell, then `/bin/sh`. Settings apply only to new sessions; **Restart shell** explicitly stops an existing shell and uses the new setting. A bad executable shows an error instead of silently falling back. Shell commands run with your full backend user permissions and can modify the workspace/history independently of review safeguards.
 - **`s`:** selected changed lines disappear immediately and queue for squash. Real operations run one at a time; selections waiting behind the in-flight squash merge into one follow-up squash. The queue count reflects these batches, not individual selections. Continue selecting while they drain. You can also browse other revisions as read-only snapshots; the active squash source stays pinned until the queue finishes. Refresh, undo, and expanding the optimistic source's context still wait for an empty queue.
 - **Squash a file:** use the **down-arrow-into-node** button in its diff header. This queues every remaining changed line in that file, independent of the current line selection. Unsupported files stay disabled; unavailable destinations hide squash controls.
 - **Renamed files:** select lines or squash all text edits just like other files. The first selected lines or hunk carry the **rename and selected edits** into the parent. Unselected edits remain in the reviewed change as ordinary modifications at the new path. Squashing every text edit moves the whole renamed file out of the source diff. Pure renames have no selectable lines; use the file's squash button to move just the rename into the parent.
@@ -73,7 +75,7 @@ The flake exposes a default package/app and development shell for x86_64/aarch64
 - **↑ 10 / ↓ 10** reveals ten context lines at a time.
 - Both sidebars collapse to narrow rails; drag their inner edges to resize them, with no maximum width. Sidebar widths, collapsed states, and diff layout persist in the shared config file.
 - Enable **Show collapsed sidebars on hover** under **settings** to temporarily slide either collapsed sidebar into view without moving the diff. Drag a preview’s inner edge to resize it, or focus the edge and use the arrow keys (Shift for larger steps). Preview widths are remembered independently of pinned widths, start at the defaults, and have no maximum width. Previews respect reduced-motion preferences. Move away to hide it, or use its pin button to keep it open at its saved width. This option is off by default and persists in the shared config file.
-- Choose from **14 color schemes** under **settings**: **Dark**, **Dim**, **Light** (GitHub), **Solarized Dark / Light**, **Catppuccin Mocha / Latte**, **Gruvbox Dark / Light**, **One Dark / Light**, **Rosé Pine / Dawn**, and **Dracula**. Each palette applies to both the UI and syntax-highlighted diffs. The scheme preference persists in the shared config file across all local servers and windows.
+- Choose from **14 color schemes** under **settings**: **Dark**, **Dim**, **Light** (GitHub), **Solarized Dark / Light**, **Catppuccin Mocha / Latte**, **Gruvbox Dark / Light**, **One Dark / Light**, **Rosé Pine / Dawn**, and **Dracula**. Each palette applies to the UI, syntax-highlighted diffs, and terminal (including its ANSI colors and selection). The scheme preference persists in the shared config file across all local servers and windows.
 
 - Failed squashes show the API error code, working directory, full shell-quoted failed command, and full, selectable tool output. Nix builds print the absolute `/nix/store/…/bin/jj` path actually executed. Callback arguments reference a short-lived private manifest that is removed after the invocation; the command is diagnostic, **not a replayable retry**. Inspect history first if the error says it may have changed. If reloading also fails, the original squash diagnostics remain visible alongside the reload error. Dismissing an error never resumes or retries queued work.
 - A review stays pinned to its selected change while it exists. If that change disappears, refresh automatically selects the current `@`, including on window/tab focus, regardless of whether you were viewing the working copy or another change. Divergent changes still report an error with their full ID; resolve the divergence or select another visible change in the graph to resume review. Automatic following never bypasses a pending recovery guard or retries a squash.
@@ -84,7 +86,7 @@ There is no demo creation or reset endpoint. Test fixtures live only in temporar
 
 ## Shared settings
 
-All appearance, layout, Vim-mode and log-filter preferences are saved on the
+All appearance, layout, Vim-mode, shell and log-filter preferences are saved on the
 **server machine**, not in browser storage, at:
 
 - `$XDG_CONFIG_HOME/jj-stamp/config.json` when `XDG_CONFIG_HOME` is absolute;
@@ -104,6 +106,7 @@ The file is a JSON object with typed values. Omitted keys use defaults; for exam
   "color-scheme": "dim",
   "font-size": 15,
   "vim-mode": true,
+  "shell": "/bin/zsh",
   "hover-sidebars": false,
   "file-view": "single",
   "diff-style": "split",
@@ -164,10 +167,10 @@ npm run build
 npm start -- --repository /path/to/workspace --no-open
 ```
 
-Without Nix, provide Node.js 24+ and `jj` on `PATH`. No hunk tool, Rust toolchain, or external `patch` is needed. Unpack/install the complete `dist/` directory: the bundled CLI must keep its sibling `diff-editor.cjs` and browser assets. `JJ_STAMP_JJ`, when set, selects the same absolute jj executable for reads, mutations and diagnostics.
+Without Nix, provide Node.js 24+ and `jj` on `PATH`. No hunk tool, Rust toolchain, or external `patch` is needed. Building the native PTY addon from source requires Python 3 and a C/C++ build toolchain (Linux builds from source; macOS may use the package's prebuild). Unpack/install the complete **host-platform-specific** `dist/` directory: the bundled CLI must keep its sibling `diff-editor.cjs`, browser assets and `node_modules/node-pty` native runtime. `JJ_STAMP_JJ`, when set, selects the same absolute jj executable for reads, mutations and diagnostics.
 
 Native selection supports regular, non-executable, lossless UTF-8 text with or without final newlines (including CRLF), including text edits in validated renames. Final-newline changes belong to their preceding code row; EOF markers are not separate selectable lines. Partial selections that would put more content after an unterminated line are rejected: select the related EOF changes together. Existing conservative restrictions on binary files, copies, mode changes, merges, and ambiguous paths/formats remain. Colliding or overlapping selected paths fail closed. File snapshots are verified as bytes before applying a selection; there is no context search, offset adjustment, or fuzz.
-`npm run build` typechecks and produces **`dist/cli.cjs`**, **`dist/diff-editor.cjs`**, and **`dist/client/`**. The CLI is bundled, so it does not need `node_modules` at runtime. `npm run dev -- -R /path/to/workspace` rebuilds and runs it; restart after source edits.
+`npm run build` typechecks and produces **`dist/cli.cjs`**, **`dist/diff-editor.cjs`**, **`dist/client/`**, and the staged **`dist/node_modules/node-pty/`** runtime. No checkout-level `node_modules` is needed at runtime. If your npm version requires install-script approval, allow `node-pty` and `esbuild` when installing dependencies. `npm run dev -- -R /path/to/workspace` rebuilds and runs it; restart after source edits.
 
 ```sh
 npm run check                  # formatting and strict type checking
@@ -175,8 +178,18 @@ npm test                       # unit and real-jj backend tests
 npx playwright install chromium
 npm run test:browser            # browser interactions against fixtures
 npm run test:cli                # rebuild and test the bundled executable
+npm run test:browser:terminal   # builds production assets; real Ghostty + PTY
 nix flake check                 # installed Nix packages and runtime tools
 ```
+
+Terminal input is bounded and paced; a paste exceeding the 1 MiB pending queue
+limit is rejected atomically with a notice. Hiding the terminal does not cancel
+accepted input or commands. Up to eight sessions can run per server. Linux
+shutdown also terminates processes remaining in the PTY session; intentionally
+detached processes are not managed. Other POSIX systems rely on shell/process-group
+hangup behavior. The Ghostty renderer exposes resolved RGB rather than live color
+indices, so changing palettes also recolors application truecolors that exactly
+match the original terminal palette. Other application truecolors are preserved.
 
 `npm run test:all` runs the formatting/type checks and all three npm test suites. Use `npm run format` to apply formatting, or `npm run typecheck` to check types independently. Type checking also rejects unused locals and parameters; it runs as part of every build.
 
