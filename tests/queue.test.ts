@@ -263,6 +263,7 @@ test("a waiting renamed-file batch compacts edits selected before and after the 
   assert.deepEqual(posts[1].input, {
     version: "v1",
     selections: [{ id: "authoritative-v1", lines: [2, 3] }],
+    target: PARENT,
   });
   posts[1].result.resolve({
     state: acknowledge(authoritative1, refs(authoritative1, 2, 3), "v2"),
