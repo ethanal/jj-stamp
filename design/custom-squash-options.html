@@ -1,0 +1,828 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Five compact squash destination options</title>
+    <style>
+      @font-face {
+        font-family: Source;
+        src: url("../src/fonts/SourceCodePro.ttf");
+        font-weight: 200 900;
+        font-display: swap;
+      }
+      :root {
+        color-scheme: dark;
+        --bg: #0d1117;
+        --panel: #161b22;
+        --border: #30363d;
+        --fg: #c9d1d9;
+        --muted: #8b949e;
+        --blue: #9ac3e5;
+        --amber: #e2bd7e;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      [hidden] {
+        display: none !important;
+      }
+      body {
+        margin: 0;
+        background: #090d12;
+        color: var(--fg);
+        font:
+          13px Source,
+          monospace;
+      }
+      main {
+        max-width: 760px;
+        margin: auto;
+        padding: 28px 24px;
+      }
+      h1 {
+        font-size: 23px;
+        letter-spacing: -0.7px;
+        margin: 8px 0 10px;
+        color: #f0f6fc;
+      }
+      p {
+        margin: 0;
+        line-height: 1.65;
+      }
+      .eyebrow {
+        font-size: 10px;
+        color: var(--blue);
+        text-transform: uppercase;
+        letter-spacing: 1px;
+      }
+      .intro {
+        color: var(--muted);
+        font-size: 12px;
+        margin-bottom: 22px;
+      }
+      .option {
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        background: #10151c;
+        padding: 16px;
+        margin-bottom: 16px;
+      }
+      h2 {
+        margin: 0 0 5px;
+        font-size: 14px;
+        font-weight: 500;
+        color: #edf2f7;
+      }
+      .number {
+        color: var(--blue);
+        margin-right: 9px;
+      }
+      .description {
+        color: var(--muted);
+        font-size: 11px;
+        margin-bottom: 14px;
+      }
+      .preview {
+        display: grid;
+        grid-template-columns: 52px minmax(0, 1fr);
+        gap: 0 10px;
+        margin-top: 10px;
+        position: relative;
+      }
+      .state-label {
+        padding-top: 16px;
+        font-size: 10px;
+        color: var(--muted);
+      }
+      .topbar {
+        min-width: 0;
+        height: 44px;
+        padding: 0 12px;
+        background: var(--panel);
+        border: 1px solid var(--border);
+        border-radius: 4px;
+        display: flex;
+        align-items: center;
+        gap: 7px;
+        position: relative;
+      }
+      .squash-label {
+        font-size: 11px;
+        color: var(--muted);
+        white-space: nowrap;
+        flex-shrink: 0;
+      }
+      button {
+        font: inherit;
+        font-size: 12px;
+        color: var(--fg);
+        cursor: pointer;
+        background: var(--panel);
+        border: 1px solid var(--border);
+        border-radius: 4px;
+        padding: 3px 7px;
+        line-height: 18px;
+      }
+      button:hover:not(:disabled) {
+        background: #252e38;
+        border-color: #657386;
+      }
+      button:focus-visible {
+        outline: 2px solid var(--blue);
+        outline-offset: 2px;
+      }
+      button:disabled {
+        cursor: not-allowed;
+        color: #66717f;
+      }
+      .destination {
+        color: var(--amber);
+        white-space: nowrap;
+      }
+      .mode,
+      .summary {
+        white-space: nowrap;
+      }
+      .separator {
+        color: var(--muted);
+      }
+      .chevron {
+        margin-left: 12px;
+        color: var(--muted);
+      }
+      .combined {
+        display: inline-flex;
+        gap: 6px;
+        align-items: center;
+      }
+      .segments {
+        display: inline-flex;
+        flex-shrink: 0;
+      }
+      .segments button {
+        border-radius: 0;
+      }
+      .segments button:first-child {
+        border-radius: 4px 0 0 4px;
+      }
+      .segments button:last-child {
+        border-radius: 0 4px 4px 0;
+        margin-left: -1px;
+      }
+      .segments button[aria-pressed="true"] {
+        background: #253445;
+        border-color: #637c95;
+        color: #dbeafb;
+        position: relative;
+      }
+      .mode-badge {
+        font-size: 10px;
+        border: 1px solid #3c4550;
+        border-radius: 3px;
+        color: #a8b2be;
+        padding: 2px 5px;
+        white-space: nowrap;
+      }
+      .mode-badge.custom {
+        border-color: #5b4a34;
+        background: #29261f;
+        color: var(--amber);
+      }
+      .stack {
+        display: flex;
+        flex-direction: column;
+        gap: 1px;
+        line-height: 15px;
+      }
+      .stack .squash-label {
+        font-size: 10px;
+      }
+      .stack .summary {
+        font-size: 11px;
+        line-height: 15px;
+      }
+      .context {
+        grid-column: 2;
+        color: #788391;
+        font-size: 9px;
+        margin-top: 4px;
+        min-height: 12px;
+      }
+      .menu {
+        position: absolute;
+        top: calc(100% + 5px);
+        right: 10px;
+        z-index: 10;
+        width: 272px;
+        padding: 4px;
+        border: 1px solid #506071;
+        border-radius: 5px;
+        background: #1b222b;
+        box-shadow: 0 10px 30px #0008;
+      }
+      .menu button {
+        width: 100%;
+        border: 0;
+        text-align: left;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        background: transparent;
+        padding: 7px 8px;
+      }
+      .menu button[aria-checked="true"] {
+        color: var(--blue);
+      }
+      .menu .menu-note {
+        color: var(--muted);
+        font-size: 10px;
+        padding: 6px 8px;
+      }
+      .pick-panel {
+        grid-column: 2;
+        margin-top: 5px;
+        border: 1px solid #506071;
+        border-radius: 4px;
+        background: var(--panel);
+        min-width: 0;
+      }
+      .pick-panel.floating {
+        position: absolute;
+        left: 62px;
+        right: 0;
+        top: 44px;
+        z-index: 12;
+        box-shadow: 0 12px 32px #0009;
+      }
+      .pick-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+        padding: 7px 10px;
+        font-size: 10px;
+        color: var(--blue);
+        border-bottom: 1px solid var(--border);
+      }
+      .pick-head button {
+        font-size: 10px;
+        line-height: 15px;
+        padding: 2px 5px;
+      }
+      .graph-viewport {
+        display: flex;
+        position: relative;
+        padding: 10px 0;
+        min-width: 0;
+      }
+      .gutter {
+        flex: 0 0 20px;
+        position: relative;
+        overflow: hidden;
+      }
+      .route {
+        position: absolute;
+        left: 2px;
+        width: 18px;
+        overflow: visible;
+        color: var(--amber);
+      }
+      .graph {
+        overflow: auto;
+        min-width: 0;
+        flex: 1;
+        padding-right: 10px;
+        line-height: normal;
+        white-space: pre;
+        font:
+          13px Source,
+          monospace;
+      }
+      .revision {
+        width: max-content;
+        min-width: 100%;
+        margin: 0;
+        padding: 0 4px;
+        white-space: inherit;
+        font: inherit;
+        line-height: inherit;
+      }
+      .revision.current {
+        background: #154d79;
+        color: white;
+      }
+      .revision.target {
+        background: #29261f;
+      }
+      .prefix {
+        color: var(--muted);
+      }
+      .revision.current .prefix {
+        color: #c3e5ff;
+      }
+      .revision.target .prefix {
+        color: var(--amber);
+      }
+      .revision button {
+        padding: 0;
+        border: 0;
+        border-radius: 0;
+        background: transparent !important;
+        color: var(--blue);
+        font: inherit;
+        line-height: inherit;
+      }
+      .revision.current button {
+        color: white;
+      }
+      .revision button:disabled {
+        color: inherit;
+      }
+      .revision .title {
+        color: #b9c4d0;
+      }
+      .pick-foot {
+        padding: 6px 10px;
+        border-top: 1px solid var(--border);
+        font-size: 10px;
+        color: var(--muted);
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+      }
+      .pick-foot button {
+        font-size: 10px;
+      }
+      .status {
+        min-height: 32px;
+        font-size: 10px;
+        line-height: 1.6;
+        color: var(--blue);
+        padding: 5px 0;
+      }
+      .footnote {
+        font-size: 10px;
+        color: var(--muted);
+      }
+      @media (max-width: 640px) {
+        main {
+          padding: 20px 12px;
+        }
+        .option {
+          padding: 12px;
+        }
+        .preview {
+          grid-template-columns: minmax(0, 1fr);
+          gap: 4px;
+        }
+        .state-label {
+          padding: 0;
+        }
+        .topbar {
+          height: auto;
+          min-height: 44px;
+          padding: 8px;
+          flex-wrap: wrap;
+          gap: 6px;
+        }
+        .topbar > .squash-label {
+          flex-basis: 100%;
+        }
+        .context,
+        .pick-panel {
+          grid-column: 1;
+        }
+        .pick-panel.floating {
+          left: 0;
+          top: 100%;
+        }
+        .menu {
+          right: 0;
+          max-width: 100%;
+        }
+        h1 {
+          font-size: 21px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <div class="eyebrow">jj-stamp / five alternatives</div>
+      <h1>Same destination. Five ways to choose it.</h1>
+      <p class="intro">
+        Each option shows the default and a custom destination. All start with
+        the log hidden. Try the controls; no repository writes.
+      </p>
+      <div id="options"></div>
+      <p class="status" id="status" role="status" aria-live="polite">
+        Ready · choose an option to try its interaction.
+      </p>
+      <p class="footnote">
+        Default = the reviewed commit’s actual parent, not @-. No text entry.
+        IDs are read-only unless part of an obvious, labeled dropdown. The 13px
+        monospace log keeps normal line height and a plain-ended margin arrow.
+      </p>
+    </main>
+    <script>
+      const designs = [
+        {
+          id: 1,
+          name: "One destination dropdown",
+          description:
+            "Combine mode and ID. One obvious dropdown, no separate Change button.",
+          kind: "dropdown",
+        },
+        {
+          id: 2,
+          name: "Two explicit choices",
+          description:
+            "Commit below or Pick commit… as adjacent buttons. The ID stays read-only.",
+          kind: "segments",
+        },
+        {
+          id: 3,
+          name: "Plain summary + Change",
+          description:
+            "Remove the always-visible selector. Keep a quiet summary and one named action.",
+          kind: "summary",
+        },
+        {
+          id: 4,
+          name: "Choose directly in a popover",
+          description:
+            "A small mode badge and Choose… button. Pick without expanding the main log.",
+          kind: "direct",
+        },
+        {
+          id: 5,
+          name: "Stacked micro-control",
+          description:
+            "Use the existing bar’s height to save width. Label above, summary below, explicit Change.",
+          kind: "stacked",
+        },
+      ];
+      const sourceId = "vqkqszmu";
+      const parents = { vqkqszmu: "pqxvqmoo" };
+      const revisions = [
+        { id: "xmturvkn", prefix: "@  ", title: "Continue notification work" },
+        {
+          id: "vqkqszmu",
+          prefix: "○  ",
+          title: "Polish notification delivery",
+        },
+        {
+          id: "pqxvqmoo",
+          prefix: "○  ",
+          title: "Add notification preferences",
+          eligible: true,
+        },
+        {
+          id: "rwpxovrz",
+          prefix: "○  ",
+          title: "Build notification delivery service",
+          eligible: true,
+        },
+        {
+          id: "ksuunvyp",
+          prefix: "○  ",
+          title: "Introduce notification types",
+          eligible: true,
+        },
+        {
+          id: "zzzzzzzz",
+          prefix: "◆  ",
+          title: "Release notification foundation",
+        },
+      ];
+      const instances = [];
+      const announce = (text) => {
+        document.getElementById("status").textContent =
+          text + " · mock only, no repository writes";
+      };
+      const currentId = (instance) =>
+        instance.mode === "parent" ? parents[sourceId] : instance.customId;
+      const shownId = (instance) =>
+        instance.picking ? instance.candidate : currentId(instance);
+      function focusAction(instance, action) {
+        instance.root
+          .querySelector(`[data-action="${action}"]`)
+          ?.focus({ preventScroll: true });
+      }
+      function closeMenu(instance, focus = true) {
+        instance.menuOpen = false;
+        renderControl(instance);
+        if (focus) focusAction(instance, "trigger");
+      }
+      function setParent(instance) {
+        instance.mode = "parent";
+        instance.picking = instance.menuOpen = false;
+        render(instance);
+        focusAction(
+          instance,
+          instance.design.kind === "segments" ? "parent" : "trigger",
+        );
+        announce(
+          `Option ${instance.design.id}: Commit below → ${currentId(instance)}`,
+        );
+      }
+      function beginPick(instance, action = "trigger") {
+        instance.returnAction = action;
+        instance.menuOpen = false;
+        instance.picking = true;
+        instance.candidate = currentId(instance);
+        render(instance);
+        instance.root
+          .querySelector(`[data-revision="${instance.candidate}"] button`)
+          .focus({ preventScroll: true });
+        announce(
+          `Option ${instance.design.id}: choose a commit; Escape cancels`,
+        );
+      }
+      function cancelPick(instance, focus = true) {
+        instance.picking = instance.menuOpen = false;
+        instance.candidate = null;
+        render(instance);
+        if (focus) focusAction(instance, instance.returnAction);
+        announce(`Option ${instance.design.id}: destination unchanged`);
+      }
+      function choose(instance, id) {
+        if (
+          !revisions.some((revision) => revision.id === id && revision.eligible)
+        )
+          return;
+        instance.mode = "custom";
+        instance.customId = id;
+        instance.picking = instance.menuOpen = false;
+        instance.candidate = null;
+        render(instance);
+        focusAction(instance, instance.returnAction);
+        announce(
+          `Option ${instance.design.id}: custom destination ${id} selected`,
+        );
+      }
+      function renderControl(instance) {
+        const bar = instance.root.querySelector(".topbar");
+        const id = currentId(instance),
+          mode = instance.mode === "parent" ? "Commit below" : "Custom";
+        const summary = `<span class="mode">${mode}</span><span class="separator"> · </span><span class="destination">${id}</span>`;
+        const label = '<span class="squash-label">Squash into →</span>';
+        const expanded =
+          instance.design.kind === "direct"
+            ? instance.picking
+            : instance.menuOpen;
+        const triggerAttrs = `data-action="trigger" aria-expanded="${expanded}" aria-controls="${instance.key}-${instance.design.kind === "direct" ? "picker" : "menu"}"`;
+        const menuAttrs = `${triggerAttrs} aria-haspopup="menu" aria-label="Change squash destination: ${mode}, ${id}"`;
+        const chooseAttrs = `${triggerAttrs} aria-haspopup="dialog" aria-label="Choose squash destination"`;
+        switch (instance.design.kind) {
+          case "dropdown":
+            bar.innerHTML = `${label}<button class="combined" ${menuAttrs}>${summary}<span class="chevron" aria-hidden="true">⌄</span></button>`;
+            break;
+          case "segments":
+            bar.innerHTML = `${label}<div class="segments" role="group" aria-label="Squash destination"><button data-action="parent" aria-pressed="${instance.mode === "parent"}">Commit below</button><button data-action="pick" aria-pressed="${instance.mode === "custom"}" aria-controls="${instance.key}-picker" aria-expanded="${instance.picking}">Pick commit…</button></div><output class="destination" aria-label="Resolved destination ID">${id}</output>`;
+            break;
+          case "summary":
+            bar.innerHTML = `${label}<span class="summary">${summary}</span><button ${menuAttrs}>Change…</button>`;
+            break;
+          case "direct":
+            bar.innerHTML = `${label}<output class="destination" aria-label="Resolved destination ID">${id}</output><span class="mode-badge ${instance.mode === "custom" ? "custom" : ""}">${mode}</span><button ${chooseAttrs}>Choose…</button>`;
+            break;
+          case "stacked":
+            bar.innerHTML = `<div class="stack">${label}<span class="summary">${summary}</span></div><button ${menuAttrs}>Change…</button>`;
+            break;
+        }
+        const trigger = bar.querySelector('[data-action="trigger"]');
+        if (trigger)
+          trigger.onclick = () => {
+            if (instance.design.kind === "direct") {
+              if (instance.picking) cancelPick(instance);
+              else beginPick(instance);
+            } else {
+              instance.menuOpen = !instance.menuOpen;
+              renderControl(instance);
+              if (instance.menuOpen)
+                bar
+                  .querySelector(".menu button")
+                  .focus({ preventScroll: true });
+              else focusAction(instance, "trigger");
+            }
+          };
+        bar
+          .querySelector('[data-action="parent"]')
+          ?.addEventListener("click", () => setParent(instance));
+        bar
+          .querySelector('[data-action="pick"]')
+          ?.addEventListener("click", () => beginPick(instance, "pick"));
+        if (instance.menuOpen) {
+          const menu = document.createElement("div");
+          menu.className = "menu";
+          menu.id = instance.key + "-menu";
+          menu.setAttribute("role", "menu");
+          menu.setAttribute("aria-label", "Squash destination choices");
+          menu.innerHTML = `<button role="menuitemradio" aria-checked="${instance.mode === "parent"}" data-choice="parent"><span>Commit below</span><span class="destination">${parents[sourceId]}</span></button><button role="menuitem" data-choice="pick">Choose commit in log…</button><div class="menu-note">Reviewed source: ${sourceId}</div>`;
+          menu.querySelector('[data-choice="parent"]').onclick = () =>
+            setParent(instance);
+          menu.querySelector('[data-choice="pick"]').onclick = () =>
+            beginPick(instance);
+          menu.onkeydown = (event) => {
+            if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key))
+              return;
+            event.preventDefault();
+            const buttons = [...menu.querySelectorAll("button")],
+              index = buttons.indexOf(document.activeElement);
+            const next =
+              event.key === "Home"
+                ? 0
+                : event.key === "End"
+                  ? buttons.length - 1
+                  : (index +
+                      (event.key === "ArrowDown" ? 1 : -1) +
+                      buttons.length) %
+                    buttons.length;
+            buttons[next].focus();
+          };
+          bar.append(menu);
+        }
+      }
+      function drawRoute(instance) {
+        if (!instance.picking) return;
+        const graph = instance.root.querySelector(".graph-viewport"),
+          svg = graph.querySelector(".route");
+        const source = graph
+          .querySelector(".revision.current")
+          .getBoundingClientRect();
+        const destination = graph
+          .querySelector(`[data-revision="${shownId(instance)}"]`)
+          .getBoundingClientRect();
+        const top = source.top + source.height / 2;
+        const delta = destination.top + destination.height / 2 - top;
+        svg.style.top = `${top - graph.querySelector(".gutter").getBoundingClientRect().top - 6}px`;
+        svg.style.height = `${delta + 12}px`;
+        svg.setAttribute("viewBox", `0 0 18 ${delta + 12}`);
+        svg
+          .querySelector(".shaft")
+          .setAttribute(
+            "d",
+            `M16 6 H8 Q4 6 4 10 V${delta + 2} Q4 ${delta + 6} 8 ${delta + 6} H16`,
+          );
+        svg
+          .querySelector(".tip")
+          .setAttribute(
+            "d",
+            `M12 ${delta + 3} L16 ${delta + 6} L12 ${delta + 9}`,
+          );
+      }
+      function preview(instance, id) {
+        if (
+          !instance.picking ||
+          !revisions.some((revision) => revision.id === id && revision.eligible)
+        )
+          return;
+        instance.candidate = id;
+        instance.root
+          .querySelectorAll(".revision")
+          .forEach((row) =>
+            row.classList.toggle("target", row.dataset.revision === id),
+          );
+        drawRoute(instance);
+      }
+      function render(instance) {
+        renderControl(instance);
+        instance.root.querySelector(".state-label").textContent =
+          instance.mode === "parent" ? "Default" : "Custom";
+        const panel = instance.root.querySelector(".pick-panel");
+        panel.hidden = !instance.picking;
+        panel.replaceChildren();
+        const floating = instance.design.kind === "direct";
+        instance.root.querySelector(".context").textContent = instance.picking
+          ? floating
+            ? "Main log stays hidden · local picker"
+            : "Log temporarily open · choosing or cancelling hides it again"
+          : "Log hidden";
+        if (!instance.picking) return;
+        panel.innerHTML = `<div class="pick-head"><span>Choose destination · Esc cancels</span><button data-cancel>Cancel</button></div><div class="graph-viewport"><div class="gutter"><svg class="route" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"><path class="shaft" stroke-dasharray="3 2"></path><path class="tip"></path></svg></div><div class="graph" tabindex="0" role="region" aria-label="Monospace jj log graph"></div></div><div class="pick-foot"><span>Source stays ${sourceId}</span><button data-parent>Use commit below</button></div>`;
+        panel.querySelector("[data-cancel]").onclick = () =>
+          cancelPick(instance);
+        panel.querySelector("[data-parent]").onclick = () =>
+          setParent(instance);
+        const graph = panel.querySelector(".graph");
+        revisions.forEach((revision) => {
+          const row = document.createElement("div");
+          row.className = `revision${revision.id === sourceId ? " current" : ""}${revision.id === shownId(instance) ? " target" : ""}`;
+          row.dataset.revision = revision.id;
+          const prefix = document.createElement("span");
+          prefix.className = "prefix";
+          prefix.setAttribute("aria-hidden", "true");
+          prefix.textContent = revision.prefix;
+          const button = document.createElement("button");
+          button.textContent = revision.id;
+          button.disabled = !revision.eligible;
+          button.setAttribute(
+            "aria-label",
+            `Choose destination ${revision.id}`,
+          );
+          button.title =
+            revision.id === sourceId
+              ? "Reviewed source"
+              : revision.id === "zzzzzzzz"
+                ? "Immutable commit"
+                : revision.eligible
+                  ? "Choose this destination"
+                  : "Not an older ancestor";
+          const title = document.createElement("span");
+          title.className = "title";
+          title.textContent = revision.title;
+          row.append(prefix, button, document.createTextNode(" "), title);
+          if (revision.eligible) {
+            row.style.cursor = "pointer";
+            row.onpointerenter = button.onfocus = () =>
+              preview(instance, revision.id);
+            row.onclick = () => choose(instance, revision.id);
+          }
+          graph.append(row);
+        });
+        graph.onscroll = () => drawRoute(instance);
+        graph.onkeydown = (event) => {
+          if (!["ArrowDown", "ArrowUp", "Enter"].includes(event.key)) return;
+          event.preventDefault();
+          if (event.key === "Enter") {
+            choose(instance, instance.candidate);
+            return;
+          }
+          const choices = revisions.filter((revision) => revision.eligible),
+            index = choices.findIndex(
+              (revision) => revision.id === instance.candidate,
+            );
+          const next =
+            choices[
+              Math.max(
+                0,
+                Math.min(
+                  choices.length - 1,
+                  index + (event.key === "ArrowDown" ? 1 : -1),
+                ),
+              )
+            ];
+          instance.root
+            .querySelector(`[data-revision="${next.id}"] button`)
+            .focus({ preventScroll: true });
+        };
+        drawRoute(instance);
+      }
+      for (const design of designs) {
+        const card = document.createElement("section");
+        card.className = "option";
+        card.id = "option-" + design.id;
+        card.innerHTML = `<h2><span class="number">${design.id.toString().padStart(2, "0")}</span>${design.name}</h2><p class="description">${design.description}</p>`;
+        for (const mode of ["parent", "custom"]) {
+          const key = `option-${design.id}-${mode}`;
+          const root = document.createElement("div");
+          root.className = "preview";
+          root.dataset.instance = key;
+          root.innerHTML = `<span class="state-label"></span><div class="topbar"></div><div class="pick-panel${design.kind === "direct" ? " floating" : ""}" id="${key}-picker" role="${design.kind === "direct" ? "dialog" : "region"}" aria-label="Choose squash destination" hidden></div><span class="context"></span>`;
+          card.append(root);
+          const instance = {
+            design,
+            key,
+            root,
+            mode,
+            customId: "rwpxovrz",
+            menuOpen: false,
+            picking: false,
+            candidate: null,
+            returnAction: design.kind === "segments" ? "pick" : "trigger",
+          };
+          instances.push(instance);
+          root.onkeydown = (event) => {
+            if (event.key !== "Escape") return;
+            if (instance.menuOpen) {
+              event.preventDefault();
+              event.stopPropagation();
+              closeMenu(instance);
+            } else if (instance.picking) {
+              event.preventDefault();
+              event.stopPropagation();
+              cancelPick(instance);
+            }
+          };
+          render(instance);
+        }
+        document.getElementById("options").append(card);
+      }
+      document.addEventListener("pointerdown", (event) => {
+        for (const instance of instances) {
+          if (instance.root.contains(event.target)) continue;
+          if (instance.menuOpen) closeMenu(instance, false);
+          if (instance.picking && instance.design.kind === "direct")
+            cancelPick(instance, false);
+        }
+      });
+      new ResizeObserver(() => instances.forEach(drawRoute)).observe(
+        document.getElementById("options"),
+      );
+      document.fonts.ready.then(() => instances.forEach(drawRoute));
+    </script>
+  </body>
+</html>

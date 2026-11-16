@@ -1,5 +1,8 @@
 # Compact top-bar squash destination
 
+For the subsequent five alternatives, see `custom-squash-options.md` and
+`custom-squash-options.html`. This document retains the previous single mockup.
+
 Design only. No production UI, API, or squash behavior changed. The main control
 is a **select** with two choices: **Commit below** (default) and **Custom…**, now
 in the existing top bar instead of the log. The control is 24px high and about
