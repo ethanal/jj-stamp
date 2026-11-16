@@ -246,8 +246,8 @@ export function SettingsDialog({
             onChange={(event) => setRevsetDraft(event.target.value)}
           />
           <p className="settings-help" id={`${id}-revset-help`}>
-            Filters the graph only, not the displayed change. Saved in this
-            browser.
+            Filters the graph only, not the displayed change. Saved in the
+            shared config file.
           </p>
           {revsetError && (
             <p className="revset-error" role="alert">
