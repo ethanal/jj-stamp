@@ -272,8 +272,8 @@ async function startPicking(page) {
   await expect(page.locator("#pick-help span")).toHaveText("Choose a revision");
   const cancelBounds = await page.locator("#cancel-custom").boundingBox();
   assert.ok(
-    cancelBounds.width >= 44 && cancelBounds.height >= 44,
-    "Cancel has at least a 44×44 hit area",
+    cancelBounds.width >= 64 && cancelBounds.height === 28,
+    "Cancel has a wide target at a normal 28px height",
   );
   await expect(page.locator("#selection-state")).toHaveText(
     "Preview destination",
@@ -874,7 +874,7 @@ try {
   assert.deepEqual(errors, [], "no uncaught browser errors");
   assert.deepEqual(requests, [], "no HTTP/API requests");
   console.log(
-    "PASS: A combined destination dropdown; lean two-item menu, keyboard/dismissal/custom reset, preview/commit/cancel/focus with 44px Cancel, source-relative parent and fixed custom, hidden-log layout restore, no-fallback errors/off-filter/queue locks, compact graph/route/header, 360px/390px viewport-fit and bottom-flip menus, both offline bundles; zero page errors or HTTP requests.",
+    "PASS: A combined destination dropdown; lean two-item menu, keyboard/dismissal/custom reset, preview/commit/cancel/focus with 28px Cancel, source-relative parent and fixed custom, hidden-log layout restore, no-fallback errors/off-filter/queue locks, compact graph/route/header, 360px/390px viewport-fit and bottom-flip menus, both offline bundles; zero page errors or HTTP requests.",
   );
 } finally {
   await browser.close();

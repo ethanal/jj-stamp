@@ -147,8 +147,8 @@ async function assertPickerHelp() {
   const cancel = help.getByRole("button", { name: "Cancel", exact: true });
   const bounds = await cancel.boundingBox();
   assert(
-    bounds && bounds.width >= 44 && bounds.height >= 44,
-    "Cancel must have a minimum 44 × 44px click target",
+    bounds && bounds.width >= 64 && bounds.height === 28,
+    "Cancel keeps a wide target at a normal 28px height",
   );
 }
 async function chooseInLog() {

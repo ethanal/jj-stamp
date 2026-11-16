@@ -59,7 +59,7 @@ expression.
 1. Open the dropdown and select **Choose revision in log…**. The margin arrow is
    also a keyboard-accessible shortcut. Neither changes the reviewed source.
 2. The picker banner says **Choose a revision**, with a **Cancel** button whose
-   hit area is at least 44 × 44px. Hover or focus an eligible row. Its amber tint
+   target is 64px wide and 28px tall. Hover or focus an eligible row. Its amber tint
    and dashed arrow preview the destination. The top bar says **Choosing…**, the diff footer says **Preview
    destination**, and Squash selection is disabled.
 3. Click a row/ID, or press Enter, to confirm. The dropdown becomes **Custom**,
