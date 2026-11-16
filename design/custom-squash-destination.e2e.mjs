@@ -146,12 +146,43 @@ async function expectRoute(page, destination, preview = false) {
     "arrow never displaces or overlaps the jj graph",
   );
 }
-async function captureLog(page, filename) {
-  const bounds = await page.locator(".log").boundingBox();
-  await page.screenshot({
+async function captureWorkspace(page, filename) {
+  await page.locator(".app").screenshot({
     path: `.planka-artifacts/${filename}`,
-    clip: { ...bounds, height: 275 },
   });
+}
+async function expectTopBar(page, collapsed = false) {
+  await expect(page.locator(".app-header #destination-mode")).toBeVisible();
+  await expect(page.locator(".app-header #destination-id")).toBeVisible();
+  await expect(
+    page.locator(".log .destination-control, .destination-bar"),
+  ).toHaveCount(0);
+  await expect(page.locator(".log")).toBeVisible({ visible: !collapsed });
+  await expect(page.locator("#log-rail")).toBeVisible({ visible: collapsed });
+  const geometry = await page.locator(".app-header").evaluate((header) => {
+    const bounds = header.getBoundingClientRect();
+    const control = document
+      .querySelector("#destination-control")
+      .getBoundingClientRect();
+    return {
+      headerHeight: bounds.height,
+      controlHeight: control.height,
+      controlWidth: control.width,
+      fits:
+        control.left >= bounds.left &&
+        control.right <= bounds.right &&
+        control.top >= bounds.top &&
+        control.bottom <= bounds.bottom,
+      overflow: header.scrollWidth > header.clientWidth,
+    };
+  });
+  assert.equal(geometry.controlHeight, 24);
+  assert.ok(geometry.controlWidth <= 250, "destination control stays compact");
+  assert.equal(geometry.fits, true, "destination remains inside the top bar");
+  assert.equal(geometry.overflow, false, "top bar must not overflow");
+  if (page.viewportSize().width > 800)
+    assert.equal(geometry.headerHeight, 44, "no extra desktop toolbar row");
+  else assert.ok(geometry.headerHeight <= 80, "narrow header wraps compactly");
 }
 async function expectClickOnly(page) {
   await expect(page.getByRole("textbox")).toHaveCount(0);
@@ -192,6 +223,7 @@ try {
     source = page.locator(".revision.current .review-id"),
     squash = page.locator("#squash-demo");
   await expectClickOnly(page);
+  await expectTopBar(page);
   await expect(mode).toHaveValue("parent");
   await expect(mode.locator("option")).toHaveText(["Commit below", "Custom…"]);
   await expect(target).toHaveText("pqxvqmoo");
@@ -227,7 +259,7 @@ try {
   );
   await expectRoute(page, "rwpxovrz");
   await expectCompactGraph(page);
-  await captureLog(page, "click-only-01-commit-below.png");
+  await captureWorkspace(page, "topbar-01-log-open.png");
   await page.locator("#move-working-copy").click();
   await expect(target).toHaveText("rwpxovrz");
   await page.locator("#scenario").selectOption("filtered");
@@ -264,7 +296,7 @@ try {
   await page.locator('[data-revision="rwpxovrz"] .row-title').hover();
   await expectRoute(page, "rwpxovrz", true);
   await expectCompactGraph(page);
-  await captureLog(page, "click-only-02-choosing.png");
+
   await page.keyboard.press("Escape");
   await expect(mode).toHaveValue("parent");
   await expect(mode).toBeFocused();
@@ -282,7 +314,6 @@ try {
   await expect(page.locator("#selection-target")).toHaveText("rwpxovrz");
   await expect(page.locator("#footer-destination")).toHaveText("rwpxovrz");
   await expectClickOnly(page);
-  await captureLog(page, "click-only-03-selected.png");
 
   // Reopening/cancelling preserves a committed custom target and mode.
   await page.locator("#change-custom").click();
@@ -353,12 +384,111 @@ try {
   await expectRoute(page, "rwpxovrz");
   await expect(page.locator("#outside")).toBeHidden();
 
+  // Destination lives in the top bar, independent of the collapsed log.
+  await page.locator('[data-view="default"]').click();
+  const openDiffWidth = (await page.locator(".diff").boundingBox()).width;
+  const openControl = await page.locator("#destination-control").boundingBox();
+  await page.locator("#hide-log").click();
+  await expectTopBar(page, true);
+  await expect(page.locator("#show-log")).toBeFocused();
+  await expect(target).toHaveText("pqxvqmoo");
+  await expect(mode).toHaveValue("parent");
+  await expect(squash).toBeEnabled();
+  const hiddenControl = await page
+    .locator("#destination-control")
+    .boundingBox();
+  assert.equal(
+    hiddenControl.x,
+    openControl.x,
+    "top-bar control does not move when the log hides",
+  );
+  assert.ok(
+    (await page.locator(".diff").boundingBox()).width > openDiffWidth + 400,
+    "diff reclaims the log space",
+  );
+  await captureWorkspace(page, "topbar-02-log-hidden.png");
+
+  // Picking from a hidden log opens it temporarily, then restores the layout.
+  await mode.selectOption("custom");
+  await expectTopBar(page);
+  await expect(page.locator("#pick-help")).toBeVisible();
+  await expect(squash).toBeDisabled();
+  await page.locator('[data-revision="rwpxovrz"] .row-title').hover();
+  await expectRoute(page, "rwpxovrz", true);
+  await expectCompactGraph(page);
+  await captureWorkspace(page, "topbar-03-picking-from-hidden.png");
+  await page.locator('[data-revision="rwpxovrz"] .row-title').click();
+  await expectTopBar(page, true);
+  await expect(target).toHaveText("rwpxovrz");
+  await expect(mode).toHaveValue("custom");
+  await expect(page.locator("#change-custom")).toBeFocused();
+  await expect(page.locator("#selection-target")).toHaveText("rwpxovrz");
+  await expect(source).toHaveText("vqkqszmu");
+  await expect(page.locator(".line.sel")).toHaveCount(3);
+  await expect(squash).toBeEnabled();
+  await captureWorkspace(page, "topbar-04-custom-log-hidden.png");
+
+  // Amber ID replaces Change…, including when the log is hidden.
+  await page.locator("#change-custom").click();
+  await expectTopBar(page);
+  await page.locator('[data-revision="ksuunvyp"] .row-title').hover();
+  await page.keyboard.press("Escape");
+  await expectTopBar(page, true);
+  await expect(target).toHaveText("rwpxovrz");
+  await expect(mode).toBeFocused();
+  await page.locator("#change-custom").click();
+  await page.locator("#cancel-custom").click();
+  await expectTopBar(page, true);
+  await expect(target).toHaveText("rwpxovrz");
+  await mode.selectOption("parent");
+  await expectTopBar(page, true);
+  await expect(target).toHaveText("pqxvqmoo");
+  await mode.selectOption("custom");
+  await page.keyboard.press("Escape");
+  await expectTopBar(page, true);
+  await expect(mode).toHaveValue("parent");
+  await expect(target).toHaveText("pqxvqmoo");
+
+  // Manually opening the log keeps it open after picking.
+  await page.locator("#show-log").click();
+  await expectTopBar(page);
+  await mode.selectOption("custom");
+  await page
+    .getByRole("button", { name: "Choose destination pqxvqmoo", exact: true })
+    .click();
+  await expectTopBar(page);
+  await expectRoute(page, "pqxvqmoo");
+
+  // Closing a picker cancels it; hidden-log errors still appear above the diff.
+  await page.locator("#hide-log").click();
+  await page.locator("#change-custom").click();
+  await page.locator('[data-revision="rwpxovrz"] .row-title').hover();
+  await page.locator("#hide-log").click();
+  await expectTopBar(page, true);
+  await expect(target).toHaveText("pqxvqmoo");
+  await expect(squash).toBeEnabled();
+  await page.locator("#review-parent").click();
+  await expectTopBar(page, true);
+  await expect(page.locator("#destination-error")).toBeVisible();
+  await expect(target).toHaveText("—");
+  await expect(squash).toBeDisabled();
+  await page.locator("#change-custom").click();
+  await page.locator("#cancel-custom").click();
+  await expectTopBar(page, true);
+  await expect(page.locator("#destination-error")).toBeVisible();
+  await mode.selectOption("parent");
+  await expectTopBar(page, true);
+  await expect(target).toHaveText("rwpxovrz");
+  await expect(page.locator("#destination-error")).toBeHidden();
+  await expect(squash).toBeEnabled();
+
   // Accepted queue work keeps its pinned IDs and locks destination controls.
   await page.locator("#scenario").selectOption("queued");
   await expect(mode).toHaveValue("parent");
   await expectRoute(page, "pqxvqmoo");
   for (const id of [
     "destination-mode",
+    "change-custom",
     "route-handle",
     "squash-demo",
     "move-working-copy",
@@ -370,6 +500,12 @@ try {
   await page.locator("#review-parent").dispatchEvent("click");
   await expect(target).toHaveText("pqxvqmoo");
   await expect(source).toHaveText("vqkqszmu");
+  await page.locator("#hide-log").click();
+  await expectTopBar(page, true);
+  await expect(page.locator("#locked")).toBeVisible();
+  await page.locator("#change-custom").dispatchEvent("click");
+  await expectTopBar(page, true);
+  await expect(target).toHaveText("pqxvqmoo");
   await page.locator("#scenario").selectOption("default");
   await squash.click();
   await expect(page.locator("#status")).toContainText("no repository writes");
@@ -385,8 +521,17 @@ try {
     );
     await expect(mode).toHaveValue("parent");
     await expectClickOnly(page);
+    await expectTopBar(page);
     await expectCompactGraph(page);
     await expectRoute(page, "pqxvqmoo");
+    await page.locator("#hide-log").click();
+    await mode.selectOption("custom");
+    await page
+      .getByRole("button", { name: "Choose destination rwpxovrz", exact: true })
+      .click();
+    await expectTopBar(page, true);
+    await expect(target).toHaveText("rwpxovrz");
+    await page.locator("#scenario").selectOption("default");
   }
   await page.setViewportSize({ width: 390, height: 844 });
   assert.equal(
@@ -397,6 +542,7 @@ try {
     "narrow preview must not overflow",
   );
   await expectCompactGraph(page);
+  await expectTopBar(page);
   const beforeScroll = await page.locator("#route-handle").boundingBox();
   await page.locator("#log-list").evaluate((log) => {
     log.scrollLeft = 100;
@@ -419,10 +565,18 @@ try {
     true,
   );
   await expectCompactGraph(page);
+  await page.locator("#hide-log").click();
+  await expectTopBar(page, true);
+  await page.locator("#change-custom").click();
+  await expectTopBar(page);
+  await page.keyboard.press("ArrowDown");
+  await page.keyboard.press("Enter");
+  await expectTopBar(page, true);
+  await expect(target).toHaveText("ksuunvyp");
   assert.deepEqual(errors, [], "no uncaught browser errors");
   assert.deepEqual(requests, [], "no HTTP/API requests");
   console.log(
-    "PASS: click-only custom choice with no text fields/Apply, no arrow source dot, source-relative default, source/@/filter independence, row/ID/keyboard choice, cancel and mode restore, unavailable targets, fixed custom IDs, pinned queue, compact graph and arrow geometry, mobile and both presentation bundles; zero page errors or HTTP requests.",
+    "PASS: compact always-visible top-bar destination; hidden-log pick/confirm/cancel/layout restore, reclaiming diff space, hidden-log errors and queue locks, row/ID/keyboard choice, source-relative default, fixed custom IDs, compact graph/arrow, mobile and both standalone bundles; zero page errors or HTTP requests.",
   );
 } finally {
   await browser.close();

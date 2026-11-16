@@ -199,15 +199,81 @@
       }
       .app-header .grow {
         flex: 1;
+        min-width: 0;
+      }
+      .app-header .app-title {
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .app-header code {
+        flex-shrink: 0;
       }
       .app-header button {
         font-size: 11px;
         padding: 4px 9px;
       }
+      .destination-control {
+        display: inline-flex;
+        align-items: center;
+        flex-shrink: 0;
+        gap: 5px;
+        height: 24px;
+      }
+      .destination-control label {
+        color: var(--muted);
+        font-size: 10px;
+        white-space: nowrap;
+      }
+      .destination-control select {
+        width: 116px;
+        height: 24px;
+        padding: 2px 4px;
+        font-size: 11px;
+      }
+      .destination-control[data-invalid="true"] select {
+        border-color: #c18c66;
+      }
+      .app-header .destination-control button {
+        width: 66px;
+        height: 24px;
+        padding: 0;
+        border-color: transparent;
+        background: transparent;
+      }
+      .destination-control button:hover:not(:disabled) {
+        text-decoration: underline;
+        text-underline-offset: 3px;
+      }
       .workspace {
         display: grid;
         grid-template-columns: 187px minmax(260px, 1fr) 490px;
         min-height: 520px;
+      }
+      .app.log-collapsed .workspace {
+        grid-template-columns: 187px minmax(260px, 1fr) 30px;
+      }
+      .log-rail {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        border-left: 1px solid var(--border);
+        background: var(--panel);
+        color: var(--muted);
+      }
+      .log-rail span {
+        margin-top: 14px;
+        font-size: 10px;
+        writing-mode: vertical-rl;
+      }
+      .log-toggle {
+        width: 28px;
+        height: 28px;
+        padding: 0;
+        border: 0;
+        background: transparent;
+        color: var(--muted);
       }
       .files {
         border-right: 1px solid var(--border);
@@ -335,28 +401,7 @@
         color: var(--muted);
         font-size: 10px;
       }
-      .destination-bar {
-        min-height: 39px;
-        padding: 5px 12px;
-        display: flex;
-        align-items: center;
-        gap: 8px;
-        border-bottom: 1px solid var(--border);
-      }
-      .destination-bar label {
-        color: var(--muted);
-        font-size: 10px;
-        white-space: nowrap;
-      }
-      .destination-bar select {
-        min-width: 0;
-        flex: 1;
-        width: 160px;
-        max-width: 205px;
-        height: 27px;
-        padding: 3px 6px;
-        font-size: 12px;
-      }
+
       .pick-help {
         display: flex;
         align-items: center;
@@ -378,10 +423,7 @@
         color: var(--amber);
         white-space: nowrap;
       }
-      .destination-bar button {
-        font-size: 10px;
-        padding: 5px 7px;
-      }
+
       .destination-error {
         padding: 8px 12px;
         color: #e6b192;
@@ -564,6 +606,9 @@
         .workspace {
           grid-template-columns: 200px minmax(260px, 1fr) 540px;
         }
+        .app.log-collapsed .workspace {
+          grid-template-columns: 200px minmax(260px, 1fr) 30px;
+        }
         .diff-body {
           font-size: 12px;
         }
@@ -571,6 +616,9 @@
       @media (max-width: 1150px) {
         .workspace {
           grid-template-columns: minmax(250px, 1fr) 470px;
+        }
+        .app.log-collapsed .workspace {
+          grid-template-columns: minmax(0, 1fr) 30px;
         }
         .files {
           display: none;
@@ -592,6 +640,23 @@
       @media (max-width: 800px) {
         .workspace {
           grid-template-columns: minmax(0, 1fr);
+        }
+        .app.log-collapsed .workspace {
+          grid-template-columns: minmax(0, 1fr);
+          min-height: 0;
+        }
+        .log-rail {
+          flex-direction: row;
+          justify-content: space-between;
+          min-height: 32px;
+          border-left: 0;
+          border-top: 1px solid var(--border);
+          padding-left: 12px;
+        }
+        .log-rail span {
+          order: -1;
+          writing-mode: horizontal-tb;
+          margin: 0;
         }
         .diff {
           height: 290px;
@@ -631,14 +696,23 @@
           gap: 10px;
         }
         .app-header {
+          height: auto;
+          min-height: 44px;
+          flex-wrap: wrap;
           font-size: 10px;
-          gap: 8px;
-          padding: 0 10px;
+          gap: 6px;
+          padding: 7px 10px;
+        }
+        .app-header .destination-control {
+          order: 1;
+          margin-left: auto;
+        }
+        .app-header .grow {
+          display: none;
         }
         .app-header .app-title {
-          overflow: hidden;
-          text-overflow: ellipsis;
-          white-space: nowrap;
+          flex: 1;
+          flex-basis: calc(100% - 116px);
         }
         .app-header button {
           font-size: 10px;
@@ -682,10 +756,10 @@
       <header class="intro">
         <div>
           <div class="eyebrow">jj-stamp / interaction studies</div>
-          <h1>The commit below. Unless you choose another.</h1>
+          <h1>A small control. Always in view.</h1>
           <p class="muted">
-            Default to the reviewed commit’s parent, independently of @. Choose
-            Custom, then click a commit in the log.
+            Squash destination lives in the top bar, even with the log hidden.
+            Custom temporarily opens the log so you can click a commit.
           </p>
         </div>
         <span class="prototype"
@@ -694,16 +768,20 @@
       </header>
       <nav class="options" aria-label="Interaction walkthrough">
         <button class="option" data-view="default" aria-pressed="true">
-          <b>1 · Commit below</b
-          ><span>The reviewed source’s actual parent. Not @-.</span>
+          <b>1 · Log open</b
+          ><span>One compact control; no extra row above the graph.</span>
         </button>
-        <button class="option" data-view="picking" aria-pressed="false">
-          <b>2 · Custom → click a commit</b
-          ><span>Choose Custom, then click a row in the log.</span>
+        <button class="option" data-view="collapsed" aria-pressed="false">
+          <b>2 · Log hidden</b
+          ><span>Same top-bar selector and destination ID.</span>
         </button>
-        <button class="option" data-view="custom" aria-pressed="false">
-          <b>3 · Custom destination selected</b
-          ><span>A fixed destination, with no text entry.</span>
+        <button
+          class="option"
+          data-view="custom-collapsed"
+          aria-pressed="false"
+        >
+          <b>3 · Custom, log hidden</b
+          ><span>Click the amber ID to pick again; the log opens briefly.</span>
         </button>
       </nav>
       <div class="controls">
@@ -718,8 +796,10 @@
             >Example state
             <select id="scenario" aria-label="Example state">
               <option value="default">Commit below (default)</option>
+              <option value="collapsed">Commit below, log hidden</option>
               <option value="picking">Picking a custom commit</option>
               <option value="custom">Custom commit chosen</option>
+              <option value="custom-collapsed">Custom, log hidden</option>
               <option value="invalid">Custom target became the source</option>
               <option value="queued">Queue in progress</option>
               <option value="filtered">Parent hidden by log filter</option>
@@ -733,12 +813,46 @@
           <code class="blue">vqkqszmu</code
           ><span class="app-title">Polish notification delivery</span
           ><code class="commit muted">8b9d0e2714af</code
-          ><span class="green optional">+8 −4</span><span class="grow"></span
-          ><button type="button" data-demo="Go to">Go to</button
+          ><span class="green optional">+8 −4</span><span class="grow"></span>
+          <div class="destination-control" id="destination-control">
+            <label for="destination-mode">Squash →</label>
+            <select
+              id="destination-mode"
+              aria-label="Squash destination mode"
+              aria-describedby="destination-error"
+            >
+              <option value="parent">Commit below</option>
+              <option value="custom">Custom…</option>
+            </select>
+            <button
+              id="change-custom"
+              type="button"
+              aria-label="Choose a custom squash destination"
+              aria-controls="log-list"
+            >
+              <output
+                class="target-id"
+                id="destination-id"
+                aria-label="Resolved destination ID"
+                >pqxvqmoo</output
+              >
+            </button>
+          </div>
+          <button type="button" data-demo="Go to">Go to</button
           ><button type="button" class="optional" data-demo="Settings">
             Settings
           </button>
         </header>
+        <div
+          class="destination-error"
+          id="destination-error"
+          role="status"
+          aria-live="polite"
+          hidden
+        ></div>
+        <div class="locked-banner" id="locked" hidden>
+          2 squash batches queued · destination pinned until drained
+        </div>
         <div class="workspace">
           <aside class="files" aria-label="Changed files">
             <div class="heading">Files <span class="muted">3　 ‹</span></div>
@@ -795,39 +909,24 @@
             </div>
           </section>
           <aside class="log" aria-label="Revision log">
-            <div class="heading">jj log <span>›</span></div>
-            <div class="destination-bar">
-              <label for="destination-mode">Squash into</label>
-              <select
-                id="destination-mode"
-                aria-label="Squash destination mode"
+            <div class="heading">
+              jj log
+              <button
+                class="log-toggle"
+                id="hide-log"
+                type="button"
+                aria-label="Hide revision log"
+                aria-controls="log-list"
+                aria-expanded="true"
               >
-                <option value="parent">Commit below</option>
-                <option value="custom">Custom…</option>
-              </select>
-              <span class="muted" aria-hidden="true">→</span
-              ><output
-                class="target-id"
-                id="destination-id"
-                aria-label="Resolved destination ID"
-                >pqxvqmoo</output
-              >
-              <button id="change-custom" type="button" hidden>Change…</button>
+                ›
+              </button>
             </div>
             <div class="pick-help" id="pick-help" hidden>
               <span>Click a row · ↑ / ↓ then Enter · Esc cancels</span>
               <button id="cancel-custom" type="button">Cancel</button>
             </div>
-            <div
-              class="destination-error"
-              id="destination-error"
-              role="status"
-              aria-live="polite"
-              hidden
-            ></div>
-            <div class="locked-banner" id="locked" hidden>
-              2 squash batches queued · destination pinned until drained
-            </div>
+
             <div class="hidden-target" id="outside" hidden>
               The destination is outside the log filter. No visible commit is
               substituted.
@@ -868,6 +967,24 @@
               action to choose where selected lines go.
             </div>
           </aside>
+          <aside
+            class="log-rail"
+            id="log-rail"
+            aria-label="Collapsed revision log"
+            hidden
+          >
+            <button
+              class="log-toggle"
+              id="show-log"
+              type="button"
+              aria-label="Show revision log"
+              aria-controls="log-list"
+              aria-expanded="false"
+            >
+              ‹
+            </button>
+            <span>jj log</span>
+          </aside>
         </div>
         <footer class="status">
           <span id="status" role="status" aria-live="polite"
@@ -885,19 +1002,19 @@
           </p>
         </article>
         <article>
-          <h2><span class="number">02</span>Custom stays explicit</h2>
+          <h2><span class="number">02</span>Always visible, not duplicated</h2>
           <p>
-            Select Custom, then click a commit in the log. The margin arrow
-            previews your choice without changing the review. Enter confirms;
-            Escape restores the prior mode and destination.
+            A 24px-high selector and clickable amber ID sit in the existing top
+            bar. No separate Change button and no persistent destination row in
+            the log. Hiding the log gives the space back to the diff.
           </p>
         </article>
         <article>
-          <h2><span class="number">03</span>Click only, no text field</h2>
+          <h2><span class="number">03</span>Open just long enough to pick</h2>
           <p>
-            Custom is a fixed commit chosen in the log. No text field, parsing,
-            or Apply step. The arrow has a plain source end and an arrowhead at
-            the destination. Queued batches keep their pinned target.
+            Custom or the amber ID opens a hidden log. Click a commit to
+            confirm, or Escape to cancel; either returns to your hidden-log
+            layout. No text field, Apply step, or dot at the arrow’s source.
           </p>
         </article>
       </section>
@@ -941,7 +1058,9 @@
       let mode = "parent",
         customId = null,
         picking = false,
-        candidate = null;
+        candidate = null,
+        logCollapsed = false,
+        restoreCollapsed = false;
       const source = () => revisions[sourceIndex];
       const allRevisions = () =>
         moved ? [newWorkingCopy, ...revisions] : revisions;
@@ -999,7 +1118,8 @@
         const destinationRow = [...document.querySelectorAll(".revision")].find(
           (row) => row.dataset.revision === result.id,
         );
-        handle.hidden = !result.id || !sourceRow || !destinationRow;
+        handle.hidden =
+          logCollapsed || !result.id || !sourceRow || !destinationRow;
         if (handle.hidden) return;
         const viewport = byId("log-viewport").getBoundingClientRect();
         const start = sourceRow.getBoundingClientRect(),
@@ -1029,6 +1149,11 @@
           byId("selection-target").textContent =
           byId("footer-destination").textContent =
             result.id || "—";
+        const outside =
+          result.id && !displayRevisions().some((r) => r.id === result.id);
+        byId("change-custom").title =
+          result.error ||
+          `${picking ? "Preview" : "Squash destination"}: ${result.id || "none"}${outside ? " (outside log filter)" : ""}. Click to choose a commit.`;
         document
           .querySelectorAll(".revision")
           .forEach((row) =>
@@ -1044,6 +1169,8 @@
       function beginCustom() {
         if (queued) return;
         const previous = currentResult();
+        if (!picking) restoreCollapsed = logCollapsed;
+        logCollapsed = false;
         picking = true;
         candidate = !resultFor(customId).error
           ? customId
@@ -1056,13 +1183,18 @@
         else byId("log-list").focus({ preventScroll: true });
         tell("Choose a custom destination by clicking a row. Escape cancels.");
       }
+      function finishPicking() {
+        picking = false;
+        candidate = null;
+        if (restoreCollapsed) logCollapsed = true;
+        restoreCollapsed = false;
+      }
       function choose(id) {
         const result = resultFor(id);
         if (queued || result.error) return;
         mode = "custom";
         customId = id;
-        picking = false;
-        candidate = null;
+        finishPicking();
         render();
         tell(
           `Custom destination ${id} selected · source ${source().id} unchanged · no squash performed`,
@@ -1071,8 +1203,7 @@
       }
       function cancel() {
         if (queued) return;
-        picking = false;
-        candidate = null;
+        finishPicking();
         render();
         tell(
           `Destination unchanged · ${mode === "parent" ? "Commit below" : customId}`,
@@ -1081,7 +1212,20 @@
       }
       function render() {
         const result = currentResult(),
-          view = picking ? "picking" : mode === "parent" ? "default" : "custom";
+          view = picking
+            ? "picking"
+            : logCollapsed
+              ? mode === "parent"
+                ? "collapsed"
+                : "custom-collapsed"
+              : mode === "parent"
+                ? "default"
+                : "custom";
+        document
+          .querySelector(".app")
+          .classList.toggle("log-collapsed", logCollapsed);
+        document.querySelector(".log").hidden = logCollapsed;
+        byId("log-rail").hidden = !logCollapsed;
         document
           .querySelectorAll("[data-view]")
           .forEach((button) =>
@@ -1096,15 +1240,16 @@
               : result.id === external.id
                 ? "hidden"
                 : view;
-        byId("try-hint").textContent =
-          mode === "parent" && !picking
+        byId("try-hint").textContent = logCollapsed
+          ? "Destination stays in the top bar. Custom or the amber ID briefly opens the log to pick."
+          : mode === "parent" && !picking
             ? "Commit below follows the reviewed source’s parent, independently of @."
             : "Custom: click a commit in the log. No text entry or Apply step.";
         byId("destination-mode").value = picking ? "custom" : mode;
         byId("destination-mode").disabled = queued;
         byId("cancel-custom").disabled = queued;
-        byId("change-custom").hidden = mode !== "custom" || picking;
-        byId("change-custom").disabled = queued;
+        byId("change-custom").disabled = queued || picking;
+        byId("destination-control").dataset.invalid = String(!!result.error);
         byId("pick-help").hidden = !picking;
         byId("destination-error").hidden = !result.error;
         byId("destination-error").textContent = result.error || "";
@@ -1202,7 +1347,7 @@
             ? "Preview only. Click a commit or press Enter; Esc restores the previous mode."
             : mode === "parent"
               ? "Commit below = the reviewed source’s actual parent. @ is not used."
-              : "Custom is a clicked change, kept fixed when @ moves. Change… chooses another.";
+              : "Custom stays fixed when @ moves. Click the amber ID in the top bar to choose another.";
         refreshIndicators();
       }
       function loadExample(state) {
@@ -1211,17 +1356,20 @@
         filtered = state === "filtered";
         queued = false;
         pinned = null;
-        mode = ["custom", "invalid", "hidden"].includes(state)
+        logCollapsed = ["collapsed", "custom-collapsed"].includes(state);
+        restoreCollapsed = false;
+        mode = ["custom", "custom-collapsed", "invalid", "hidden"].includes(
+          state,
+        )
           ? "custom"
           : "parent";
-        customId =
-          state === "custom"
-            ? "rwpxovrz"
-            : state === "invalid"
-              ? "pqxvqmoo"
-              : state === "hidden"
-                ? external.id
-                : null;
+        customId = ["custom", "custom-collapsed"].includes(state)
+          ? "rwpxovrz"
+          : state === "invalid"
+            ? "pqxvqmoo"
+            : state === "hidden"
+              ? external.id
+              : null;
         picking = state === "picking";
         candidate = picking ? "rwpxovrz" : null;
         if (state === "queued") {
@@ -1236,8 +1384,7 @@
         if (byId("destination-mode").value === "custom") beginCustom();
         else {
           mode = "parent";
-          picking = false;
-          candidate = null;
+          finishPicking();
           render();
           tell(
             `Commit below selected · source ${source().id} → parent ${parentResult().id || "unavailable"}`,
@@ -1247,6 +1394,21 @@
       byId("cancel-custom").onclick = cancel;
       byId("change-custom").onclick = byId("route-handle").onclick =
         beginCustom;
+      byId("hide-log").onclick = () => {
+        if (picking) finishPicking();
+        logCollapsed = true;
+        render();
+        byId("show-log").focus({ preventScroll: true });
+        tell(
+          `Log hidden · destination ${currentResult().id || "unavailable"} unchanged`,
+        );
+      };
+      byId("show-log").onclick = () => {
+        logCollapsed = false;
+        render();
+        byId("hide-log").focus({ preventScroll: true });
+        tell("Log shown · destination unchanged");
+      };
       byId("log-list").onkeydown = (event) => {
         if (
           !picking ||
