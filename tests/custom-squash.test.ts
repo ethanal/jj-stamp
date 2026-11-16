@@ -106,7 +106,7 @@ async function treeAt(root: string, commitId: string) {
 
 test("custom ancestor rename squash moves selected edits and mixed ordinary rows, preserves every tree and undoes exactly", async (t) => {
   for (const api of ["direct", "legacy"] as const)
-    for (const scope of ["partial", "all"] as const)
+    for (const scope of ["partial", "all", "pure"] as const)
       await t.test(`${api}, ${scope} rename selection`, async (t) => {
         // A disjoint intermediate edit survives rebasing the rename. Editing the
         // old path itself can legitimately create a jj delete/modify conflict.
@@ -116,6 +116,7 @@ test("custom ancestor rename squash moves selected edits and mixed ordinary rows
         );
         const oldPath = "a.txt";
         const newPath = "renamed[1]:a.txt";
+        if (scope === "pure") await writeFile(path.join(root, oldPath), base);
         await rename(path.join(root, oldPath), path.join(root, newPath));
         await writeFile(
           path.join(root, "regular.txt"),
@@ -149,7 +150,7 @@ test("custom ancestor rename squash moves selected edits and mixed ordinary rows
         assert.equal(renamed.oldPath, oldPath);
         assert.equal(renamed.unsupported, undefined);
         assert.equal(renamed.squashUnsupported, undefined);
-        assert.equal(renamed.hunks.length, 2);
+        assert.equal(renamed.hunks.length, scope === "pure" ? 0 : 2);
         const selected = renamed.hunks.flatMap((hunk) => {
           const lines = hunk.rows
             .filter((row) =>
@@ -160,6 +161,11 @@ test("custom ancestor rename squash moves selected edits and mixed ordinary rows
             .map((row) => row.index);
           return lines.length ? [{ id: hunk.id, lines }] : [];
         });
+        if (scope === "pure")
+          selected.push({
+            id: `rename:${JSON.stringify([oldPath, newPath])}`,
+            lines: [],
+          });
         assert.equal(selected.length, scope === "all" ? 2 : 1);
         const ordinary = state.files.find(
           (file) => file.path === "regular.txt",
@@ -212,17 +218,19 @@ test("custom ancestor rename squash moves selected edits and mixed ordinary rows
         for (const name of [oldPath, newPath, "regular.txt"])
           assert.ok(mutation.includes(`root-file:${JSON.stringify(name)}`));
         const selectedContents = (contents: string) =>
-          contents
-            .replace(
-              "line 1\n",
-              scope === "all"
-                ? "line 1\nselected addition\nunselected addition\n"
-                : "line 1\nselected addition\n",
-            )
-            .replace(
-              "line 50\n",
-              scope === "all" ? "unselected tail\n" : "line 50\n",
-            );
+          scope === "pure"
+            ? contents
+            : contents
+                .replace(
+                  "line 1\n",
+                  scope === "all"
+                    ? "line 1\nselected addition\nunselected addition\n"
+                    : "line 1\nselected addition\n",
+                )
+                .replace(
+                  "line 50\n",
+                  scope === "all" ? "unselected tail\n" : "line 50\n",
+                );
         assert.deepEqual(await treeAt(root, result.state.targets[1].commitId), {
           [newPath]: Buffer.from(selectedContents(base)),
           "intermediate.txt": Buffer.from(base),
@@ -240,7 +248,7 @@ test("custom ancestor rename squash moves selected edits and mixed ordinary rows
         const retained = result.state.files.find(
           (file) => file.path === newPath,
         );
-        if (scope === "all") assert.equal(retained, undefined);
+        if (scope !== "partial") assert.equal(retained, undefined);
         else {
           assert.ok(retained);
           assert.equal(retained.oldPath, undefined);
