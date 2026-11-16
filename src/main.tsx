@@ -419,37 +419,33 @@ function App() {
     },
     [queue, dragging, finishDestinationPicker],
   );
-  const chooseDestinationMode = useCallback(
-    (mode: "parent" | "custom") => {
-      const current = queue.getSnapshot();
-      if (
-        lock.current ||
-        dragging ||
-        revisionPreview ||
-        current.pending ||
-        current.recovering ||
-        current.halted ||
-        !current.view
-      )
-        return;
-      const resolved = squashDestination(current.view, destinationChoice);
-      if (mode === "parent" ? resolved.parentReason : resolved.customReason)
-        return;
-      setDestinationChoice({
-        sourceId: current.view.source.changeId,
-        mode,
-        custom: resolved.custom,
-      });
-      if (destinationPickerRef.current) finishDestinationPicker();
-    },
-    [
-      queue,
-      dragging,
-      revisionPreview,
-      destinationChoice,
-      finishDestinationPicker,
-    ],
-  );
+  const chooseParentDestination = useCallback(() => {
+    const current = queue.getSnapshot();
+    if (
+      lock.current ||
+      dragging ||
+      revisionPreview ||
+      current.pending ||
+      current.recovering ||
+      current.halted ||
+      !current.view
+    )
+      return;
+    const resolved = squashDestination(current.view, destinationChoice);
+    if (resolved.parentReason) return;
+    setDestinationChoice({
+      sourceId: current.view.source.changeId,
+      mode: "parent",
+      custom: null,
+    });
+    if (destinationPickerRef.current) finishDestinationPicker();
+  }, [
+    queue,
+    dragging,
+    revisionPreview,
+    destinationChoice,
+    finishDestinationPicker,
+  ]);
   useLayoutEffect(() => {
     const picker = destinationPickerRef.current;
     if (
@@ -1288,15 +1284,13 @@ function App() {
           </span>
         </RevisionHeading>
         <SquashDestination
-          source={source}
           parent={state?.parent}
           target={
             displayedDestination ??
             (destination.mode === "custom" ? destination.custom : null)
           }
           mode={destination.mode}
-          custom={destination.custom}
-          customOutsideLog={customOutsideLog}
+
           canPick={!!state?.targets.length && !state.squashUnavailable}
           picking={pickingDestination}
           disabled={
@@ -1307,15 +1301,14 @@ function App() {
             queued.halted
           }
           parentReason={destination.parentReason}
-          customReason={destination.customReason}
+
           error={
             state && !revisionPreview && destination.mode === "custom"
               ? destination.error
               : undefined
           }
           triggerRef={destinationTrigger}
-          onParent={() => chooseDestinationMode("parent")}
-          onCustom={() => chooseDestinationMode("custom")}
+          onParent={chooseParentDestination}
           onPick={beginDestinationPicker}
         />
         <div className="toolbar-actions">

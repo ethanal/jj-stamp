@@ -1316,9 +1316,7 @@ export function RevisionGraph({
       )}
       {visible && pickingDestination && (
         <div className="destination-pick-help">
-          <span>
-            Choose a revision · ↑↓ preview · Enter choose · Esc cancel
-          </span>
+          <span>Choose a revision</span>
           <button type="button" onClick={onCancelDestination}>
             Cancel
           </button>

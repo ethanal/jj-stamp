@@ -12,41 +12,37 @@ import type { Revision } from "./types";
 import "./squash-destination.css";
 
 export interface SquashDestinationProps {
-  source?: Revision;
   parent?: Revision | null;
   target?: Revision | null;
   mode: "parent" | "custom";
-  custom?: Revision | null;
-  customOutsideLog?: boolean;
+
   canPick?: boolean;
   picking: boolean;
   disabled: boolean;
   parentReason?: string;
-  customReason?: string;
+
   error?: string;
   triggerRef: RefObject<HTMLButtonElement | null>;
   onParent: () => void;
-  onCustom: () => void;
+
   onPick: () => void;
 }
 
 /** Destination selection only: committing a menu choice never squashes lines. */
 export function SquashDestination({
-  source,
   parent,
   target,
   mode,
-  custom,
-  customOutsideLog = false,
+
   canPick = true,
   picking,
   disabled,
   parentReason,
-  customReason,
+
   error,
   triggerRef,
   onParent,
-  onCustom,
+
   onPick,
 }: SquashDestinationProps) {
   const id = useId();
@@ -67,7 +63,6 @@ export function SquashDestination({
   );
   const parentUnavailable =
     parentReason || (!parent ? "This revision has no squashable parent." : "");
-  const customUnavailable = customReason || "";
 
   useLayoutEffect(() => {
     if (!open) return;
@@ -128,17 +123,7 @@ export function SquashDestination({
       window.removeEventListener("resize", place);
       document.removeEventListener("scroll", place, true);
     };
-  }, [
-    open,
-    close,
-    triggerRef,
-    custom,
-    parentReason,
-    customReason,
-    customOutsideLog,
-    canPick,
-    error,
-  ]);
+  }, [open, close, triggerRef, parentReason, canPick, error]);
 
   useLayoutEffect(() => {
     if (!open) return;
@@ -203,7 +188,7 @@ export function SquashDestination({
   const title = disabled
     ? "Destination selection is unavailable while work is queued, recovering, or navigating."
     : error ||
-      (mode === "parent" ? parentUnavailable : customUnavailable) ||
+      (mode === "parent" ? parentUnavailable : "") ||
       `${stateLabel}: ${target?.changeId ?? "unavailable"}${target?.description ? `\n${target.description}` : ""}`;
 
   return (
@@ -281,9 +266,6 @@ export function SquashDestination({
               items[next]?.focus();
             }}
           >
-            <div className="squash-destination-menu-heading">
-              Reviewing <code>{source?.changeId.slice(0, 8) ?? "…"}</code>
-            </div>
             <button
               type="button"
               role="menuitemradio"
@@ -298,38 +280,8 @@ export function SquashDestination({
               </span>
               <span>
                 <strong>Parent · {parent?.changeId.slice(0, 8) ?? "—"}</strong>
-                <span>{parent?.description || "(no description)"}</span>
-                <small>
-                  {parentUnavailable ||
-                    `Actual parent of ${source?.changeId.slice(0, 8) ?? "the reviewed revision"}; not the next visible log row.`}
-                </small>
               </span>
             </button>
-            {custom && (
-              <button
-                type="button"
-                role="menuitemradio"
-                tabIndex={-1}
-                aria-checked={mode === "custom"}
-                disabled={!!customUnavailable}
-                title={customUnavailable || custom.description}
-                onClick={() => choose(onCustom, !!customUnavailable)}
-              >
-                <span className="squash-destination-radio" aria-hidden="true">
-                  {mode === "custom" ? "◉" : "○"}
-                </span>
-                <span>
-                  <strong>Custom · {custom.changeId.slice(0, 8)}</strong>
-                  <span>{custom.description || "(no description)"}</span>
-                  <small>
-                    {customUnavailable ||
-                      (customOutsideLog
-                        ? "Remembered fixed destination. Outside current log filter."
-                        : "Remembered fixed destination.")}
-                  </small>
-                </span>
-              </button>
-            )}
             <button
               type="button"
               role="menuitem"
@@ -347,11 +299,6 @@ export function SquashDestination({
               </span>
               <span>
                 <strong>Choose revision in log…</strong>
-                <small>
-                  {picking
-                    ? "Return to the current preview."
-                    : "Opens the log if hidden. Hover to preview; click or Enter to choose."}
-                </small>
               </span>
             </button>
             {error && (
@@ -359,9 +306,6 @@ export function SquashDestination({
                 {error}
               </p>
             )}
-            <p className="squash-destination-menu-note">
-              Choosing a destination does not squash any lines.
-            </p>
           </div>,
           document.body,
         )}

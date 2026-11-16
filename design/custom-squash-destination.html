@@ -265,14 +265,6 @@
         background: #1b222b;
         box-shadow: 0 12px 32px #0009;
       }
-      .menu-context {
-        padding: 7px 10px;
-        font-size: 10px;
-        color: var(--muted);
-      }
-      .menu-context code {
-        color: var(--blue);
-      }
       .app-header .destination-menu button {
         display: block;
         width: 100%;
@@ -308,28 +300,10 @@
       [aria-checked="true"] .menu-check {
         visibility: visible;
       }
-      .menu-description {
-        display: block;
-        margin-top: 3px;
-        margin-left: 22px;
-        color: var(--muted);
-        font-size: 10px;
-        line-height: 1.5;
-        white-space: normal;
-      }
-      .destination-menu button:disabled .menu-description {
-        color: #ba957f;
-      }
       .app-header #choose-custom {
         margin-top: 4px;
         border-top: 1px solid var(--border);
         border-radius: 0;
-      }
-      .menu-note {
-        padding: 6px 10px;
-        font-size: 9px;
-        line-height: 1.5;
-        color: var(--muted);
       }
       .workspace {
         display: grid;
@@ -500,6 +474,8 @@
         flex: 1;
       }
       .pick-help button {
+        min-width: 44px;
+        min-height: 44px;
         padding: 4px 7px;
         font-size: 10px;
       }
@@ -925,9 +901,6 @@
               aria-label="Squash destination options"
               hidden
             >
-              <div class="menu-context">
-                Reviewed source: <code id="menu-source">vqkqszmu</code>
-              </div>
               <button
                 id="choose-parent"
                 type="button"
@@ -939,21 +912,6 @@
                   ><strong>Parent</strong
                   ><code id="parent-destination">pqxvqmoo</code></span
                 >
-                <span class="menu-description" id="parent-detail"></span>
-              </button>
-              <button
-                id="use-custom"
-                type="button"
-                role="menuitemradio"
-                aria-checked="false"
-                hidden
-              >
-                <span class="menu-item-top"
-                  ><span class="menu-check" aria-hidden="true">✓</span
-                  ><strong>Custom destination</strong
-                  ><code id="custom-destination"></code
-                ></span>
-                <span class="menu-description" id="custom-detail"></span>
               </button>
               <button
                 id="choose-custom"
@@ -965,13 +923,7 @@
                   ><span class="menu-check" aria-hidden="true"></span
                   ><strong>Choose revision in log…</strong></span
                 >
-                <span class="menu-description" id="choose-custom-detail"
-                  >Opens the log temporarily. Click a row to confirm.</span
-                >
               </button>
-              <div class="menu-note">
-                Choosing a destination does not squash any lines.
-              </div>
             </div>
           </div>
           <button type="button" data-demo="Go to">Go to</button
@@ -1059,7 +1011,7 @@
               </button>
             </div>
             <div class="pick-help" id="pick-help" hidden>
-              <span>Click a row · ↑ / ↓ then Enter · Esc cancels</span>
+              <span>Choose a revision</span>
               <button id="cancel-custom" type="button">Cancel</button>
             </div>
 
@@ -1140,9 +1092,9 @@
         <article>
           <h2><span class="number">02</span>One obvious dropdown</h2>
           <p>
-            The bordered control combines mode and ID. Its menu explains the
-            parent, remembers the last custom destination, and provides one
-            explicit Choose revision in log… action. No separate Change button.
+            The bordered control combines mode and ID. Its lean menu offers
+            Parent and Choose revision in log…. Parent clears the custom
+            destination. No separate Change button.
           </p>
         </article>
         <article>
@@ -1273,42 +1225,14 @@
         menu.dataset.placement = flip ? "above" : "below";
       }
       function renderDestinationMenu() {
-        const parent = parentResult(),
-          custom = resultFor(customId);
-        const parentRevision = revisions.find(
-          (r) => r.id === parents[source().id],
-        );
-        const customRevision = [...allRevisions(), external].find(
-          (r) => r.id === customId,
-        );
-        const outside = (id) =>
-          id && !displayRevisions().some((r) => r.id === id);
-        byId("menu-source").textContent = source().id;
+        const parent = parentResult();
         byId("parent-destination").textContent = parents[source().id] || "—";
         byId("choose-parent").disabled = queued || !!parent.error;
         byId("choose-parent").setAttribute(
           "aria-checked",
           String(mode === "parent"),
         );
-        byId("parent-detail").textContent =
-          parent.error ||
-          `Parent of ${source().id} · ${parentRevision.title}${outside(parent.id) ? " · outside the log filter" : ""}`;
-        byId("use-custom").hidden = !customId;
-        byId("use-custom").disabled = queued || !!custom.error;
-        byId("use-custom").setAttribute(
-          "aria-checked",
-          String(mode === "custom"),
-        );
-        byId("custom-destination").textContent = customId || "—";
-        byId("custom-detail").textContent =
-          custom.error ||
-          `${customRevision.title} · fixed destination${outside(custom.id) ? " · outside the log filter" : ""}`;
         byId("choose-custom").disabled = queued;
-        byId("choose-custom-detail").textContent = picking
-          ? "Return to the current row preview. Click a row to confirm."
-          : logCollapsed
-            ? "Opens the log temporarily. Click a row to confirm."
-            : "Click a row in the log. Your review stays unchanged.";
         menuOpen = menuOpen && !queued;
         byId("destination-menu").hidden = !menuOpen;
         byId("destination-toggle").setAttribute(
@@ -1342,21 +1266,13 @@
         if (queued || parentResult().error) return;
         closeMenu(false);
         mode = "parent";
+        customId = null;
         finishPicking();
         render();
         byId("destination-toggle").focus({ preventScroll: true });
         tell(
           `Parent selected · source ${source().id} → parent ${parentResult().id}`,
         );
-      }
-      function useCustom() {
-        if (queued || resultFor(customId).error) return;
-        closeMenu(false);
-        mode = "custom";
-        finishPicking();
-        render();
-        byId("destination-toggle").focus({ preventScroll: true });
-        tell(`Custom destination ${customId} restored · no squash performed`);
       }
       function drawRoute() {
         const result = currentResult(),
@@ -1688,7 +1604,6 @@
         buttons[next]?.focus();
       };
       byId("choose-parent").onclick = useParent;
-      byId("use-custom").onclick = useCustom;
       byId("choose-custom").onclick = beginCustom;
       byId("cancel-custom").onclick = cancel;
       byId("route-handle").onclick = beginCustom;

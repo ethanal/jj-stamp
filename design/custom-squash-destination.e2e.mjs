@@ -240,10 +240,10 @@ async function openMenu(page) {
     "role",
     "menuitemradio",
   );
-  await expect(page.locator("#use-custom")).toHaveAttribute(
-    "role",
-    "menuitemradio",
-  );
+  await expect(page.locator("#destination-menu button")).toHaveCount(2);
+  await expect(
+    page.locator("#use-custom, .menu-context, .menu-description, .menu-note"),
+  ).toHaveCount(0);
   await expect(page.locator("#choose-custom")).toHaveAttribute(
     "role",
     "menuitem",
@@ -269,6 +269,12 @@ async function startPicking(page) {
   await expect(page.locator("#destination-mode")).toHaveText("Choosing…");
   await expect(page.locator("#pick-help")).toBeVisible();
   await expect(page.locator("#cancel-custom")).toBeVisible();
+  await expect(page.locator("#pick-help span")).toHaveText("Choose a revision");
+  const cancelBounds = await page.locator("#cancel-custom").boundingBox();
+  assert.ok(
+    cancelBounds.width >= 44 && cancelBounds.height >= 44,
+    "Cancel has at least a 44×44 hit area",
+  );
   await expect(page.locator("#selection-state")).toHaveText(
     "Preview destination",
   );
@@ -372,19 +378,10 @@ try {
     "true",
   );
   await expect(page.locator("#parent-destination")).toHaveText("pqxvqmoo");
-  await expect(page.locator("#use-custom")).toBeHidden();
-  for (const [id, primary] of [
-    ["choose-parent", "Parent"],
-    ["choose-custom", "Choose revision in log…"],
-  ]) {
-    const text = (await page.locator(`#${id}`).innerText())
-      .replace(/\s+/g, " ")
-      .trim();
-    assert.ok(
-      text.replace("pqxvqmoo", "").trim().length > primary.length,
-      `${id} explains the choice beyond its title and revision ID`,
-    );
-  }
+  await expect(page.locator("#choose-parent")).toHaveText("✓Parentpqxvqmoo");
+  await expect(page.locator("#choose-custom")).toHaveText(
+    "Choose revision in log…",
+  );
   await expectMenuFits(page);
   await trigger.click();
   await expectClosedMenu(page);
@@ -503,18 +500,21 @@ try {
   await expect(squash).toBeEnabled();
   await expect(source).toHaveText("vqkqszmu");
 
-  // Remembered custom is a fixed ID, not a shortcut that restarts the picker.
+  // Custom stays fixed until explicitly replaced; Parent clears it entirely.
   await openMenu(page);
   await expect(page.locator("#choose-parent")).toHaveAttribute(
     "aria-checked",
     "false",
   );
-  await expect(page.locator("#use-custom")).toHaveAttribute(
-    "aria-checked",
-    "true",
-  );
-  await expect(page.locator("#use-custom")).toBeEnabled();
-  await expect(page.locator("#custom-destination")).toHaveText("rwpxovrz");
+  await page.keyboard.press("Escape");
+  await startPicking(page);
+  await expectRoute(page, "rwpxovrz", true);
+  await row("ksuunvyp").hover();
+  await page.locator("#cancel-custom").click();
+  await expectCommitted(page, "Custom", "rwpxovrz");
+  await page.locator("#move-working-copy").click();
+  await expectRoute(page, "rwpxovrz");
+  await expect(source).toHaveText("vqkqszmu");
   await menuChoice(page, "choose-parent");
   await expectCommitted(page, "Parent", "pqxvqmoo");
   await expect(trigger).toBeFocused();
@@ -523,22 +523,20 @@ try {
     "aria-checked",
     "true",
   );
-  await expect(page.locator("#use-custom")).toHaveAttribute(
-    "aria-checked",
-    "false",
-  );
   await page.keyboard.press("Home");
   await page.keyboard.press("ArrowDown");
-  await expect(page.locator("#use-custom")).toBeFocused();
+  await expect(page.locator("#choose-custom")).toBeFocused();
   await page.keyboard.press("Enter");
+  await expectRoute(page, "pqxvqmoo", true);
+  await page.keyboard.press("Escape");
+  await expectCommitted(page, "Parent", "pqxvqmoo");
+  await startPicking(page);
+  await chooseRow("rwpxovrz");
   await expectCommitted(page, "Custom", "rwpxovrz");
   await expect(trigger).toBeFocused();
-  await expectRoute(page, "rwpxovrz");
-  await page.locator("#move-working-copy").click();
-  await expectRoute(page, "rwpxovrz");
-  await expect(source).toHaveText("vqkqszmu");
 
   // The arrow remains a direct picker affordance; keyboard rows retain graph metrics.
+  await page.mouse.move(2, 2);
   await reset();
   await page.locator("#route-handle").focus();
   await page.keyboard.press("Enter");
@@ -618,7 +616,7 @@ try {
   await expect(trigger).toBeFocused();
   await startPicking(page);
   await row("ksuunvyp").hover();
-  await menuChoice(page, "use-custom");
+  await page.keyboard.press("Escape");
   await expectCommitted(page, "Custom", "rwpxovrz", true);
   await expect(trigger).toBeFocused();
   await startPicking(page);
@@ -657,8 +655,8 @@ try {
   await expect(page.locator("#route-handle")).toBeHidden();
   await expect(page.locator(".revision.target")).toHaveCount(0);
   await openMenu(page);
-  await expect(page.locator("#custom-destination")).toHaveText("pqxvqmoo");
-  await expect(page.locator("#use-custom")).toBeDisabled();
+  await expect(page.locator("#destination-menu button")).toHaveCount(2);
+  await expect(page.locator("#choose-parent")).toBeEnabled();
   await page.keyboard.press("Home");
   await page.keyboard.press("ArrowDown");
   await expect(page.locator("#choose-custom")).toBeFocused();
@@ -714,8 +712,8 @@ try {
   await expect(page.locator("#outside")).toBeVisible();
   await expect(page.locator("#route-handle")).toBeHidden();
   await expect(squash).toBeEnabled();
-  await menuChoice(page, "choose-parent");
-  await menuChoice(page, "use-custom");
+  await openMenu(page);
+  await page.keyboard.press("Escape");
   await expectCommitted(page, "Custom", "nukxtrvy");
   await expect(page.locator("#route-handle")).toBeHidden();
   await page.mouse.move(2, 2);
@@ -790,7 +788,10 @@ try {
     await chooseRow("rwpxovrz");
     await expectCommitted(page, "Custom", "rwpxovrz", true);
     await menuChoice(page, "choose-parent");
-    await menuChoice(page, "use-custom");
+    await expectCommitted(page, "Parent", "pqxvqmoo", true);
+    await startPicking(page);
+    await expectRoute(page, "pqxvqmoo", true);
+    await chooseRow("rwpxovrz");
     await expectCommitted(page, "Custom", "rwpxovrz", true);
     await expect(trigger).toBeFocused();
     await reset();
@@ -873,7 +874,7 @@ try {
   assert.deepEqual(errors, [], "no uncaught browser errors");
   assert.deepEqual(requests, [], "no HTTP/API requests");
   console.log(
-    "PASS: A combined destination dropdown; accessible radio menu, keyboard/dismissal/memory, preview/commit/cancel/focus, source-relative parent and fixed custom, hidden-log layout restore, no-fallback errors/off-filter/queue locks, compact graph/route/header, 360px/390px viewport-fit and bottom-flip menus, both offline bundles; zero page errors or HTTP requests.",
+    "PASS: A combined destination dropdown; lean two-item menu, keyboard/dismissal/custom reset, preview/commit/cancel/focus with 44px Cancel, source-relative parent and fixed custom, hidden-log layout restore, no-fallback errors/off-filter/queue locks, compact graph/route/header, 360px/390px viewport-fit and bottom-flip menus, both offline bundles; zero page errors or HTTP requests.",
   );
 } finally {
   await browser.close();

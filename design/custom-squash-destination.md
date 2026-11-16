@@ -24,20 +24,16 @@ ID is content inside an obvious dropdown, not an unmarked standalone action.
 
 ## Dropdown anatomy
 
-The menu names the reviewed source and provides:
+The lean menu has exactly two items, with no heading, helper descriptions, or
+footer notes:
 
-1. **Parent**: actual parent ID, revision title, and “Parent of <source>”.
-   The checked radio indicates the committed mode, not a hover preview.
-2. **Custom destination**, once one has been chosen: the remembered fixed ID and
-   title. Switching to Parent does not erase this choice; selecting the
-   remembered row restores it without opening the log. Invalidated choices are
-   disabled and explain why.
-3. **Choose revision in log…**: an explicit action for picking a new custom target.
-   Its description explains whether the log opens temporarily or is already open.
-   During picking, it returns to the current preview rather than resetting it.
+1. **Parent**: the actual parent ID. The checked radio indicates the committed
+   mode, not a hover preview. Choosing Parent clears the custom destination;
+   there is no remembered Custom radio or restore shortcut.
+2. **Choose revision in log…**: opens the picker for a new custom target. During
+   picking, it returns to the current preview rather than resetting it.
 
-The note “Choosing a destination does not squash any lines” separates destination
-selection from the existing Squash selection action. The menu is viewport-clamped,
+Choosing a destination does not squash any lines. The menu is viewport-clamped,
 flips above its trigger when needed, and scrolls if vertical space is limited.
 Scrolling its trigger out of view dismisses the menu without changing the target.
 
@@ -50,25 +46,29 @@ copy position or adjacency in a filtered graph:
 - **Move @ (demo)** advances the working copy without changing the destination.
 - **Review parent (demo)** reviews `pqxvqmoo`, so Parent becomes `rwpxovrz`,
   even while `@` stays at `vqkqszmu` or moves to a new child.
-- **Parent hidden by log filter** keeps the true parent destination. The menu and
-  log notice explain that it is outside the filter; no visible revision substitutes.
+- **Parent hidden by log filter** keeps the true parent destination. The menu keeps
+  the true ID and the log notice explains the filter; no visible revision substitutes.
 
 Selecting Parent explicitly returns to this mode from a custom choice or
-preview. There is no generated revset or hidden working-copy-relative expression.
+preview, discarding the custom ID. Choosing a custom target again requires a new
+row selection. There is no generated revset or hidden working-copy-relative
+expression.
 
 ## Choose a custom target
 
 1. Open the dropdown and select **Choose revision in log…**. The margin arrow is
    also a keyboard-accessible shortcut. Neither changes the reviewed source.
-2. Hover or focus an eligible row. Its amber tint and dashed arrow preview the
-   destination. The top bar says **Choosing…**, the diff footer says **Preview
+2. The picker banner says **Choose a revision**, with a **Cancel** button whose
+   hit area is at least 44 × 44px. Hover or focus an eligible row. Its amber tint
+   and dashed arrow preview the destination. The top bar says **Choosing…**, the diff footer says **Preview
    destination**, and Squash selection is disabled.
 3. Click a row/ID, or press Enter, to confirm. The dropdown becomes **Custom**,
    the arrow becomes solid, and squash is available. The selected lines and
    source remain unchanged; nothing is squashed merely by choosing.
 4. Escape or Cancel restores the prior committed mode/ID. Opening the dropdown
-   while picking allows an explicit switch to the parent or remembered custom
-   target instead. Cancelling only the menu leaves the underlying picker active.
+   while picking allows an explicit switch to Parent, clearing the custom choice.
+   Cancelling only the menu leaves the underlying picker active. Replacing a
+   current custom choice and then cancelling preserves that current choice.
 
 There is no text field, revset parser, or Apply step. A clicked target stays fixed
 when `@` moves. To change it again, use the same obvious dropdown and named action.
@@ -77,8 +77,8 @@ when `@` moves. To change it again, use the same obvious dropdown and named acti
 
 - Hiding the log does not change the destination. The diff reclaims the space
   beside the existing narrow rail; the top-bar control stays put.
-- Picking temporarily opens a hidden log. Confirm, Cancel, Escape, or selecting a
-  menu radio restores the previously hidden layout. If the log was already open,
+- Picking temporarily opens a hidden log. Confirm, Cancel, Escape, or selecting
+  Parent restores the previously hidden layout. If the log was already open,
   leave it open. Hiding the log during picking cancels the preview.
 - Confirming/cancelling returns focus to the dropdown trigger. Closing only the
   menu restores trigger focus without cancelling the row preview.
@@ -141,8 +141,9 @@ Attach actual PNGs to the ticket. Display the interactive document with
 `output_iframe` in the linked Shelley conversation. Run this check after the
 five-option gallery check to make the shared iframe show the developed A demo.
 
-Browser checks cover the menu and keyboard/dismissal rules, remembered custom
-choice, source/working-copy/filter independence, preview and confirmation,
+Browser checks cover the menu and keyboard/dismissal rules, custom reset and
+replacement cancellation, source/working-copy/filter independence, preview and
+confirmation,
 cancel/focus/layout restoration, invalid/off-filter/queued destinations, compact
 graph/arrow and toolbar geometry, live notice/error updates during preview,
 narrow-screen popup placement and offscreen dismissal, and both offline bundles.

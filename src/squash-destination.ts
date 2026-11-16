@@ -13,20 +13,18 @@ export function squashDestination(
 ) {
   const current = choice?.sourceId === state?.source.changeId ? choice : null;
   const mode = current?.mode ?? "parent";
-  const remembered = current?.custom ?? null;
+  const selected = mode === "custom" ? (current?.custom ?? null) : null;
   const custom =
-    state?.targets.find((target) => target.changeId === remembered?.changeId) ??
-    remembered;
+    state?.targets.find((target) => target.changeId === selected?.changeId) ??
+    selected;
   const parentReason =
     state?.squashUnavailable ||
     (!state?.parent ? "No mutable immediate parent is available." : "");
   const customReason =
     state?.squashUnavailable ||
-    (!remembered
+    (!selected
       ? "Choose a revision in the log first."
-      : !state?.targets.some(
-            (target) => target.changeId === remembered.changeId,
-          )
+      : !state?.targets.some((target) => target.changeId === selected.changeId)
         ? "The chosen revision is no longer an eligible mutable ancestor. Choose another destination or select Parent."
         : "");
   // Retain missing custom metadata for explanation, but never authorize a

@@ -66,8 +66,6 @@
     monospace;
   white-space: normal;
 }
-.squash-destination-menu-heading,
-.squash-destination-menu-note,
 .squash-destination-error {
   margin: 0;
   padding: 7px 8px;
@@ -75,10 +73,7 @@
   line-height: 1.5;
   color: var(--muted);
 }
-.squash-destination-menu-heading code {
-  font: inherit;
-  color: var(--fg);
-}
+
 .squash-destination-menu [role^="menuitem"] {
   display: flex;
   gap: 8px;
@@ -94,25 +89,14 @@
 .squash-destination-menu [role^="menuitem"] > span:last-child {
   min-width: 0;
 }
-.squash-destination-menu strong,
-.squash-destination-menu small,
-.squash-destination-menu strong + span {
+.squash-destination-menu strong {
   display: block;
   overflow-wrap: anywhere;
 }
 .squash-destination-menu strong {
   font-weight: 500;
 }
-.squash-destination-menu strong + span {
-  margin-top: 3px;
-  font-size: calc(var(--font-size) - 2px);
-}
-.squash-destination-menu small {
-  margin-top: 3px;
-  color: var(--muted);
-  font-size: calc(var(--font-size) - 3px);
-  line-height: 1.5;
-}
+
 .squash-destination-menu [role^="menuitem"]:hover:not(:disabled),
 .squash-destination-menu [role^="menuitem"]:focus-visible {
   background: var(--hover);
@@ -125,9 +109,7 @@
   flex: 0 0 14px;
   color: var(--modified);
 }
-.squash-destination-menu-note {
-  border-top: 1px solid var(--border);
-}
+
 .squash-destination-error {
   color: var(--error-fg);
 }
@@ -183,7 +165,9 @@
 }
 .destination-pick-help button {
   flex-shrink: 0;
-  padding: 2px 5px;
+  min-height: 44px;
+  min-width: 64px;
+  padding: 8px 12px;
   border: 1px solid var(--border);
   border-radius: 3px;
   background: var(--panel);

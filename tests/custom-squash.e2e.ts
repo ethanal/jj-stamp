@@ -95,7 +95,7 @@ const menu = page.getByRole("menu", { name: "Squash destination" });
 const parentOption = () => menu.getByRole("menuitemradio", { name: /^Parent/ });
 const customOption = () => menu.getByRole("menuitemradio", { name: /^Custom/ });
 const chooseAction = () =>
-  menu.getByRole("menuitem", { name: /^Choose revision in log…/ });
+  menu.getByRole("menuitem", { name: "Choose revision in log…", exact: true });
 const graph = page.getByLabel("jj log output");
 const row = (changeId: string) =>
   page.locator(`.log-change[data-change-id="${changeId}"]`);
@@ -116,10 +116,39 @@ async function screenshot(name: string) {
 async function openMenu() {
   await trigger.click();
   await expect(menu).toBeVisible();
+  await expect(menu.locator('[role^="menuitem"]')).toHaveCount(2);
+  await expect(customOption()).toHaveCount(0);
+  await expect(parentOption()).toHaveAccessibleName(
+    `Parent · ${parent.slice(0, 8)}`,
+  );
+  await expect(chooseAction()).toHaveAccessibleName("Choose revision in log…");
+  const copy = await menu.evaluate((element) => {
+    const clone = element.cloneNode(true) as HTMLElement;
+    clone
+      .querySelectorAll('[aria-hidden="true"]')
+      .forEach((node) => node.remove());
+    return clone.textContent?.replace(/\s+/g, " ").trim();
+  });
+  assert.equal(
+    copy?.replace(/\s/g, ""),
+    `Parent·${parent.slice(0, 8)}Chooserevisioninlog…`,
+  );
   assert.equal(
     await menu.locator("input, textarea").count(),
     0,
     "Destination is never free-form text entry",
+  );
+}
+async function assertPickerHelp() {
+  const help = page.locator(".destination-pick-help");
+  await expect(help.locator(":scope > span").first()).toHaveText(
+    "Choose a revision",
+  );
+  const cancel = help.getByRole("button", { name: "Cancel", exact: true });
+  const bounds = await cancel.boundingBox();
+  assert(
+    bounds && bounds.width >= 44 && bounds.height >= 44,
+    "Cancel must have a minimum 44 × 44px click target",
   );
 }
 async function chooseInLog() {
@@ -129,6 +158,7 @@ async function chooseInLog() {
   await expect(graph).toBeVisible();
   await expect(squash).toBeDisabled();
   await expect(page.getByRole("status")).toContainText("Preview destination:");
+  await assertPickerHelp();
 }
 async function assertSourceAndSelection(selectionCount: number) {
   await expect(reviewedId()).toHaveAttribute("title", source);
@@ -236,18 +266,26 @@ try {
   await assertSourceAndSelection(selectionCount);
   await screenshot("custom-hidden-log");
 
-  // A remembered Custom radio remains available when Parent is selected.
+  // There is no remembered Custom option: Parent discards the custom target.
+  // A custom destination must be explicitly chosen from the graph again.
   await openMenu();
-  await expect(customOption()).toHaveAttribute("aria-checked", "true");
-  await screenshot("remembered-custom-menu");
+  await expect(parentOption()).toHaveAttribute("aria-checked", "false");
+  await screenshot("custom-menu");
   await parentOption().click();
   await expect(destination).toContainText("Parent");
+  await expect(destination).toContainText(parent.slice(0, 8));
+  await expect(destination).not.toContainText(older.slice(0, 8));
   await openMenu();
   await expect(parentOption()).toHaveAttribute("aria-checked", "true");
-  await expect(customOption()).toHaveAttribute("aria-checked", "false");
-  await expect(customOption()).toContainText(older.slice(0, 8));
-  await customOption().click();
+  await expect(customOption()).toHaveCount(0);
+  await expect(menu).not.toContainText(older.slice(0, 8));
+  await chooseAction().click();
+  await assertPickerHelp();
+  await row(older).click();
+  await expect(graph).toBeHidden();
   await expect(destination).toContainText("Custom");
+  await expect(destination).toContainText(older.slice(0, 8));
+  await assertSourceAndSelection(selectionCount);
 
   // Canceling a replacement restores Custom, not Parent, and an explicitly
   // open graph remains open on both cancellation and Enter confirmation.
@@ -260,6 +298,7 @@ try {
   await expect(chooseAction()).toBeFocused();
   await page.keyboard.press("Enter");
   await expect(page.locator(".destination-pick-help")).toBeVisible();
+  await assertPickerHelp();
   await row(older).focus();
   await page.keyboard.press("ArrowUp");
   await expect(row(parent)).toBeFocused();
@@ -274,6 +313,17 @@ try {
   await page.keyboard.press("Escape");
   await expect(graph).toBeVisible();
   await expect(destination).toContainText("Custom");
+  await expect(trigger).toBeFocused();
+  await assertSourceAndSelection(selectionCount);
+  await chooseInLog();
+  await row(parent).hover();
+  await page
+    .locator(".destination-pick-help")
+    .getByRole("button", { name: "Cancel", exact: true })
+    .click();
+  await expect(graph).toBeVisible();
+  await expect(destination).toContainText("Custom");
+  await expect(destination).toContainText(older.slice(0, 8));
   await expect(trigger).toBeFocused();
   await assertSourceAndSelection(selectionCount);
   await chooseInLog();
@@ -315,7 +365,7 @@ try {
   assert.equal(
     squashes[0].target,
     older,
-    "Queue sends the full remembered change ID",
+    "Queue sends the full selected change ID",
   );
   assert.equal(squashes[0].version, initial.version);
   await screenshot("queued-locked");

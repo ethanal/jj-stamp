@@ -58,10 +58,10 @@ test("a missing custom destination is retained for explanation, never replaced",
   assert.match(result.error, /no longer.*ancestor/);
 });
 
-test("Parent remembers Custom without selecting it; another source starts at Parent", () => {
+test("Parent discards Custom; another source starts at Parent", () => {
   const result = squashDestination(state, { ...choice, mode: "parent" });
   assert.equal(result.target, parent);
-  assert.equal(result.custom, older);
+  assert.equal(result.custom, null);
   const nextParent = revision("next-parent");
   const next = squashDestination(
     { ...state, source: revision("other-source"), parent: nextParent },
