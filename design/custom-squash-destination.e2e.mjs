@@ -153,6 +153,23 @@ async function captureLog(page, filename) {
     clip: { ...bounds, height: 275 },
   });
 }
+async function expectClickOnly(page) {
+  await expect(page.getByRole("textbox")).toHaveCount(0);
+  await expect(
+    page.locator(
+      "input, textarea, [contenteditable=true], #custom-editor, #destination-revset, #apply-revset",
+    ),
+  ).toHaveCount(0);
+  await expect(
+    page.getByRole("button", { name: "Apply", exact: true }),
+  ).toHaveCount(0);
+  await expect(
+    page.locator(
+      "#route-svg circle, #route-svg ellipse, #route-svg marker, #route-source",
+    ),
+  ).toHaveCount(0);
+  await expect(page.locator("#route-svg path")).toHaveCount(2);
+}
 try {
   const page = await browser.newPage({
     viewport: { width: 1440, height: 1080 },
@@ -171,14 +188,12 @@ try {
     name: "Squash destination mode",
     exact: true,
   });
-  const field = page.locator("#destination-revset");
   const target = page.locator("#destination-id"),
     source = page.locator(".revision.current .review-id"),
     squash = page.locator("#squash-demo");
+  await expectClickOnly(page);
   await expect(mode).toHaveValue("parent");
   await expect(mode.locator("option")).toHaveText(["Commit below", "Custom…"]);
-  await expect(field).toBeHidden();
-  await expect(field).toHaveValue("");
   await expect(target).toHaveText("pqxvqmoo");
   await expectRoute(page, "pqxvqmoo");
   await expectCompactGraph(page);
@@ -197,13 +212,11 @@ try {
     "rgb(41, 38, 31)",
   );
 
-  // The default is metadata-relative to the reviewed source, NEVER @-.
+  // Default follows the reviewed source's real parent, not @ or filtered rows.
   await page.locator("#move-working-copy").click();
-  await expect(mode).toHaveValue("parent");
   await expect(target).toHaveText("pqxvqmoo");
   await expect(source).toHaveText("vqkqszmu");
   await expectRoute(page, "pqxvqmoo");
-  await expect(squash).toBeEnabled();
   await expectCompactGraph(page, 6);
   await page.locator('[data-view="default"]').click();
   await page.locator("#review-parent").click();
@@ -212,16 +225,11 @@ try {
   await expect(page.locator('[data-revision="vqkqszmu"] .graph')).toHaveText(
     "@  ",
   );
-  await expect(target).toHaveText("rwpxovrz");
   await expectRoute(page, "rwpxovrz");
-  await expect(field).toBeHidden();
   await expectCompactGraph(page);
-  await captureLog(page, "selector-01-commit-below.png");
+  await captureLog(page, "click-only-01-commit-below.png");
   await page.locator("#move-working-copy").click();
   await expect(target).toHaveText("rwpxovrz");
-  await expect(source).toHaveText("pqxvqmoo");
-
-  // Filtering out the parent must not substitute the next visible row.
   await page.locator("#scenario").selectOption("filtered");
   await expect(mode).toHaveValue("parent");
   await expect(target).toHaveText("pqxvqmoo");
@@ -231,13 +239,13 @@ try {
   await expect(squash).toBeEnabled();
   await expectCompactGraph(page, 4);
 
-  // Custom opens an explicit full-row picker; cancel restores the parent mode.
+  // Custom is only a commit-row picker, with no entry field or Apply button.
   await page.locator('[data-view="default"]').click();
   await mode.selectOption("custom");
   await expect(mode).toHaveValue("custom");
-  await expect(field).toBeVisible();
-  await expect(field).toHaveValue("");
   await expect(page.locator("#pick-help")).toBeVisible();
+  await expect(page.locator("#cancel-custom")).toBeVisible();
+  await expectClickOnly(page);
   await expect(
     page.getByRole("button", {
       name: "Choose destination vqkqszmu",
@@ -250,21 +258,22 @@ try {
       exact: true,
     }),
   ).toBeDisabled();
+  await page.locator('[data-revision="zzzzzzzz"] .row-title').click();
+  await expect(mode).toHaveValue("custom");
   await expect(squash).toBeDisabled();
   await page.locator('[data-revision="rwpxovrz"] .row-title').hover();
   await expectRoute(page, "rwpxovrz", true);
   await expectCompactGraph(page);
-  await captureLog(page, "selector-02-click-custom.png");
+  await captureLog(page, "click-only-02-choosing.png");
   await page.keyboard.press("Escape");
   await expect(mode).toHaveValue("parent");
   await expect(mode).toBeFocused();
-  await expect(field).toBeHidden();
+  await expect(page.locator("#pick-help")).toBeHidden();
   await expectRoute(page, "pqxvqmoo");
+
   await mode.selectOption("custom");
   await page.locator('[data-revision="rwpxovrz"] .row-title').click();
   await expect(mode).toHaveValue("custom");
-  await expect(field).toHaveValue("rwpxovrz");
-  await expect(field).toBeHidden();
   await expectRoute(page, "rwpxovrz");
   await expect(squash).toBeEnabled();
   await expect(page.locator("#pick-help")).toBeHidden();
@@ -272,17 +281,30 @@ try {
   await expect(page.locator(".line.sel")).toHaveCount(3);
   await expect(page.locator("#selection-target")).toHaveText("rwpxovrz");
   await expect(page.locator("#footer-destination")).toHaveText("rwpxovrz");
-  await captureLog(page, "selector-03-custom-selected.png");
+  await expectClickOnly(page);
+  await captureLog(page, "click-only-03-selected.png");
+
+  // Reopening/cancelling preserves a committed custom target and mode.
+  await page.locator("#change-custom").click();
+  await page.locator('[data-revision="ksuunvyp"] .row-title').hover();
+  await expectRoute(page, "ksuunvyp", true);
+  await page.locator("#cancel-custom").click();
+  await expect(mode).toHaveValue("custom");
+  await expectRoute(page, "rwpxovrz");
+  await page.locator("#change-custom").click();
+  await page
+    .getByRole("button", { name: "Choose destination ksuunvyp", exact: true })
+    .click();
+  await expectRoute(page, "ksuunvyp");
   await mode.selectOption("parent");
   await expectRoute(page, "pqxvqmoo");
-  await expect(field).toBeHidden();
   await page.locator("#route-handle").click();
   await expect(mode).toHaveValue("custom");
   await page.locator("#cancel-custom").click();
   await expect(mode).toHaveValue("parent");
   await expectRoute(page, "pqxvqmoo");
 
-  // Arrow and native select are keyboard-accessible, with bounded eligible rows.
+  // Retain keyboard access without any text entry, skipping unavailable rows.
   await page.locator('[data-view="default"]').click();
   await page.locator("#route-handle").focus();
   await page.keyboard.press("Enter");
@@ -294,98 +316,49 @@ try {
   await page.keyboard.press("ArrowDown");
   await expectRoute(page, "ksuunvyp", true);
   await page.keyboard.press("Enter");
-  await expect(field).toHaveValue("ksuunvyp");
   await expectRoute(page, "ksuunvyp");
-  await page.locator("#change-custom").click();
-  await page.locator("#cancel-custom").click();
-  await expectRoute(page, "ksuunvyp");
-
-  // Revsets remain optional and opt-in under Custom, with explicit Apply/Enter.
-  await page.locator('[data-view="default"]').click();
-  await mode.selectOption("custom");
-  await field.fill("@--");
-  await expectRoute(page, "rwpxovrz", true);
-  await expect(squash).toBeDisabled();
-  await field.press("Enter");
-  await expect(mode).toHaveValue("custom");
-  await expect(field).toHaveValue("@--");
-  await expectRoute(page, "rwpxovrz");
   await expect(squash).toBeEnabled();
-  await page.locator("#move-working-copy").click();
-  await expect(field).toHaveValue("@--");
-  await expectRoute(page, "pqxvqmoo");
-  await expect(source).toHaveText("vqkqszmu");
-  await expectCompactGraph(page, 6);
-  // Bad drafts do not fall back to the prior result or alter the default mode.
-  for (const [expression, message] of [
-    ["all()", "Resolved to 6 commits"],
-    ["none()", "Resolved to 0 commits"],
-    ["@—", "Use ASCII hyphens"],
-    ["@[", "Not a supported fixture expression"],
-    ["", "Enter a revset"],
-    ["vqkqszmu", "reviewed source"],
-    ["zzzzzzzz", "immutable"],
-    ["xmturvkn", "older ancestors"],
-  ]) {
-    await field.fill(expression);
-    await expect(page.locator("#revset-error")).toContainText(message);
-    await expect(field).toHaveAttribute("aria-invalid", "true");
-    await expect(squash).toBeDisabled();
-    await expect(target).toHaveText("—");
-    await expect(page.locator("#route-handle")).toBeHidden();
-    await expect(page.locator(".revision.target")).toHaveCount(0);
-    await field.press("Enter");
-    await expect(target).toHaveText("—");
-    await field.press("Escape");
-    await expect(field).toHaveValue("@--");
-    await expectRoute(page, "pqxvqmoo");
-  }
 
-  // A clicked ID stays fixed when @ moves; it is not silently reinterpreted.
+  // A clicked target stays fixed as @ moves; source changes can invalidate it.
   await page.locator("#scenario").selectOption("custom");
   await page.locator("#move-working-copy").click();
-  await expect(field).toHaveValue("rwpxovrz");
   await expectRoute(page, "rwpxovrz");
-  // Only an explicitly entered @- expression can follow @ into the source.
-  await page.locator('[data-view="default"]').click();
-  await mode.selectOption("custom");
-  await field.fill("@-");
-  await field.press("Enter");
-  await page.locator("#move-working-copy").click();
-  await expect(page.locator("#revset-error")).toContainText("reviewed source");
-  await expect(squash).toBeDisabled();
-  await mode.selectOption("parent");
-  await expectRoute(page, "pqxvqmoo");
-  await expect(squash).toBeEnabled();
-  await expect(field).toBeHidden();
-  // A custom target becoming the selected source fails instead of substituting.
+  await expect(source).toHaveText("vqkqszmu");
   await page.locator('[data-view="default"]').click();
   await mode.selectOption("custom");
   await page
     .getByRole("button", { name: "Choose destination pqxvqmoo", exact: true })
     .click();
   await page.locator("#review-parent").click();
-  await expect(page.locator("#revset-error")).toContainText("reviewed source");
+  await expect(page.locator("#destination-error")).toContainText(
+    "reviewed source",
+  );
+  await expect(target).toHaveText("—");
+  await expect(squash).toBeDisabled();
+  await expect(page.locator("#route-handle")).toBeHidden();
+  await expect(page.locator(".revision.target")).toHaveCount(0);
   await mode.selectOption("parent");
   await expectRoute(page, "rwpxovrz");
   await expect(squash).toBeEnabled();
 
-  // Off-filter custom expressions are valid without graph substitution.
+  // A previously clicked target may leave the filter; changing it needs a row.
   await page.locator("#scenario").selectOption("hidden");
-  await expect(field).toHaveValue("nukxtrvy");
   await expect(target).toHaveText("nukxtrvy");
   await expect(page.locator("#outside")).toBeVisible();
   await expect(page.locator("#route-handle")).toBeHidden();
-  await mode.selectOption("parent");
-  await expectRoute(page, "pqxvqmoo");
+  await page.locator("#change-custom").click();
+  await page
+    .getByRole("button", { name: "Choose destination rwpxovrz", exact: true })
+    .click();
+  await expectRoute(page, "rwpxovrz");
+  await expect(page.locator("#outside")).toBeHidden();
 
-  // Both modes lock while accepted work is pinned to a concrete destination.
+  // Accepted queue work keeps its pinned IDs and locks destination controls.
   await page.locator("#scenario").selectOption("queued");
   await expect(mode).toHaveValue("parent");
   await expectRoute(page, "pqxvqmoo");
   for (const id of [
     "destination-mode",
-    "destination-revset",
     "route-handle",
     "squash-demo",
     "move-working-copy",
@@ -411,7 +384,7 @@ try {
       true,
     );
     await expect(mode).toHaveValue("parent");
-    await expect(field).toBeHidden();
+    await expectClickOnly(page);
     await expectCompactGraph(page);
     await expectRoute(page, "pqxvqmoo");
   }
@@ -438,18 +411,18 @@ try {
     .getByRole("button", { name: "Choose destination rwpxovrz", exact: true })
     .click();
   await expectRoute(page, "rwpxovrz");
+  await expectClickOnly(page);
   assert.equal(
     await page.evaluate(
       () => document.documentElement.scrollWidth <= innerWidth,
     ),
     true,
-    "custom editor must fit a narrow screen",
   );
   await expectCompactGraph(page);
   assert.deepEqual(errors, [], "no uncaught browser errors");
   assert.deepEqual(requests, [], "no HTTP/API requests");
   console.log(
-    "PASS: source-relative Commit below independent of @/filter, source switching, native selector and click/keyboard custom choice, optional revsets and moving @, cancel/mode restore, fail-closed custom validation, pinned queue, off-filter targets, unchanged compact graph/arrow geometry, mobile and both presentation bundles; zero page errors or HTTP requests.",
+    "PASS: click-only custom choice with no text fields/Apply, no arrow source dot, source-relative default, source/@/filter independence, row/ID/keyboard choice, cancel and mode restore, unavailable targets, fixed custom IDs, pinned queue, compact graph and arrow geometry, mobile and both presentation bundles; zero page errors or HTTP requests.",
   );
 } finally {
   await browser.close();

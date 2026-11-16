@@ -34,7 +34,6 @@
           monospace;
       }
       button,
-      input,
       select {
         font: inherit;
       }
@@ -55,7 +54,6 @@
         color: #66717f;
       }
       button:focus-visible,
-      input:focus-visible,
       select:focus-visible {
         outline: 2px solid var(--blue);
         outline-offset: 3px;
@@ -359,34 +357,21 @@
         padding: 3px 6px;
         font-size: 12px;
       }
-      .destination-bar.custom-editor input {
-        max-width: none;
-        font-size: 11px;
-      }
       .pick-help {
-        padding: 5px 12px;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 6px 12px;
         border-bottom: 1px solid var(--border);
         font-size: 10px;
         color: var(--blue);
       }
-      .destination-bar input {
-        min-width: 0;
+      .pick-help span {
         flex: 1;
-        width: 12ch;
-        max-width: 190px;
-        height: 27px;
-        padding: 3px 7px;
-        border: 1px solid #4c5968;
-        border-radius: 4px;
-        color: var(--fg);
-        background: var(--bg);
-        font: inherit;
       }
-      .destination-bar input[aria-invalid="true"] {
-        border-color: #c18c66;
-      }
-      .destination-bar input:disabled {
-        opacity: 0.65;
+      .pick-help button {
+        padding: 4px 7px;
+        font-size: 10px;
       }
       .target-id {
         font-size: 11px;
@@ -397,12 +382,7 @@
         font-size: 10px;
         padding: 5px 7px;
       }
-      .reset {
-        border-color: transparent;
-        background: transparent !important;
-        color: var(--muted);
-      }
-      .revset-error {
+      .destination-error {
         padding: 8px 12px;
         color: #e6b192;
         background: #32271f;
@@ -705,7 +685,7 @@
           <h1>The commit below. Unless you choose another.</h1>
           <p class="muted">
             Default to the reviewed commit’s parent, independently of @. Choose
-            Custom to click a commit or enter a revset.
+            Custom, then click a commit in the log.
           </p>
         </div>
         <span class="prototype"
@@ -721,9 +701,9 @@
           <b>2 · Custom → click a commit</b
           ><span>Choose Custom, then click a row in the log.</span>
         </button>
-        <button class="option" data-view="revset" aria-pressed="false">
-          <b>3 · Custom → enter a revset</b
-          ><span>Optionally keep a moving expression like @--.</span>
+        <button class="option" data-view="custom" aria-pressed="false">
+          <b>3 · Custom destination selected</b
+          ><span>A fixed destination, with no text entry.</span>
         </button>
       </nav>
       <div class="controls">
@@ -740,9 +720,7 @@
               <option value="default">Commit below (default)</option>
               <option value="picking">Picking a custom commit</option>
               <option value="custom">Custom commit chosen</option>
-              <option value="revset">Custom revset @--</option>
-              <option value="following">Custom revset after @ moves</option>
-              <option value="invalid">Custom revset: multiple matches</option>
+              <option value="invalid">Custom target became the source</option>
               <option value="queued">Queue in progress</option>
               <option value="filtered">Parent hidden by log filter</option>
               <option value="hidden">Custom target outside log filter</option>
@@ -836,32 +814,13 @@
               >
               <button id="change-custom" type="button" hidden>Change…</button>
             </div>
-            <form
-              class="destination-bar custom-editor"
-              id="custom-editor"
-              aria-label="Custom squash destination"
-              hidden
-            >
-              <input
-                id="destination-revset"
-                value=""
-                placeholder="Click a commit, or enter a revset"
-                aria-label="Custom destination revset or ID"
-                aria-describedby="revset-error pick-help log-tip"
-                aria-invalid="false"
-                autocomplete="off"
-                spellcheck="false"
-              />
-              <button id="apply-revset" type="submit" hidden>Apply</button
-              ><button id="cancel-custom" type="button" hidden>Cancel</button>
-            </form>
             <div class="pick-help" id="pick-help" hidden>
-              Click a row · ↑ / ↓ then Enter · Esc cancels. Or type a revset
-              above.
+              <span>Click a row · ↑ / ↓ then Enter · Esc cancels</span>
+              <button id="cancel-custom" type="button">Cancel</button>
             </div>
             <div
-              class="revset-error"
-              id="revset-error"
+              class="destination-error"
+              id="destination-error"
               role="status"
               aria-live="polite"
               hidden
@@ -879,7 +838,7 @@
                   id="route-handle"
                   class="route-handle"
                   aria-label="Choose a custom squash destination"
-                  aria-controls="custom-editor"
+                  aria-controls="log-list"
                   title="Choose a custom squash destination"
                 >
                   <svg
@@ -891,14 +850,6 @@
                     stroke-linecap="round"
                     stroke-linejoin="round"
                   >
-                    <circle
-                      id="route-source"
-                      cx="16"
-                      cy="6"
-                      r="1.4"
-                      fill="currentColor"
-                      stroke="none"
-                    ></circle>
                     <path id="route-shaft" class="route-shaft"></path>
                     <path id="route-tip"></path>
                   </svg>
@@ -942,11 +893,11 @@
           </p>
         </article>
         <article>
-          <h2><span class="number">03</span>A revset is optional</h2>
+          <h2><span class="number">03</span>Click only, no text field</h2>
           <p>
-            Custom also accepts a revset resolving to exactly one eligible
-            commit. @-- follows the working copy only when you explicitly choose
-            it. Queued batches keep their pinned destination.
+            Custom is a fixed commit chosen in the log. No text field, parsing,
+            or Apply step. The arrow has a plain source end and an arrowhead at
+            the destination. Queued batches keep their pinned target.
           </p>
         </article>
       </section>
@@ -968,7 +919,7 @@
           bookmark: "main",
         },
       ];
-      // Explicit parent metadata, not adjacency in the filtered log.
+      // Explicit parent metadata, not adjacency in the filtered log or @-.
       const parents = {
         vqkqszmu: "pqxvqmoo",
         pqxvqmoo: "rwpxovrz",
@@ -979,6 +930,7 @@
         id: "xmturvkn",
         title: "Continue notification work",
       };
+      // Represents a previously clicked target subsequently hidden by a filter.
       const external = { id: "nukxtrvy", title: "Extract delivery transport" };
       const byId = (id) => document.getElementById(id);
       let moved = false,
@@ -987,7 +939,7 @@
         queued = false,
         pinned = null;
       let mode = "parent",
-        appliedCustom = "",
+        customId = null,
         picking = false,
         candidate = null;
       const source = () => revisions[sourceIndex];
@@ -1004,11 +956,11 @@
           };
         if (revision.id === source().id)
           return {
-            error: `Resolves to the reviewed source ${revision.id}. Choose a different destination.`,
+            error: `The custom target ${revision.id} is now the reviewed source. Choose a different destination.`,
           };
         if (revision.immutable)
           return {
-            error: `Resolved commit ${revision.id} is immutable. Squash is blocked.`,
+            error: `Commit ${revision.id} is immutable. Squash is blocked.`,
           };
         if (
           revision.id === newWorkingCopy.id ||
@@ -1020,6 +972,9 @@
           };
         return { id: revision.id };
       }
+      function resultFor(id) {
+        return eligible([...allRevisions(), external].find((r) => r.id === id));
+      }
       function parentResult() {
         const parentId = parents[source().id];
         if (!parentId)
@@ -1027,63 +982,12 @@
             error:
               "The reviewed commit has no single usable parent. Choose a custom destination.",
           };
-        return eligible(revisions.find((r) => r.id === parentId));
-      }
-      // Deliberately a fixture resolver, NOT a jj revset parser. The default
-      // parent mode never calls this and never invents an @- expression.
-      function resolve(expression) {
-        const value = expression.trim(),
-          graph = allRevisions();
-        if (!value)
-          return {
-            error:
-              "Enter a revset resolving to one commit, or click a commit in the log.",
-          };
-        if (value.includes("—") || value.includes("–"))
-          return {
-            error: "Use ASCII hyphens, for example @-- (two parent steps).",
-          };
-        let matches;
-        if (/^@-*$/.test(value))
-          matches = [graph[value.length - 1]].filter(Boolean);
-        else if (value === "all()") matches = graph;
-        else if (value === "none()") matches = [];
-        else if (["vqkqszmu-", "parents(vqkqszmu)"].includes(value))
-          matches = [revisions[1]];
-        else if ([...graph, external].some((r) => r.id === value))
-          matches = [...graph, external].filter((r) => r.id === value);
-        else
-          return {
-            error:
-              "Not a supported fixture expression. Try @--, a listed ID, all(), or none().",
-          };
-        if (matches.length !== 1)
-          return {
-            error: `Resolved to ${matches.length} commits. Expected exactly one; squash is blocked.`,
-          };
-        return eligible(matches[0]);
-      }
-      function pending() {
-        return (
-          picking ||
-          (mode === "custom" &&
-            byId("destination-revset").value !== appliedCustom)
-        );
+        return resultFor(parentId);
       }
       function currentResult() {
         if (queued) return pinned;
-        if (picking) {
-          if (candidate)
-            return eligible(
-              [...allRevisions(), external].find((r) => r.id === candidate),
-            );
-          return byId("destination-revset").value.trim()
-            ? resolve(byId("destination-revset").value)
-            : {};
-        }
-        return mode === "parent"
-          ? parentResult()
-          : resolve(byId("destination-revset").value);
+        if (picking) return candidate ? resultFor(candidate) : {};
+        return mode === "parent" ? parentResult() : resultFor(customId);
       }
       function tell(text) {
         byId("status").textContent = text;
@@ -1106,7 +1010,7 @@
           height = delta + 12;
         handle.style.top = `${sourceY - viewport.top - 6}px`;
         handle.style.height = `${height}px`;
-        handle.classList.toggle("preview", pending());
+        handle.classList.toggle("preview", picking);
         handle.disabled = queued;
         byId("route-svg").setAttribute("viewBox", `0 0 18 ${height}`);
         byId("route-shaft").setAttribute(
@@ -1118,19 +1022,6 @@
           `M12 ${delta + 3} L16 ${delta + 6} L12 ${delta + 9}`,
         );
         handle.dataset.destination = result.id;
-      }
-      function preview(id) {
-        if (
-          !picking ||
-          queued ||
-          eligible(allRevisions().find((r) => r.id === id)).error
-        )
-          return;
-        const draft = byId("destination-revset").value;
-        // Don't let incidental mouse movement overwrite a typed revset preview.
-        if (draft && draft !== appliedCustom) return;
-        candidate = id;
-        refreshIndicators();
       }
       function refreshIndicators() {
         const result = currentResult();
@@ -1145,34 +1036,31 @@
           );
         drawRoute();
       }
+      function preview(id) {
+        if (!picking || queued || resultFor(id).error) return;
+        candidate = id;
+        refreshIndicators();
+      }
       function beginCustom() {
         if (queued) return;
         const previous = currentResult();
         picking = true;
-        byId("destination-revset").value = appliedCustom;
-        candidate = !resolve(appliedCustom).error
-          ? resolve(appliedCustom).id
+        candidate = !resultFor(customId).error
+          ? customId
           : previous.id || parentResult().id || null;
         render();
-        if (
-          candidate &&
-          document.querySelector(`[data-revision="${candidate}"] .review-id`)
-        )
-          document
-            .querySelector(`[data-revision="${candidate}"] .review-id`)
-            .focus({ preventScroll: true });
-        else byId("destination-revset").focus();
-        tell(
-          "Choose a custom destination: click a row, or enter a revset. Escape cancels.",
+        const button = document.querySelector(
+          `[data-revision="${candidate}"] .review-id`,
         );
+        if (button) button.focus({ preventScroll: true });
+        else byId("log-list").focus({ preventScroll: true });
+        tell("Choose a custom destination by clicking a row. Escape cancels.");
       }
       function choose(id) {
-        const result = eligible(
-          [...allRevisions(), external].find((r) => r.id === id),
-        );
+        const result = resultFor(id);
         if (queued || result.error) return;
         mode = "custom";
-        appliedCustom = byId("destination-revset").value = id;
+        customId = id;
         picking = false;
         candidate = null;
         render();
@@ -1181,42 +1069,19 @@
         );
         byId("change-custom").focus();
       }
-      function apply() {
-        const field = byId("destination-revset");
-        if (queued || resolve(field.value).error) return;
-        mode = "custom";
-        appliedCustom = field.value;
-        picking = false;
-        candidate = null;
-        render();
-        tell(
-          `Saved custom rule ${appliedCustom} · resolved to ${currentResult().id} · no squash performed`,
-        );
-      }
       function cancel() {
         if (queued) return;
         picking = false;
         candidate = null;
-        byId("destination-revset").value = appliedCustom;
         render();
         tell(
-          `Destination unchanged · ${mode === "parent" ? "Commit below" : appliedCustom}`,
+          `Destination unchanged · ${mode === "parent" ? "Commit below" : customId}`,
         );
         byId("destination-mode").focus();
       }
       function render() {
-        const field = byId("destination-revset"),
-          result = currentResult(),
-          fixedCustom = [...allRevisions(), external].some(
-            (revision) => revision.id === appliedCustom,
-          ),
-          editing = picking || (mode === "custom" && !fixedCustom),
-          draftPending = pending();
-        const view = picking
-          ? "picking"
-          : mode === "parent"
-            ? "default"
-            : "revset";
+        const result = currentResult(),
+          view = picking ? "picking" : mode === "parent" ? "default" : "custom";
         document
           .querySelectorAll("[data-view]")
           .forEach((button) =>
@@ -1230,33 +1095,19 @@
               ? "invalid"
               : result.id === external.id
                 ? "hidden"
-                : moved && mode === "custom"
-                  ? "following"
-                  : picking
-                    ? "picking"
-                    : mode === "parent"
-                      ? "default"
-                      : appliedCustom === "@--"
-                        ? "revset"
-                        : "custom";
+                : view;
         byId("try-hint").textContent =
           mode === "parent" && !picking
             ? "Commit below follows the reviewed source’s parent, independently of @."
-            : "Custom: click a commit in the log, or enter a one-commit revset.";
+            : "Custom: click a commit in the log. No text entry or Apply step.";
         byId("destination-mode").value = picking ? "custom" : mode;
         byId("destination-mode").disabled = queued;
-        byId("custom-editor").hidden = !editing;
-        field.disabled = queued;
-        field.setAttribute("aria-invalid", String(!!result.error));
-        byId("apply-revset").hidden = !draftPending;
-        byId("apply-revset").disabled = queued || !!resolve(field.value).error;
-        byId("cancel-custom").hidden = !draftPending;
         byId("cancel-custom").disabled = queued;
         byId("change-custom").hidden = mode !== "custom" || picking;
         byId("change-custom").disabled = queued;
         byId("pick-help").hidden = !picking;
-        byId("revset-error").hidden = !result.error;
-        byId("revset-error").textContent = result.error || "";
+        byId("destination-error").hidden = !result.error;
+        byId("destination-error").textContent = result.error || "";
         byId("locked").hidden = !queued;
         byId("locked").textContent =
           `2 squash batches queued · destination pinned to ${pinned?.id || "—"}`;
@@ -1265,11 +1116,11 @@
         byId("move-working-copy").disabled = moved || queued;
         byId("review-parent").disabled = sourceIndex >= 1 || queued;
         byId("squash-demo").disabled =
-          queued || draftPending || !result.id || !!result.error;
+          queued || picking || !result.id || !!result.error;
         byId("squash-demo").title =
           result.error ||
-          (draftPending
-            ? "Confirm the custom destination first"
+          (picking
+            ? "Click a commit to confirm the custom destination"
             : queued
               ? "Queued work is pinned"
               : `Squash into ${result.id}`);
@@ -1346,37 +1197,31 @@
           byId("log-list").append(row);
         });
         byId("log-tip").textContent = result.error
-          ? "No destination fallback. Choose Commit below or fix the custom expression."
+          ? "No destination fallback. Choose Commit below or click a different custom destination."
           : picking
             ? "Preview only. Click a commit or press Enter; Esc restores the previous mode."
             : mode === "parent"
               ? "Commit below = the reviewed source’s actual parent. @ is not used."
-              : draftPending
-                ? "Preview only · Enter or Apply saves the custom rule · Esc restores it."
-                : "Custom is explicit: a clicked change stays fixed; an entered revset keeps its meaning. Fixture evaluator only.";
+              : "Custom is a clicked change, kept fixed when @ moves. Change… chooses another.";
         refreshIndicators();
       }
       function loadExample(state) {
-        moved = state === "following";
-        sourceIndex = 0;
+        moved = false;
+        sourceIndex = state === "invalid" ? 1 : 0;
         filtered = state === "filtered";
         queued = false;
         pinned = null;
-        mode = ["custom", "revset", "following", "invalid", "hidden"].includes(
-          state,
-        )
+        mode = ["custom", "invalid", "hidden"].includes(state)
           ? "custom"
           : "parent";
-        appliedCustom =
+        customId =
           state === "custom"
             ? "rwpxovrz"
-            : state === "hidden"
-              ? external.id
-              : mode === "custom"
-                ? "@--"
-                : "";
-        byId("destination-revset").value =
-          state === "invalid" ? "all()" : appliedCustom;
+            : state === "invalid"
+              ? "pqxvqmoo"
+              : state === "hidden"
+                ? external.id
+                : null;
         picking = state === "picking";
         candidate = picking ? "rwpxovrz" : null;
         if (state === "queued") {
@@ -1393,25 +1238,10 @@
           mode = "parent";
           picking = false;
           candidate = null;
-          byId("destination-revset").value = appliedCustom;
           render();
           tell(
             `Commit below selected · source ${source().id} → parent ${parentResult().id || "unavailable"}`,
           );
-        }
-      };
-      byId("custom-editor").onsubmit = (event) => {
-        event.preventDefault();
-        apply();
-      };
-      byId("destination-revset").oninput = () => {
-        candidate = null;
-        render();
-      };
-      byId("destination-revset").onkeydown = (event) => {
-        if (event.key === "Escape") {
-          event.preventDefault();
-          cancel();
         }
       };
       byId("cancel-custom").onclick = cancel;
@@ -1446,7 +1276,7 @@
           .focus({ preventScroll: true });
       };
       document.addEventListener("keydown", (event) => {
-        if (event.key === "Escape" && pending()) {
+        if (event.key === "Escape" && picking) {
           event.preventDefault();
           cancel();
         }
@@ -1456,7 +1286,7 @@
         moved = true;
         render();
         tell(
-          `Working copy moved · source ${source().id} and ${mode === "parent" ? "Commit below mode stay independent of @" : "custom rule " + appliedCustom + " retains its meaning"}`,
+          `Working copy moved · source ${source().id} and destination ${currentResult().id || "unavailable"} remain unchanged`,
         );
       };
       byId("review-parent").onclick = () => {
@@ -1464,7 +1294,7 @@
         sourceIndex++;
         render();
         tell(
-          `Now reviewing ${source().id} · Commit below resolves its actual parent, not @- · diff content remains illustrative`,
+          `Now reviewing ${source().id} · Commit below follows its actual parent · diff content remains illustrative`,
         );
       };
       document
