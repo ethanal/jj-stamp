@@ -973,7 +973,7 @@ export function ReviewViewer({
                       {entry.hunks.length > 0 && (
                         <span>
                           Squashing selected edits also squashes the rename into
-                          the parent.
+                          the destination.
                         </span>
                       )}
                     </div>

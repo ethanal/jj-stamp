@@ -276,6 +276,12 @@ try {
   await expect(trigger).toBeFocused();
   await expect(squash).toBeEnabled();
   await assertSourceAndSelection(selectionCount);
+  await expect(
+    page.getByRole("button", { name: "Squash file review.txt", exact: true }),
+  ).toHaveAttribute(
+    "title",
+    "Squash all changes in this file into the selected destination",
+  );
   assert.deepEqual(
     await fixture.readConfig(),
     hiddenLogConfig,
