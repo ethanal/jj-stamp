@@ -58,7 +58,7 @@ export function TerminalOverlay({
   useEffect(() => {
     const key = (event: KeyboardEvent) => {
       if (
-        event.key !== "x" ||
+        event.key !== "t" ||
         event.defaultPrevented ||
         event.repeat ||
         event.ctrlKey ||
@@ -248,7 +248,7 @@ export function TerminalOverlay({
         disabled={disabled || (!activated && settingsSaving)}
         aria-haspopup="dialog"
         aria-controls={id}
-        title="Open terminal (x)"
+        title="Open terminal (t)"
         onClick={show}
       >
         Terminal

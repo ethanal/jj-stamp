@@ -86,23 +86,48 @@ await expect(page.locator(".log-row.is-current")).toBeVisible();
 assert.equal(connections, 0, "a shell must not start until opened");
 await capture("terminal-before.png");
 
+// Only t opens the terminal; the previous binding must no longer launch it.
+await expect(
+  page.getByRole("button", { name: "Terminal", exact: true }),
+).toHaveAttribute("title", "Open terminal (t)");
+await page.keyboard.press("x");
+await expect(overlay).not.toBeVisible();
+assert.equal(connections, 0);
+await page.keyboard.press("?");
+const shortcuts = page.getByRole("dialog", {
+  name: "Keyboard shortcuts",
+  exact: true,
+});
+await expect(shortcuts).toBeVisible();
+await expect(
+  shortcuts
+    .locator(".shortcut-entry")
+    .filter({ hasText: "Open terminal;" })
+    .locator("kbd"),
+).toHaveText("t");
+await capture("terminal-shortcut-t.png");
+await page.keyboard.press("Escape");
+
 // Shortcut ignored in settings and typing fields.
 await page.getByRole("button", { name: "Settings", exact: true }).click();
 await settings
   .getByRole("textbox", { name: "Terminal shell", exact: true })
-  .fill("x");
-await page.keyboard.press("x");
+  .fill("t");
+await page.keyboard.press("t");
+await expect(
+  settings.getByRole("textbox", { name: "Terminal shell", exact: true }),
+).toHaveValue("tt");
 await expect(overlay).not.toBeVisible();
 assert.equal(connections, 0);
 await page.keyboard.press("Escape");
 
-// Opening with x preserves review selection/focus; shell runs in repo root.
+// Opening with t preserves review selection/focus; shell runs in repo root.
 const added = page.locator('[data-line-type="change-addition"]').first();
 await added.click();
 const selected = page.locator("[data-line][data-fold-selected]");
 const selectionCount = await selected.count();
 assert.ok(selectionCount > 0);
-await page.keyboard.press("x");
+await page.keyboard.press("t");
 await expect(overlay).toBeVisible();
 await expect(phase).toHaveAttribute("data-phase", "running");
 await expect(input).toBeFocused();
@@ -120,7 +145,7 @@ page.on("request", (request) => {
   if (/\/api\/(revision|squash-lines|undo|editor)$/.test(request.url()))
     reviewActions.push(request.url());
 });
-await command("printf '\\nsurlf?cx\\n'", "surlf?cx");
+await command("printf '\\nsurlf?cxt\\n'", "surlf?cxt");
 await page.keyboard.press("Control+f");
 await expect(page.getByRole("searchbox")).not.toBeVisible();
 await page.keyboard.press("Control+c");
@@ -130,7 +155,7 @@ await page.keyboard.press("Escape");
 await expect(overlay).not.toBeVisible();
 assert.equal(await selected.count(), selectionCount);
 assert.ok(!sent.slice(escapeStart).some((frame) => frame.data === "\x1b"));
-await page.keyboard.press("x");
+await page.keyboard.press("t");
 await expect(input).toBeFocused();
 assert.equal(connections, 1, "hide/show reuses the same PTY connection");
 await command("printf '\\nPERSIST_%s\\n' \"$STAMP_PERSIST\"", "PERSIST_kept");
@@ -206,7 +231,7 @@ for (const scheme of ["dark", "solarized-light"]) {
     "data-color-scheme",
     scheme,
   );
-  await page.keyboard.press("x");
+  await page.keyboard.press("t");
   await command(
     "clear; printf '\\033[1mjj-stamp workspace\\033[0m\\n\\n'; pwd; printf '\\n\\033[32m\\342\\234\\223\\033[0m Native shell connected to a backend PTY\\n\\033[34m\\342\\206\\222\\033[0m Session preserved while hidden\\n\\n'; printf 'Selected palette: %s\\n' " +
       scheme,
@@ -217,7 +242,7 @@ for (const scheme of ["dark", "solarized-light"]) {
 }
 
 // Real paste > the backend's per-second budget must be paced, not disconnect.
-await page.keyboard.press("x");
+await page.keyboard.press("t");
 const pastedFile = path.join(directory, "pasted.txt");
 let pasteOutputStart = output.length;
 await page.keyboard.type(
@@ -284,7 +309,7 @@ await expect
   .poll(async () => JSON.parse(await readFile(configPath, "utf8")).shell)
   .toBe(customShell);
 await page.keyboard.press("Escape");
-await page.keyboard.press("x");
+await page.keyboard.press("t");
 assert.equal(connections, 1);
 page.once("dialog", (dialog) => dialog.accept());
 await overlay
