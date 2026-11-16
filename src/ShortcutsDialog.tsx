@@ -13,7 +13,7 @@ const groups = [
       ["l", "Toggle the log sidebar"],
       ["@", "Review the working-copy change"],
       ["c", "View commit by ID or revset; Enter opens it"],
-      ["x", "Open terminal; Escape hides it (shell keeps running)"],
+      ["x", "Open terminal; Escape hides, shell keeps running"],
       ["↑ / ↓", "Navigate files or review adjacent log changes (Vim: k / j)"],
       ["Enter", "Open the focused log change and hide the log"],
       ["?", "Open this shortcut reference"],

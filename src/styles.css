@@ -1570,6 +1570,11 @@ kbd {
     padding-inline: 9px;
     font-size: calc(var(--font-size) - 1px);
   }
+  .toolbar-actions {
+    flex-wrap: wrap;
+    max-width: 100%;
+    justify-content: flex-end;
+  }
   .revision-info {
     gap: 7px;
     font-size: calc(var(--font-size) - 2px);
