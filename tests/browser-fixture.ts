@@ -95,6 +95,9 @@ export async function createBrowserFixture({
     // Keep the optimized modules under node_modules so React's source transform
     // does not instrument the prebundled runtime as if it were application code.
     cacheDir: path.join(cacheRoot, "node_modules", ".vite"),
+    // Scope inference loads its parser lazily in a worker. Discover it before
+    // interactions, not halfway through a drag when optimizer reloads lose state.
+    optimizeDeps: { include: ["web-tree-sitter"] },
     // Vite's client connects even with hmr:false. Share this fixture's ephemeral
     // HTTP server instead of competing for port 24678 (or another server's token).
     // No file watching/reloads are needed while a test runs.

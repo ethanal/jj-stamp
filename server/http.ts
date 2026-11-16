@@ -133,7 +133,7 @@ export async function startLocalServer({
   try {
     await listen(port ?? DEFAULT_PORT);
   } catch (error) {
-    // Keep the browser origin (and its preferences) stable whenever possible.
+    // Keep the default browser URL stable whenever possible.
     // Only the implicit default may fall back; explicit ports fail as requested.
     if (
       port !== undefined ||
