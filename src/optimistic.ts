@@ -332,7 +332,7 @@ function projectFile(
       if (row.raw[0] === "+") additions++;
       if (row.raw[0] === "-") deletions++;
     }
-  return {
+  const projected = {
     ...file,
     hunks,
     additions,
@@ -350,6 +350,10 @@ function projectFile(
         ]),
       ].join("\n") + "\n",
   };
+  // The first selected edits carry the rename into the parent. Remaining
+  // source edits are ordinary modifications at the destination path.
+  delete projected.oldPath;
+  return projected;
 }
 
 /** Move selected changes into the parent without modifying the working/new side. */

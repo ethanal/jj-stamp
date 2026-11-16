@@ -152,6 +152,38 @@ test("projection is synchronous and enqueues continue during one in-flight mutat
   assert.equal(queue.getSnapshot().halted, false);
 });
 
+test("renamed-file selections carry the move once while subsequent queued edits use the new path", async () => {
+  const { queue, posts, reads, state } = setup();
+  state.files[0].oldPath = "old/a";
+  state.files[0].patch = state.files[0].patch
+    .replace("a/a b/a\n", "a/old/a b/a\nrename from old/a\nrename to a\n")
+    .replace("--- a/a\n", "--- a/old/a\n");
+  queue.replace(state);
+  const first = refs(state, 2);
+  queue.enqueue(first);
+  const partial = queue.getSnapshot().view!;
+  assert.equal(partial.files[0].oldPath, undefined);
+  assert.ok(!partial.files[0].patch.includes("rename from"));
+  const rest = refsFromFile(partial, "a");
+  queue.enqueue(rest);
+  assert.deepEqual(queue.getSnapshot().view!.files, []);
+  const authoritative1 = acknowledge(state, first, "v1", true);
+  posts[0].result.resolve({ state: authoritative1 });
+  await tick();
+  assert.equal(posts.length, 2);
+  assert.equal(posts[1].input.version, "v1");
+  assert.equal(posts[1].input.selections[0].id, "authoritative-v1");
+  posts[1].result.resolve({
+    state: acknowledge(authoritative1, rest, "v2"),
+  });
+  await tick();
+  assert.equal(queue.getSnapshot().halted, false);
+  assert.equal(queue.getSnapshot().pending, 0);
+  assert.deepEqual(queue.getSnapshot().view!.files, []);
+  assert.equal(reads.length, 0);
+  assert.equal(state.files[0].oldPath, "old/a", "input state stays unchanged");
+});
+
 test("normal acknowledgements preserve speculative file identity, hunk IDs, and render epoch", async () => {
   const { queue, posts, state } = setup();
   const first = refs(state, 2);
@@ -181,6 +213,56 @@ test("normal acknowledgements preserve speculative file identity, hunk IDs, and 
     ),
   });
   await tick();
+});
+
+test("a waiting renamed-file batch compacts edits selected before and after the projected move", async () => {
+  const { queue, posts, reads, state } = setup();
+  state.files[0].oldPath = "old/a";
+  state.files[0].patch = state.files[0].patch
+    .replace("a/a b/a\n", "a/old/a b/a\nrename from old/a\nrename to a\n")
+    .replace("--- a/a\n", "--- a/old/a\n");
+  const patch =
+    "diff --git a/other b/other\nnew file mode 100644\n--- /dev/null\n+++ b/other\n@@ -0,0 +1 @@\n+unrelated\n";
+  state.files.push({
+    path: "other",
+    patch,
+    additions: 1,
+    deletions: 0,
+    hunks: parseFile(patch, "other").hunks.map((hunk) => ({
+      ...hunk,
+      id: "other",
+    })),
+  });
+  queue.replace(state);
+  const unrelated = refsFromFile(state, "other");
+  queue.enqueue(unrelated);
+  queue.enqueue(refs(state, 2));
+  const shifted = refs(queue.getSnapshot().view!, 2);
+  assert.equal(shifted[0].text, "old2");
+  assert.equal(shifted[0].line, 2);
+  queue.enqueue(shifted);
+  assert.equal(posts.length, 1);
+  assert.equal(queue.getSnapshot().pending, 2);
+  const authoritative1 = acknowledge(state, unrelated, "v1");
+  assert.equal(authoritative1.files[0].oldPath, "old/a");
+  posts[0].result.resolve({ state: authoritative1 });
+  await tick();
+  assert.equal(posts.length, 2);
+  assert.deepEqual(posts[1].input, {
+    version: "v1",
+    selections: [{ id: "authoritative-v1", lines: [2, 3] }],
+  });
+  posts[1].result.resolve({
+    state: acknowledge(authoritative1, refs(authoritative1, 2, 3), "v2"),
+  });
+  await tick();
+  assert.equal(queue.getSnapshot().halted, false);
+  assert.equal(queue.getSnapshot().pending, 0);
+  const remaining = queue.getSnapshot().view!.files[0];
+  assert.equal(remaining.oldPath, undefined);
+  assert.equal(remaining.additions, 2);
+  assert.equal(remaining.deletions, 0);
+  assert.equal(reads.length, 0);
 });
 
 test("acknowledging an earlier job leaves the entire later speculative view unchanged", async () => {

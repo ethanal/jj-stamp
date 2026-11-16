@@ -56,7 +56,7 @@ function canonicalAbsolute(value: unknown): value is string {
   );
 }
 
-function validatePlan(value: unknown): DiffEditorPlan {
+export function validateDiffEditorPlan(value: unknown): DiffEditorPlan {
   if (
     !objectWithKeys(value, ["version", "repository", "files"]) ||
     value.version !== 1 ||
@@ -237,7 +237,7 @@ export async function applyDiffEditor(
   if (!canonicalAbsolute(planPath))
     fail("manifest path must be absolute and canonical");
   await directory(path.dirname(planPath));
-  const plan = validatePlan(
+  const plan = validateDiffEditorPlan(
     JSON.parse((await readRegular(planPath, true)).toString("utf8")),
   );
   await directory(plan.repository);
@@ -340,7 +340,7 @@ export async function withDiffEditor<T>(
   plan: DiffEditorPlan,
   callback: (configArgs: string[]) => Promise<T>,
 ): Promise<T> {
-  const validated = validatePlan(plan);
+  const validated = validateDiffEditorPlan(plan);
   const temporary = await mkdtemp(
     path.join(await realpath(os.tmpdir()), "jj-stamp-diff-editor-"),
   );

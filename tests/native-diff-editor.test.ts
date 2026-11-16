@@ -140,6 +140,58 @@ test("creates missing parents, removes files, and preserves absent and empty-fil
   assert.equal(await readFile(path.join(f.right, "new"), "utf8"), "new");
 });
 
+const renameEdits = (): DiffEditorPlan["files"] => [
+  {
+    path: "old/file.txt",
+    base: b64("original\n"),
+    source: null,
+    result: null,
+  },
+  {
+    path: "new/file.txt",
+    base: null,
+    source: b64("selected\nremaining\n"),
+    result: b64("selected\n"),
+  },
+];
+
+test("two-path rename inventory moves the rename and selected text into the parent", async (t) => {
+  const f = await fixture(t, renameEdits());
+  await f.apply();
+  assert.equal(
+    await readFile(path.join(f.right, "new/file.txt"), "utf8"),
+    "selected\n",
+  );
+  await assert.rejects(lstat(path.join(f.right, "old/file.txt")), {
+    code: "ENOENT",
+  });
+  assert.equal(
+    await readFile(path.join(f.left, "old/file.txt"), "utf8"),
+    "original\n",
+  );
+});
+
+for (const [side, name] of [
+  ["left", "new/file.txt"],
+  ["right", "old/file.txt"],
+] as const) {
+  test(`rename rejects unexpectedly present ${side} counterpart before writing`, async (t) => {
+    const f = await fixture(t, renameEdits());
+    const unexpected = path.join(f[side], name);
+    await mkdir(path.dirname(unexpected), { recursive: true });
+    await writeFile(unexpected, "unexpected\n");
+    await assert.rejects(f.apply(), /unexpected/);
+    assert.equal(
+      await readFile(path.join(f.right, "new/file.txt"), "utf8"),
+      "selected\nremaining\n",
+    );
+    assert.equal(
+      await readFile(path.join(f.left, "old/file.txt"), "utf8"),
+      "original\n",
+    );
+  });
+}
+
 for (const side of ["left", "right"] as const) {
   test(`${side} mismatch in later file fails before any writes`, async (t) => {
     const f = await fixture(t, [edit("a"), edit("z")]);

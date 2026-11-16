@@ -4,7 +4,7 @@ import path from "node:path";
 import { parseFile, ranges } from "./diff.ts";
 import type { Row } from "./diff.ts";
 import { materializeSelection } from "./selection.ts";
-import { withDiffEditor } from "./diff-editor.ts";
+import { validateDiffEditorPlan, withDiffEditor } from "./diff-editor.ts";
 import type { DiffEditorPlan } from "./diff-editor.ts";
 import { editorExpression, resolveEditorPath } from "./editor.ts";
 import { ApiError } from "./errors.ts";
@@ -575,8 +575,6 @@ export class ReviewService {
         const parsed = parseFile(patch, name);
         if (parsed.oldPath !== undefined) {
           file.oldPath = parsed.oldPath;
-          file.squashUnsupported =
-            "Line squash is not supported for renamed files; review is read-only to preserve the rename.";
         }
         if (includeHunks) {
           file.hunks = parsed.hunks.map((hunk) => {
@@ -1619,7 +1617,7 @@ export class ReviewService {
     for (const file of state.files) {
       const selections = picked.filter((pick) => pick.path === file.path);
       if (!selections.length) continue;
-      const read = async (revision: string) => {
+      const read = async (revision: string, name = file.path) => {
         const result = await this.jjRunner(this.root, [
           "file",
           "show",
@@ -1627,7 +1625,7 @@ export class ReviewService {
           revision,
           "--ignore-working-copy",
           "--",
-          `root-file:${JSON.stringify(file.path)}`,
+          `root-file:${JSON.stringify(name)}`,
         ]);
         if (
           result.stdoutBytes &&
@@ -1642,7 +1640,7 @@ export class ReviewService {
       };
       const base = /^--- \/dev\/null$/m.test(file.patch)
         ? null
-        : await read(state.parent.commitId);
+        : await read(state.parent.commitId, file.oldPath ?? file.path);
       const source = /^\+\+\+ \/dev\/null$/m.test(file.patch)
         ? null
         : await read(state.source.commitId);
@@ -1659,12 +1657,32 @@ export class ReviewService {
           base,
           source,
         );
-        editPlan.files.push({
-          path: file.path,
-          base: base?.toString("base64") ?? null,
-          source: source?.toString("base64") ?? null,
-          result: materialized.result?.toString("base64") ?? null,
-        });
+        if (file.oldPath !== undefined) {
+          // Account for the complete two-path inventory, not just the content
+          // diff. The parent receives the move and selected edits; the source
+          // tree (and workspace) keeps its contents at the destination path.
+          editPlan.files.push(
+            {
+              path: file.oldPath,
+              base: base!.toString("base64"),
+              source: null,
+              result: null,
+            },
+            {
+              path: file.path,
+              base: null,
+              source: source!.toString("base64"),
+              result: materialized.result!.toString("base64"),
+            },
+          );
+        } else {
+          editPlan.files.push({
+            path: file.path,
+            base: base?.toString("base64") ?? null,
+            source: source?.toString("base64") ?? null,
+            result: materialized.result?.toString("base64") ?? null,
+          });
+        }
         previews.push(materialized.preview);
       } catch (error) {
         throw new ApiError(
@@ -1673,6 +1691,18 @@ export class ReviewService {
           error instanceof Error ? error.message : String(error),
         );
       }
+    }
+    try {
+      // Reject colliding/overlapping selected paths before installing a pending
+      // guard or invoking jj. The callback independently validates the manifest
+      // and every expected presence/absence before writing scratch contents.
+      validateDiffEditorPlan(editPlan);
+    } catch (error) {
+      throw new ApiError(
+        422,
+        "UNSAFE_PREVIEW",
+        error instanceof Error ? error.message : String(error),
+      );
     }
     return {
       patch: previews.join(""),

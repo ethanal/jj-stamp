@@ -969,10 +969,10 @@ export function ReviewViewer({
                           ? "Renamed and modified."
                           : "Renamed without content changes."}
                       </span>
-                      {entry.squashUnsupported && (
-                        <span title={entry.squashUnsupported}>
-                          Review only · squashing renamed files is not
-                          supported.
+                      {entry.hunks.length > 0 && (
+                        <span>
+                          Squashing selected edits also squashes the rename into
+                          the parent.
                         </span>
                       )}
                     </div>

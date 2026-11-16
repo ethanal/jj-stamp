@@ -640,7 +640,7 @@ test("optimistic context retains a missing final newline", () => {
   assert.equal(projected.files[0].hunks[0].rows.at(-1)?.noNewline, true);
 });
 
-test("reviewable renamed files cannot enter the optimistic squash queue", () => {
+test("files with an explicit squash restriction cannot enter the optimistic queue", () => {
   const renamed = {
     ...file("new.ts", "@@ -1 +1 @@\n-old\n+new"),
     oldPath: "old.ts",
@@ -658,4 +658,38 @@ test("reviewable renamed files cannot enter the optimistic squash queue", () => 
     assert.throws(action, /Squashing renamed files/);
   const projected = projectSquash(repo, refsFromFile(repo, "other.ts"));
   assert.deepEqual(projected.files, [renamed]);
+});
+
+test("optimistic rename squash moves the rename with selected edits and leaves ordinary edits", () => {
+  const renamed = {
+    ...file("new.ts", "@@ -1,2 +1,2 @@\n-old\n+new\n-tail\n+end"),
+    oldPath: "old.ts",
+  };
+  renamed.patch = renamed.patch
+    .replace("a/new.ts b/new.ts", "a/old.ts b/new.ts")
+    .replace(
+      "index aaaaaaa..bbbbbbb 100644",
+      "rename from old.ts\nrename to new.ts",
+    )
+    .replace("--- a/new.ts", "--- a/old.ts");
+  const ordinary = file("other.ts", "@@ -1 +1 @@\n-before\n+after");
+  const repo = state(renamed, ordinary);
+  const first = select(repo, "new.ts-0", 1, 2);
+  const partial = projectSquash(repo, first);
+  validatePatches(partial);
+  assert.equal(parseFile(partial.files[0].patch, "new.ts").oldPath, undefined);
+  assert.equal(partial.files[0].oldPath, undefined);
+  assert.ok(!partial.files[0].patch.includes("rename from"));
+  assert.equal(partial.files[0].additions, 1);
+  assert.equal(partial.files[0].deletions, 1);
+  assert.equal(partial.files[1], ordinary);
+  const rest = refsFromFile(partial, "new.ts");
+  const combined = combineSquashRefs(repo, first, rest);
+  const completed = projectSquash(partial, rest);
+  validatePatches(completed);
+  assert.deepEqual(completed, projectSquash(repo, combined));
+  assert.deepEqual(completed.files, [ordinary]);
+  assert.deepEqual(projectSquash(repo, refsFromFile(repo, "new.ts")).files, [
+    ordinary,
+  ]);
 });
