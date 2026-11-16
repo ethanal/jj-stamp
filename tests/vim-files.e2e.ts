@@ -106,12 +106,9 @@ async function moveWithMinimalScroll(
 }
 try {
   await page.goto(url);
-  for (const view of ["single", "all"]) {
+  for (const view of ["single", "all"] as const) {
     for (const layout of ["unified", "split"]) {
-      await page.evaluate((view) => {
-        localStorage.setItem("jj-stamp.vim-mode", "true");
-        localStorage.setItem("jj-stamp.file-view", view);
-      }, view);
+      await fixture.updateConfig({ "vim-mode": true, "file-view": view });
       await page.reload();
       await expect(surface("a.txt")).toBeVisible();
       // Exercise both visual line layouts.

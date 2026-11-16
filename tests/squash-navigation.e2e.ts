@@ -232,13 +232,11 @@ for (const endpoint of ["undo", "editor"])
     res.status(409).json({ error: `Unexpected ${endpoint}` });
   });
 
-const fixture = await createBrowserFixture({ app });
-const { page, url, errors } = fixture;
-await page.addInitScript(() => {
-  localStorage.setItem("jj-stamp.vim-mode", "true");
-  localStorage.setItem("jj-stamp.file-view", "single");
-  localStorage.setItem("jj-stamp.diff-style", "unified");
+const fixture = await createBrowserFixture({
+  app,
+  config: { "vim-mode": true, "file-view": "single", "diff-style": "unified" },
 });
+const { page, url, errors } = fixture;
 const heading = page.getByLabel("Reviewed revision");
 const notice = page.locator(".navigation-notice");
 const surface = page.locator(".code-surface");

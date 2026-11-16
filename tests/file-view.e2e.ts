@@ -716,6 +716,9 @@ try {
   );
   await expect(page.getByRole("status")).toContainText("1 line squashed");
 
+  await expect
+    .poll(async () => (await fixture.readConfig())["file-view"])
+    .toBe("all");
   await page.reload();
   await expect(allFiles).toHaveAttribute("aria-pressed", "true");
   await expect(oneFile).toHaveAttribute("aria-pressed", "false");

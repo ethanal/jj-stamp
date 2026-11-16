@@ -4,6 +4,7 @@ import express from "express";
 import { createBrowserFixture } from "./browser-fixture.ts";
 import { expect, type Locator } from "@playwright/test";
 import { colorSchemes } from "../src/preferences.ts";
+import { defaultConfig } from "../src/config.ts";
 import { resolveTheme } from "@pierre/diffs";
 
 const source = {
@@ -409,13 +410,9 @@ try {
       String(initial + 410),
     );
     await expect(panel).toHaveCSS("width", `${initial + 410}px`);
-    assert.equal(
-      await page.evaluate(
-        (side) => localStorage.getItem(`jj-stamp.${side}-width`),
-        side,
-      ),
-      String(initial + 410),
-    );
+    await expect
+      .poll(async () => (await fixture.readConfig())[`${side}-width`])
+      .toBe(initial + 410);
     for (let step = 0; step < 41; step++)
       await handle.press(side === "files" ? "ArrowLeft" : "ArrowRight");
     await expect(panel).toHaveCSS("width", `${initial}px`);
@@ -449,14 +446,14 @@ try {
     page.locator('.file-tree [data-item-section="content"]').first(),
   ).toHaveCSS("font-size", "17px");
   await expect
-    .poll(() => page.evaluate(() => localStorage.getItem("jj-stamp.font-size")))
-    .toBe("18");
+    .poll(async () => (await fixture.readConfig())["font-size"])
+    .toBe(18);
   await picker.selectOption("light");
   await vimSetting.check();
   await expect(vimSetting).toBeChecked();
   await expect
-    .poll(() => page.evaluate(() => localStorage.getItem("jj-stamp.vim-mode")))
-    .toBe("true");
+    .poll(async () => (await fixture.readConfig())["vim-mode"])
+    .toBe(true);
   await expect(page.locator("html")).toHaveAttribute(
     "data-color-scheme",
     "light",
@@ -469,6 +466,15 @@ try {
   await expect(currentRow).toHaveCSS("background-color", "rgb(7, 87, 154)");
   await expect(currentBookmarks).toHaveCSS("color", "rgb(255, 255, 255)");
   await expect(labeledBookmarks).toHaveCSS("color", "rgb(163, 21, 91)");
+  await expect
+    .poll(() => fixture.readConfig())
+    .toMatchObject({
+      "files-width": 340,
+      "log-width": 400,
+      "font-size": 18,
+      "color-scheme": "light",
+      "vim-mode": true,
+    });
   await page.reload();
   await expect(files).toHaveAttribute("aria-valuenow", "340");
   await expect(log).toHaveAttribute("aria-valuenow", "400");
@@ -481,8 +487,8 @@ try {
   await expect(vimSetting).toBeChecked();
   await vimSetting.uncheck();
   await expect
-    .poll(() => page.evaluate(() => localStorage.getItem("jj-stamp.vim-mode")))
-    .toBe("false");
+    .poll(async () => (await fixture.readConfig())["vim-mode"])
+    .toBe(false);
   await page.getByRole("button", { name: "Close settings" }).click();
   await expect(dialog).not.toBeVisible();
   await expect(settings).toBeFocused();
@@ -543,13 +549,9 @@ try {
       page.getByRole("button", { name: `Pin ${side} sidebar` }),
     ).toHaveAttribute("aria-expanded", "true");
     assert.deepEqual(await page.locator(".viewer").boundingBox(), viewerBox);
-    assert.equal(
-      await page.evaluate(
-        (side) => localStorage.getItem(`jj-stamp.${side}-expanded`),
-        side,
-      ),
-      "false",
-    );
+    await expect
+      .poll(async () => (await fixture.readConfig())[`${side}-expanded`])
+      .toBe(false);
     // Stay open when moving from the rail into its interactive contents.
     const box = await panel.boundingBox();
     assert(box);
@@ -611,17 +613,16 @@ try {
     await page.keyboard.press(side === "files" ? "ArrowRight" : "ArrowLeft");
     await expect(panel).toHaveCSS("width", `${initial + 70}px`);
     assert.deepEqual(await page.locator(".viewer").boundingBox(), viewerBox);
-    assert.deepEqual(
-      await page.evaluate(
-        (side) => ({
-          expanded: localStorage.getItem(`jj-stamp.${side}-expanded`),
-          pinned: localStorage.getItem(`jj-stamp.${side}-width`),
-          peek: localStorage.getItem(`jj-stamp.${side}-peek-width`),
-        }),
-        side,
-      ),
-      { expanded: "false", pinned, peek: String(initial + 70) },
-    );
+    await expect
+      .poll(async () => {
+        const config = await fixture.readConfig();
+        return {
+          expanded: config[`${side}-expanded`],
+          pinned: config[`${side}-width`],
+          peek: config[`${side}-peek-width`],
+        };
+      })
+      .toEqual({ expanded: false, pinned: Number(pinned), peek: initial + 70 });
     await page.keyboard.press("Escape");
     await expect(body).toBeHidden();
     await page.locator(".viewer").hover();
@@ -652,6 +653,14 @@ try {
   await page.getByRole("button", { name: "Collapse files sidebar" }).click();
   await expect(filesBody).toBeHidden();
   await page.locator(".viewer").hover();
+  await expect
+    .poll(() => fixture.readConfig())
+    .toMatchObject({
+      "files-expanded": false,
+      "log-expanded": false,
+      "files-peek-width": 315,
+      "log-peek-width": 420,
+    });
   const beforeReload = graphReads;
   await page.reload();
   await expect(filesBody).toBeHidden();
@@ -747,6 +756,9 @@ try {
       background,
     );
     await expect(page.locator("html")).toHaveCSS("color-scheme", mode);
+    await expect
+      .poll(async () => (await fixture.readConfig())["color-scheme"])
+      .toBe(scheme);
     await page.reload();
     await settings.click();
     await expect(picker).toHaveValue(scheme);
@@ -774,6 +786,9 @@ try {
       background,
     );
     await expect(page.locator("html")).toHaveCSS("color-scheme", themeType);
+    await expect
+      .poll(async () => (await fixture.readConfig())["color-scheme"])
+      .toBe(scheme);
     await page.reload();
     await settings.click();
     await expect(picker).toHaveValue(scheme);
@@ -844,7 +859,19 @@ try {
     await expect(body).toBeHidden();
   }
   await page.screenshot({ path: "/tmp/jj-stamp-preferences-mobile.png" });
+  // A new browser shares server preferences, not browser-local defaults. Wait
+  // for the last edits, then explicitly reset the shared fixture for this case.
+  await expect
+    .poll(() => fixture.readConfig())
+    .toMatchObject({
+      "color-scheme": "solarized-light",
+      "hover-sidebars": true,
+      "files-expanded": false,
+      "log-expanded": false,
+    });
+  await fixture.updateConfig(defaultConfig);
   const noStorage = await browser.newPage();
+  noStorage.on("pageerror", (error) => errors.push(error.message));
   await noStorage.addInitScript(() => {
     Object.defineProperty(window, "localStorage", {
       get() {
@@ -881,6 +908,14 @@ try {
     "data-color-scheme",
     "light",
   );
+  await expect
+    .poll(() => fixture.readConfig())
+    .toMatchObject({
+      "font-size": 16,
+      "hover-sidebars": true,
+      "vim-mode": false,
+      "color-scheme": "light",
+    });
   await noStorage.close();
   assert.deepEqual(errors, []);
   console.log(

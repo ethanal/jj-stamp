@@ -504,6 +504,9 @@ try {
   await expect(page.getByRole("status")).toContainText(
     "1 changed line selected",
   );
+  await expect
+    .poll(() => fixture.readConfig())
+    .toMatchObject({ "files-expanded": false, "log-expanded": false });
   await page.reload();
   await expect(
     page.getByRole("button", { name: "Expand files sidebar", exact: true }),
@@ -568,6 +571,13 @@ try {
   await expect(page.getByRole("status")).toContainText(
     "1 changed line selected",
   );
+  await expect
+    .poll(() => fixture.readConfig())
+    .toMatchObject({
+      "color-scheme": "light",
+      "files-width": initialFileWidth + 10,
+      "log-width": initialLogWidth + 40,
+    });
   await page.reload();
   await expect(page.locator(".file-bar")).toContainText("src/notifications.ts");
   await page.getByRole("button", { name: "Settings", exact: true }).click();

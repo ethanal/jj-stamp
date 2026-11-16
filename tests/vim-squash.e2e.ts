@@ -154,15 +154,11 @@ app.post("/api/squash-lines", async (request, response) => {
 
 const fixture = await createBrowserFixture({
   app,
+  config: { "vim-mode": true, "file-view": "single", "diff-style": "unified" },
   viewport: { width: 1280, height: 720 },
 });
 const { browser, url, errors } = fixture;
 let { page } = fixture;
-await page.addInitScript(() => {
-  localStorage.setItem("jj-stamp.vim-mode", "true");
-  localStorage.setItem("jj-stamp.file-view", "single");
-  localStorage.setItem("jj-stamp.diff-style", "unified");
-});
 
 const section = (path: string) =>
   page.locator(`.file-diff-section[data-file-path="${path}"]`);
@@ -328,11 +324,6 @@ try {
   await page.close();
   page = await browser.newPage({ viewport: { width: 1280, height: 720 } });
   page.on("pageerror", (error) => errors.push(error.message));
-  await page.addInitScript(() => {
-    localStorage.setItem("jj-stamp.vim-mode", "true");
-    localStorage.setItem("jj-stamp.file-view", "single");
-    localStorage.setItem("jj-stamp.diff-style", "unified");
-  });
   await openState(state("long", [newFile("long.txt", 200, "virtual")]));
   const firstAck = gate();
   const secondAck = gate();

@@ -1,0 +1,133 @@
+import type { DiffsThemeNames } from "@pierre/diffs";
+
+export const colorSchemes = {
+  dark: { label: "Dark", theme: "github-dark", themeType: "dark" },
+  dim: { label: "Dim", theme: "github-dark-dimmed", themeType: "dark" },
+  light: { label: "Light", theme: "github-light", themeType: "light" },
+  "solarized-dark": {
+    label: "Solarized Dark",
+    theme: "solarized-dark",
+    themeType: "dark",
+  },
+  "solarized-light": {
+    label: "Solarized Light",
+    theme: "solarized-light",
+    themeType: "light",
+  },
+  "catppuccin-mocha": {
+    label: "Catppuccin Mocha",
+    theme: "catppuccin-mocha",
+    themeType: "dark",
+  },
+  "catppuccin-latte": {
+    label: "Catppuccin Latte",
+    theme: "catppuccin-latte",
+    themeType: "light",
+  },
+  "gruvbox-dark": {
+    label: "Gruvbox Dark",
+    theme: "gruvbox-dark-medium",
+    themeType: "dark",
+  },
+  "gruvbox-light": {
+    label: "Gruvbox Light",
+    theme: "gruvbox-light-medium",
+    themeType: "light",
+  },
+  "one-dark": {
+    label: "One Dark",
+    theme: "one-dark-pro",
+    themeType: "dark",
+  },
+  "one-light": {
+    label: "One Light",
+    theme: "one-light",
+    themeType: "light",
+  },
+  "rose-pine": {
+    label: "Rosé Pine",
+    theme: "rose-pine",
+    themeType: "dark",
+  },
+  "rose-pine-dawn": {
+    label: "Rosé Pine Dawn",
+    theme: "rose-pine-dawn",
+    themeType: "light",
+  },
+  dracula: { label: "Dracula", theme: "dracula", themeType: "dark" },
+} as const satisfies Record<
+  string,
+  { label: string; theme: DiffsThemeNames; themeType: "dark" | "light" }
+>;
+export type ColorScheme = keyof typeof colorSchemes;
+export const fontSizeLimits = { min: 10, max: 24, initial: 13 } as const;
+export function parseFontSize(value: string | null): number {
+  const size = value?.trim() ? Number(value) : NaN;
+  return Number.isFinite(size)
+    ? Math.round(
+        Math.min(fontSizeLimits.max, Math.max(fontSizeLimits.min, size)),
+      )
+    : fontSizeLimits.initial;
+}
+
+export type FileView = "single" | "all";
+export function parseFileView(value: string | null): FileView {
+  return value === "all" ? "all" : "single";
+}
+export function parseHoverSidebars(value: string | null): boolean {
+  return value === "true";
+}
+export function parseVimMode(value: string | null): boolean {
+  return value === "true";
+}
+export type SidebarSide = "files" | "log";
+export const sidebarLimits = {
+  files: { min: 120, initial: 245 },
+  log: { min: 160, initial: 350 },
+} as const;
+
+export function parseColorScheme(value: string | null): ColorScheme {
+  return value !== null && Object.hasOwn(colorSchemes, value)
+    ? (value as ColorScheme)
+    : "dark";
+}
+export function clampSidebarWidth(side: SidebarSide, width: number): number {
+  const { min, initial } = sidebarLimits[side];
+  return Number.isFinite(width) ? Math.round(Math.max(min, width)) : initial;
+}
+export function parseSidebarWidth(
+  side: SidebarSide,
+  value: string | null,
+): number {
+  return value?.trim()
+    ? clampSidebarWidth(side, Number(value))
+    : sidebarLimits[side].initial;
+}
+export function resizeFromKey(
+  side: SidebarSide,
+  width: number,
+  key: string,
+  large = false,
+): number | null {
+  if (key === "Home") return sidebarLimits[side].min;
+  if (key !== "ArrowLeft" && key !== "ArrowRight") return null;
+  const direction =
+    (key === "ArrowRight" ? 1 : -1) * (side === "files" ? 1 : -1);
+  return clampSidebarWidth(side, width + direction * (large ? 40 : 10));
+}
+export const defaultLogRevset =
+  "visible() & (trunk() | (tracked_remote_bookmarks() & ~::trunk()) | (mutable() & mine())::)";
+export function parseLogRevset(value: string | null): string {
+  return value?.trim() && value.length <= 4096 && !value.includes("\0")
+    ? value.trim()
+    : defaultLogRevset;
+}
+
+export function clampSplitRatio(value: number): number {
+  return Number.isFinite(value)
+    ? Math.round(Math.min(80, Math.max(20, value)))
+    : 50;
+}
+export function parseSplitRatio(value: string | null): number {
+  return value?.trim() ? clampSplitRatio(Number(value)) : 50;
+}

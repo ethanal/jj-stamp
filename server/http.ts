@@ -10,6 +10,7 @@ export interface LocalServerOptions {
   service: ReviewService;
   assetsDir: string;
   port?: number;
+  configPath?: string;
 }
 
 /** A loopback-only UI; no externally reachable host or proxy configuration. */
@@ -17,6 +18,7 @@ export async function startLocalServer({
   service,
   assetsDir,
   port,
+  configPath,
 }: LocalServerOptions) {
   const app = express();
   let closing = false;
@@ -87,7 +89,7 @@ export async function startLocalServer({
     }
     next();
   });
-  const api = createApi(service);
+  const api = createApi(service, { configPath });
   app.use("/api", api);
   app.use("/api", (_req, res) => {
     res.status(404).json({ error: "API route not found.", code: "NOT_FOUND" });
@@ -131,7 +133,7 @@ export async function startLocalServer({
   try {
     await listen(port ?? DEFAULT_PORT);
   } catch (error) {
-    // Keep the browser origin (and its preferences) stable whenever possible.
+    // Keep the default browser URL stable whenever possible.
     // Only the implicit default may fall back; explicit ports fail as requested.
     if (
       port !== undefined ||
@@ -155,7 +157,9 @@ export async function startLocalServer({
           // End long-lived streams so they cannot hold the response drain open.
           api.closeEvents();
           closeUnusedConnections();
-        }).then(() => service.drain());
+        }).then(async () => {
+          await Promise.all([api.drainConfig(), service.drain()]);
+        });
       }
       return shutdown;
     },

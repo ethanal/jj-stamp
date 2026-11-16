@@ -83,16 +83,16 @@ try {
   await settings.getByRole("button", { name: "Apply", exact: true }).click();
   await expect(settings.getByRole("alert")).toHaveText("Invalid revset");
   await expect(page.locator(".log-row")).toHaveCount(2);
-  assert.equal(
-    await page.evaluate(() => localStorage.getItem("jj-stamp.log-revset")),
-    defaultLogRevset,
-  );
+  assert.equal((await fixture.readConfig())["log-revset"], defaultLogRevset);
   await input.fill("none()");
   await settings.getByRole("button", { name: "Apply", exact: true }).click();
   await expect(page.locator(".log-row")).toHaveCount(0);
   await expect(
     page.getByLabel("Current change ID", { exact: true }),
   ).toHaveText(first.changeId);
+  await expect
+    .poll(async () => (await fixture.readConfig())["log-revset"])
+    .toBe("none()");
   await page.keyboard.press("Escape");
   await page.reload();
   await expect(

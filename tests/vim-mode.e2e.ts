@@ -137,6 +137,9 @@ try {
   await expect(vim).not.toBeChecked();
   await vim.check();
   await page.keyboard.press("Escape");
+  await expect
+    .poll(async () => (await fixture.readConfig())["vim-mode"])
+    .toBe(true);
   await page.reload();
   await expect(added()).toBeVisible();
   await settings.click();

@@ -68,6 +68,7 @@ async function sandbox(t: TestContext) {
     ...process.env,
     PATH: `${bin}${path.delimiter}${process.env.PATH}`,
     HOME: home,
+    XDG_CONFIG_HOME: path.join(root, "config"),
     XDG_STATE_HOME: path.join(root, "state"),
     JJ_STAMP_TEST_OPENED: opened,
   };

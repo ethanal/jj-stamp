@@ -32,14 +32,18 @@ import {
   type ErrorDetail,
 } from "./api";
 import { DiffFontSizeContext } from "./DiffRuntime";
-import { defaultLogRevset, useAppearancePreferences } from "./preferences";
+import {
+  defaultLogRevset,
+  useAppearancePreferences,
+  usePreference,
+  useConfigStatus,
+} from "./preferences";
 import {
   FilesSidebar,
   LineCounts,
   ReviewStatusBar,
   ReviewViewer,
   RevisionGraph,
-  type DiffStyle,
 } from "./ReviewWorkspace";
 import {
   SettingsDialog,
@@ -51,14 +55,6 @@ import { ShortcutsDialog } from "./ShortcutsDialog";
 import { useSidebarReveal } from "./useSidebarReveal";
 import { useScrollActiveFile } from "./useScrollActiveFile";
 import "./styles.css";
-
-function readExpanded(side: "files" | "log"): boolean {
-  try {
-    return localStorage.getItem(`jj-stamp.${side}-expanded`) !== "false";
-  } catch {
-    return true;
-  }
-}
 
 function retainActivePath(files: RepoState["files"], current: string): string {
   return files.some((file) => file.path === current)
@@ -214,23 +210,15 @@ function App() {
     if (queued.confirmed) logVersion.current = queued.confirmed.version;
   }, [queued.confirmed?.version]);
   const [graphRefresh, setGraphRefresh] = useState(0);
-  const [showFiles, setShowFiles] = useState(() => readExpanded("files"));
-  const [showLog, setShowLog] = useState(() => readExpanded("log"));
+  const [showFiles, setShowFiles] = usePreference("files-expanded");
+  const [showLog, setShowLog] = usePreference("log-expanded");
   const [logFocusRequest, setLogFocusRequest] = useState(0);
   const [filesFocusRequest, setFilesFocusRequest] = useState(0);
   const [openRevisionId, setOpenRevisionId] = useState<string | null>(null);
   const filesReveal = useSidebarReveal(showFiles, hoverSidebars && !dragging);
   const logReveal = useSidebarReveal(showLog, hoverSidebars && !dragging);
-  const [style, setStyle] = useState<DiffStyle>(() => {
-    try {
-      return (localStorage.getItem("jj-stamp.diff-style") ??
-        localStorage.getItem("fold.diff-style")) === "split"
-        ? "split"
-        : "unified";
-    } catch {
-      return "unified";
-    }
-  });
+  const [style, setStyle] = usePreference("diff-style");
+  const configStatus = useConfigStatus();
   const lock = useRef(false);
   const [focusRefreshPending, setFocusRefreshPending] = useState(false);
   const refreshGeneration = useRef(0);
@@ -491,21 +479,6 @@ function App() {
     return () => events.close();
   }, [focused, visible, !!queued.confirmed]);
   useEffect(() => {
-    try {
-      localStorage.setItem("jj-stamp.diff-style", style);
-    } catch {
-      /* Preference storage is optional. */
-    }
-  }, [style]);
-  useEffect(() => {
-    try {
-      localStorage.setItem("jj-stamp.files-expanded", String(showFiles));
-      localStorage.setItem("jj-stamp.log-expanded", String(showLog));
-    } catch {
-      /* Sidebar preferences are optional. */
-    }
-  }, [showFiles, showLog]);
-  useEffect(() => {
     if (
       queued.pending ||
       queued.recovering ||
@@ -574,14 +547,14 @@ function App() {
     if (queued.halted) clear();
   }, [queued.halted, clear]);
   useEffect(() => {
-    if (!queued.pending && !queued.recovering) return;
+    if (!queued.pending && !queued.recovering && !configStatus.saving) return;
     const warn = (event: BeforeUnloadEvent) => {
       event.preventDefault();
       event.returnValue = "";
     };
     window.addEventListener("beforeunload", warn);
     return () => window.removeEventListener("beforeunload", warn);
-  }, [queued.pending, queued.recovering]);
+  }, [queued.pending, queued.recovering, configStatus.saving]);
   const selectFile = useCallback(
     (path: string, { preserveScroll = false } = {}) => {
       // A read-only refresh need not interrupt browsing the current files.
@@ -1138,6 +1111,7 @@ function App() {
             onHoverSidebarsChange={setHoverSidebars}
             vimMode={vimMode}
             onVimModeChange={setVimMode}
+            persistenceError={configStatus.error}
             disabled={dragging}
           />
         </div>
@@ -1269,6 +1243,7 @@ function App() {
         recovering={queued.recovering}
         halted={queued.halted}
         notice={
+          configStatus.error ||
           notice ||
           (file?.squashUnsupported
             ? "Review-only file · Alt-drag to select text"

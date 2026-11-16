@@ -61,14 +61,13 @@ const app = express();
 app.use("/api", createApi(service));
 const fixture = await createBrowserFixture({
   app,
+  config: { "files-width": 280, "log-expanded": false },
   viewport: { width: 1600, height: 1000 },
   captureConsoleErrors: true,
 });
 const { page, url, errors } = fixture;
 await page.addInitScript(() => {
   document.hasFocus = () => false;
-  localStorage.setItem("jj-stamp.files-width", "280");
-  localStorage.setItem("jj-stamp.log-expanded", "false");
 });
 const mutations: string[] = [];
 page.on("request", (request) => {

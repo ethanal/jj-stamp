@@ -131,6 +131,9 @@ try {
   await expect(divider).toHaveCount(0);
   await page.getByText("Layout", { exact: true }).click();
   await checkRatio(40);
+  await expect
+    .poll(async () => (await fixture.readConfig())["split-diff-ratio"])
+    .toBe(40);
   await page.reload();
   await page.getByText("Layout", { exact: true }).click();
   await checkRatio(40);

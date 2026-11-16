@@ -1,4 +1,4 @@
-import { useId, useRef, useState, type ReactNode } from "react";
+import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import type { Revision } from "./types";
 import { useDialogBackdropDismiss } from "./useDialogBackdropDismiss";
 import {
@@ -98,6 +98,7 @@ export function SettingsDialog({
   onHoverSidebarsChange,
   vimMode,
   onVimModeChange,
+  persistenceError,
   disabled,
 }: {
   logRevset: string;
@@ -110,9 +111,17 @@ export function SettingsDialog({
   onVimModeChange: (enabled: boolean) => void;
   hoverSidebars: boolean;
   onHoverSidebarsChange: (enabled: boolean) => void;
+  persistenceError?: string;
   disabled: boolean;
 }) {
   const [revsetDraft, setRevsetDraft] = useState(logRevset);
+  const savedRevset = useRef(logRevset);
+  useEffect(() => {
+    const previous = savedRevset.current;
+    savedRevset.current = logRevset;
+    // Follow other windows/disk edits without discarding an unsaved draft.
+    setRevsetDraft((draft) => (draft === previous ? logRevset : draft));
+  }, [logRevset]);
   const [revsetError, setRevsetError] = useState("");
   const [savingRevset, setSavingRevset] = useState(false);
   const dialog = useRef<HTMLDialogElement>(null);
@@ -166,6 +175,11 @@ export function SettingsDialog({
             ×
           </button>
         </div>
+        {persistenceError && (
+          <p className="settings-help" role="status">
+            {persistenceError}
+          </p>
+        )}
         <section
           className="settings-section"
           aria-labelledby={`${id}-appearance`}
@@ -232,8 +246,8 @@ export function SettingsDialog({
             onChange={(event) => setRevsetDraft(event.target.value)}
           />
           <p className="settings-help" id={`${id}-revset-help`}>
-            Filters the graph only, not the displayed change. Saved in this
-            browser.
+            Filters the graph only, not the displayed change. Saved in the
+            shared config file.
           </p>
           {revsetError && (
             <p className="revset-error" role="alert">
