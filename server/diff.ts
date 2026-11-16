@@ -27,11 +27,11 @@ function assertSupported(patch: string): void {
       "Copies and mode changes are not supported by the native diff editor.",
     );
   }
-  if (/^(?:new|deleted) file mode (?!100644$)/m.test(patch)) {
-    throw new Error("Only regular, non-executable text files are supported.");
+  if (/^(?:new|deleted) file mode (?!100(?:644|755)$)/m.test(patch)) {
+    throw new Error("Only regular text files are supported.");
   }
-  if (/^index [0-9a-f]+\.\.[0-9a-f]+ (?!100644$)\d+/m.test(patch)) {
-    throw new Error("Only regular, non-executable text files are supported.");
+  if (/^index [0-9a-f]+\.\.[0-9a-f]+ (?!100(?:644|755)$)\d+/m.test(patch)) {
+    throw new Error("Only regular text files are supported.");
   }
   if (/^(?:GIT binary patch|Binary files |@@@)/m.test(patch)) {
     throw new Error(
@@ -99,10 +99,12 @@ function readEnvelope(lines: string[], path: string) {
       if (similarity !== undefined)
         throw new Error("Duplicate rename similarity.");
       similarity = Number(line.slice(17, -1));
-    } else if (/^index [0-9a-f]+\.\.[0-9a-f]+(?: 100644)?$/.test(line)) {
+    } else if (
+      /^index [0-9a-f]+\.\.[0-9a-f]+(?: 100(?:644|755))?$/.test(line)
+    ) {
       if (index !== undefined) throw new Error("Duplicate file index.");
       index = line.split(" ")[1];
-    } else if (/^(?:new|deleted) file mode 100644$/.test(line)) {
+    } else if (/^(?:new|deleted) file mode 100(?:644|755)$/.test(line)) {
       if (fileMode) throw new Error("Duplicate file mode.");
       fileMode = true;
     } else {

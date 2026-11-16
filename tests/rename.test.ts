@@ -51,6 +51,14 @@ test("rename envelopes validate every path claim and retain ordinary exact rows"
     ).hunks.length,
     1,
   );
+  for (const mode of ["100644", "100755"])
+    assert.deepEqual(
+      parseFile(
+        renamePatch().replace("--- a/", `index abc..def ${mode}\n--- a/`),
+        "new/file.txt",
+      ),
+      parsed,
+    );
   for (const broken of [
     renamePatch().replace("rename from old/file.txt\n", ""),
     renamePatch().replace("rename to new/file.txt\n", ""),
@@ -75,7 +83,7 @@ test("rename envelopes validate every path claim and retain ordinary exact rows"
     renamePatch().replace("--- a/", "new file mode 100644\n--- a/"),
     renamePatch().replace("--- a/", "deleted file mode 100644\n--- a/"),
     renamePatch().replace("--- a/", "old mode 100644\nnew mode 100755\n--- a/"),
-    renamePatch().replace("--- a/", "index abc..def 100755\n--- a/"),
+
     renamePatch().replace("--- a/", "index abc..def 120000\n--- a/"),
     renamePatch().replace(
       "--- a/",
