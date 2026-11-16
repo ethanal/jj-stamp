@@ -19,6 +19,7 @@ type BrowserControls = {
 type TestWindow = Window &
   typeof globalThis & {
     __filesystemControls: BrowserControls;
+    __filesystemEventCount: number;
     __filesystemMutations?: string[];
     __filesystemObserver?: MutationObserver;
   };
@@ -29,6 +30,15 @@ async function installControlledClock(page: Page) {
   await page.addInitScript(`
     const controls = { focused: true, visibility: "visible" };
     Object.defineProperty(window, "__filesystemControls", { value: controls });
+    window.__filesystemEventCount = 0;
+    const NativeEventSource = window.EventSource;
+    window.EventSource = class extends NativeEventSource {
+      constructor(url, options) {
+        super(url, options);
+        for (const name of ["ready", "change", "unavailable"])
+          this.addEventListener(name, () => window.__filesystemEventCount++);
+      }
+    };
     Object.defineProperty(document, "hasFocus", {
       configurable: true,
       value: () => controls.focused,
@@ -364,7 +374,19 @@ async function controlledServerCoverage() {
     name: "ready" | "change" | "unavailable",
     data: unknown,
   ) {
+    const before = await page.evaluate(
+      () => (window as TestWindow).__filesystemEventCount,
+    );
+    const connected = eventClients.size > 0;
     sendEvent(name, data);
+    // A protocol round trip alone does not guarantee network/SSE delivery.
+    // Acknowledge dispatch before advancing the exact fake debounce boundary.
+    if (connected)
+      await expect
+        .poll(() =>
+          page.evaluate(() => (window as TestWindow).__filesystemEventCount),
+        )
+        .toBeGreaterThan(before);
     await flushPage(page);
   }
   function holdNextState(body: RepoState): HeldState {

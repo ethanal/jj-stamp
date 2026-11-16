@@ -370,6 +370,7 @@ try {
         body: {
           version: before.version,
           selections: [{ id: pureToken, lines: [] }],
+          target: before.parent!.changeId,
         },
       },
     ]);
