@@ -1,5 +1,12 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import {
+  mkdtemp,
+  readFile,
+  readdir,
+  rename,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test, { type TestContext } from "node:test";
@@ -9,7 +16,7 @@ import { createApi } from "../server/api.ts";
 import { ApiError, ReviewService, type State } from "../server/service.ts";
 import { jj, run } from "../server/process.ts";
 
-async function fixture(t: TestContext) {
+async function fixture(t: TestContext, intermediatePath = "a.txt") {
   const root = await mkdtemp(path.join(os.tmpdir(), "jj-stamp-custom-squash-"));
   t.after(() => rm(root, { recursive: true, force: true }));
   await jj(root, ["git", "init", "--no-colocate"]);
@@ -30,11 +37,13 @@ async function fixture(t: TestContext) {
   ]);
   const base = Array.from({ length: 50 }, (_, i) => `line ${i + 1}\n`).join("");
   await writeFile(path.join(root, "a.txt"), base);
+  if (intermediatePath !== "a.txt")
+    await writeFile(path.join(root, intermediatePath), base);
   await jj(root, ["commit", "-m", "Destination"]);
   const middle = base.replace("line 25\n", "intermediate edit\n");
-  await writeFile(path.join(root, "a.txt"), middle);
+  await writeFile(path.join(root, intermediatePath), middle);
   await jj(root, ["commit", "-m", "Intermediate"]);
-  const source = middle
+  const source = (intermediatePath === "a.txt" ? middle : base)
     .replace("line 1\n", "line 1\nselected addition\nunselected addition\n")
     .replace("line 50\n", "unselected tail\n");
   await writeFile(path.join(root, "a.txt"), source);
@@ -69,6 +78,297 @@ const rejectsCode = (promise: Promise<unknown>, code: string) =>
     promise,
     (error: unknown) => error instanceof ApiError && error.code === code,
   );
+
+async function treeAt(root: string, commitId: string) {
+  const revision = `commit_id("${commitId}")`;
+  const listed = await jj(root, [
+    "file",
+    "list",
+    "--ignore-working-copy",
+    "-r",
+    revision,
+  ]);
+  const tree: Record<string, Buffer> = {};
+  for (const name of listed.stdout.trimEnd().split("\n").filter(Boolean)) {
+    const result = await jj(root, [
+      "file",
+      "show",
+      "--ignore-working-copy",
+      "-r",
+      revision,
+      "--",
+      `root-file:${JSON.stringify(name)}`,
+    ]);
+    tree[name] = result.stdoutBytes ?? Buffer.from(result.stdout);
+  }
+  return tree;
+}
+
+test("custom ancestor rename squash moves selected edits and mixed ordinary rows, preserves every tree and undoes exactly", async (t) => {
+  for (const api of ["direct", "legacy"] as const)
+    for (const scope of ["partial", "all"] as const)
+      await t.test(`${api}, ${scope} rename selection`, async (t) => {
+        // A disjoint intermediate edit survives rebasing the rename. Editing the
+        // old path itself can legitimately create a jj delete/modify conflict.
+        const { root, base, middle, source } = await fixture(
+          t,
+          "intermediate.txt",
+        );
+        const oldPath = "a.txt";
+        const newPath = "renamed[1]:a.txt";
+        await rename(path.join(root, oldPath), path.join(root, newPath));
+        await writeFile(
+          path.join(root, "regular.txt"),
+          "selected ordinary\nunselected ordinary\n",
+        );
+        await jj(root, ["describe", "-m", "Rename source with mixed edits"]);
+        const calls: string[][] = [];
+        const service = new ReviewService({
+          repoPath: root,
+          toolRunner: (command, args, cwd) => {
+            calls.push(args);
+            return run(command, args, cwd);
+          },
+        });
+        const state = await service.getState();
+        const target = state.targets[1];
+        assert.notEqual(target.changeId, state.parent!.changeId);
+        const originalTarget = await treeAt(root, target.commitId);
+        const originalParent = await treeAt(root, state.parent!.commitId);
+        const originalSource = await treeAt(root, state.source.commitId);
+        assert.deepEqual(originalTarget, {
+          [oldPath]: Buffer.from(base),
+          "intermediate.txt": Buffer.from(base),
+        });
+        assert.deepEqual(originalParent, {
+          [oldPath]: Buffer.from(base),
+          "intermediate.txt": Buffer.from(middle),
+        });
+        const renamed = state.files.find((file) => file.path === newPath)!;
+        assert.ok(renamed, "fixture must exercise real jj rename detection");
+        assert.equal(renamed.oldPath, oldPath);
+        assert.equal(renamed.unsupported, undefined);
+        assert.equal(renamed.squashUnsupported, undefined);
+        assert.equal(renamed.hunks.length, 2);
+        const selected = renamed.hunks.flatMap((hunk) => {
+          const lines = hunk.rows
+            .filter((row) =>
+              scope === "all"
+                ? /^[+-]/.test(row.raw)
+                : row.raw === "+selected addition",
+            )
+            .map((row) => row.index);
+          return lines.length ? [{ id: hunk.id, lines }] : [];
+        });
+        assert.equal(selected.length, scope === "all" ? 2 : 1);
+        const ordinary = state.files.find(
+          (file) => file.path === "regular.txt",
+        )!.hunks[0];
+        const ordinaryRow = ordinary.rows.find(
+          (row) => row.raw === "+selected ordinary",
+        )!;
+        assert.ok(ordinaryRow);
+        const input = {
+          version: state.version,
+          target: target.changeId,
+          selections: [
+            ...selected,
+            { id: ordinary.id, lines: [ordinaryRow.index] },
+          ],
+        };
+        const result =
+          api === "direct"
+            ? await service.squashLines(input)
+            : await (async () => {
+                const preview = await service.preview(input);
+                assert.ok(preview.patch.includes(`rename from ${oldPath}\n`));
+                assert.ok(preview.patch.includes(`rename to ${newPath}\n`));
+                if (scope === "partial") {
+                  assert.ok(!preview.patch.includes("+unselected addition"));
+                  assert.ok(!preview.patch.includes("+unselected tail"));
+                }
+                assert.equal(
+                  (await service.getState()).operation,
+                  state.operation,
+                );
+                return service.squash(preview.token);
+              })();
+        assert.equal(result.warning, undefined);
+        assert.equal(result.state.canUndo, true);
+        assert.equal(result.state.source.changeId, state.source.changeId);
+        assert.equal(result.state.parent!.changeId, state.parent!.changeId);
+        assert.equal(result.state.targets[1].changeId, target.changeId);
+        const mutations = calls.filter((args) => args[0] === "squash");
+        assert.equal(mutations.length, 1);
+        const mutation = mutations[0];
+        assert.equal(
+          mutation[mutation.indexOf("--from") + 1],
+          `commit_id("${state.source.commitId}")`,
+        );
+        assert.equal(
+          mutation[mutation.indexOf("--into") + 1],
+          `commit_id("${target.commitId}")`,
+        );
+        for (const name of [oldPath, newPath, "regular.txt"])
+          assert.ok(mutation.includes(`root-file:${JSON.stringify(name)}`));
+        const selectedContents = (contents: string) =>
+          contents
+            .replace(
+              "line 1\n",
+              scope === "all"
+                ? "line 1\nselected addition\nunselected addition\n"
+                : "line 1\nselected addition\n",
+            )
+            .replace(
+              "line 50\n",
+              scope === "all" ? "unselected tail\n" : "line 50\n",
+            );
+        assert.deepEqual(await treeAt(root, result.state.targets[1].commitId), {
+          [newPath]: Buffer.from(selectedContents(base)),
+          "intermediate.txt": Buffer.from(base),
+          "regular.txt": Buffer.from("selected ordinary\n"),
+        });
+        assert.deepEqual(await treeAt(root, result.state.parent!.commitId), {
+          [newPath]: Buffer.from(selectedContents(base)),
+          "intermediate.txt": Buffer.from(middle),
+          "regular.txt": Buffer.from("selected ordinary\n"),
+        });
+        assert.deepEqual(
+          await treeAt(root, result.state.source.commitId),
+          originalSource,
+        );
+        const retained = result.state.files.find(
+          (file) => file.path === newPath,
+        );
+        if (scope === "all") assert.equal(retained, undefined);
+        else {
+          assert.ok(retained);
+          assert.equal(retained.oldPath, undefined);
+          assert.ok(retained.patch.includes("+unselected addition"));
+          assert.ok(retained.patch.includes("+unselected tail"));
+          assert.ok(!retained.patch.includes("+selected addition"));
+          assert.deepEqual(
+            await service.getFile({
+              version: result.state.version,
+              path: newPath,
+            }),
+            {
+              oldFile: { name: newPath, contents: selectedContents(base) },
+              newFile: { name: newPath, contents: source },
+            },
+          );
+        }
+        const remainingOrdinary = result.state.files.find(
+          (file) => file.path === "regular.txt",
+        )!;
+        assert.ok(remainingOrdinary.patch.includes("+unselected ordinary"));
+        assert.ok(!remainingOrdinary.patch.includes("+selected ordinary"));
+        const assertWorkspace = async () => {
+          assert.deepEqual(
+            (await readdir(root)).filter((name) => name !== ".jj").sort(),
+            Object.keys(originalSource).sort(),
+          );
+          for (const [name, bytes] of Object.entries(originalSource))
+            assert.deepEqual(
+              await readFile(path.join(root, name)),
+              bytes,
+              name,
+            );
+          await assert.rejects(readFile(path.join(root, oldPath)), {
+            code: "ENOENT",
+          });
+        };
+        await assertWorkspace();
+        const undone = await service.undo(result.state.version);
+        assert.equal(undone.state.canUndo, false);
+        assert.deepEqual(undone.state.source, state.source);
+        assert.deepEqual(undone.state.parent, state.parent);
+        assert.deepEqual(undone.state.targets, state.targets);
+        assert.deepEqual(undone.state.files, state.files);
+        assert.deepEqual(
+          await treeAt(root, undone.state.targets[1].commitId),
+          originalTarget,
+        );
+        assert.deepEqual(
+          await treeAt(root, undone.state.parent!.commitId),
+          originalParent,
+        );
+        assert.deepEqual(
+          await treeAt(root, undone.state.source.commitId),
+          originalSource,
+        );
+        await assertWorkspace();
+      });
+});
+
+test("custom ancestor rename squash warns on an intervening old-path edit and still undoes exactly", async (t) => {
+  const { root, source } = await fixture(t);
+  const newPath = "renamed.txt";
+  await rename(path.join(root, "a.txt"), path.join(root, newPath));
+  await jj(root, ["describe", "-m", "Rename across an old-path edit"]);
+  const service = new ReviewService({ repoPath: root });
+  const state = await service.getState();
+  const target = state.targets[1];
+  const originalTarget = await treeAt(root, target.commitId);
+  const originalParent = await treeAt(root, state.parent!.commitId);
+  const originalSource = await treeAt(root, state.source.commitId);
+  const renamed = state.files.find((file) => file.path === newPath)!;
+  assert.equal(renamed.oldPath, "a.txt");
+  const hunk = renamed.hunks.find((hunk) =>
+    hunk.rows.some((row) => row.raw === "+selected addition"),
+  )!;
+  const row = hunk.rows.find((row) => row.raw === "+selected addition")!;
+  const result = await service.squashLines({
+    version: state.version,
+    target: target.changeId,
+    selections: [{ id: hunk.id, lines: [row.index] }],
+  });
+  assert.match(result.warning!, /created a conflict/);
+  assert.equal(result.state.canUndo, true);
+  assert.equal(result.state.source.changeId, state.source.changeId);
+  assert.equal(result.state.parent!.changeId, state.parent!.changeId);
+  assert.equal(
+    (
+      await jj(root, [
+        "log",
+        "--no-graph",
+        "--ignore-working-copy",
+        "-r",
+        `change_id("${target.changeId}")`,
+        "-T",
+        "conflict",
+      ])
+    ).stdout.trim(),
+    "true",
+  );
+  assert.deepEqual(
+    await treeAt(root, result.state.source.commitId),
+    originalSource,
+  );
+  assert.equal(await readFile(path.join(root, newPath), "utf8"), source);
+  await assert.rejects(readFile(path.join(root, "a.txt")), { code: "ENOENT" });
+  const undone = await service.undo(result.state.version);
+  assert.equal(undone.state.canUndo, false);
+  assert.deepEqual(undone.state.source, state.source);
+  assert.deepEqual(undone.state.parent, state.parent);
+  assert.deepEqual(undone.state.targets, state.targets);
+  assert.deepEqual(undone.state.files, state.files);
+  assert.deepEqual(
+    await treeAt(root, undone.state.targets[1].commitId),
+    originalTarget,
+  );
+  assert.deepEqual(
+    await treeAt(root, undone.state.parent!.commitId),
+    originalParent,
+  );
+  assert.deepEqual(
+    await treeAt(root, undone.state.source.commitId),
+    originalSource,
+  );
+  assert.deepEqual((await readdir(root)).sort(), [".jj", newPath].sort());
+  assert.equal(await readFile(path.join(root, newPath), "utf8"), source);
+  await assert.rejects(readFile(path.join(root, "a.txt")), { code: "ENOENT" });
+});
 
 for (const api of ["direct", "legacy", "http"] as const) {
   test(`${api} custom destination preserves intermediate edits, unselected rows, source identity and exact undo`, async (t) => {

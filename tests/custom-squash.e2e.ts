@@ -66,7 +66,15 @@ assert(!initial.targets.some((target) => target.changeId === immutable));
 const api = createApi(service);
 const app = express();
 app.use("/api", api);
-const fixture = await createBrowserFixture({ app, captureConsoleErrors: true });
+const fixture = await createBrowserFixture({
+  app,
+  config: {
+    "log-revset": `${source} | ${older} | ${immutable} | @`,
+    "diff-style": "unified",
+    "hover-sidebars": false,
+  },
+  captureConsoleErrors: true,
+});
 const { page, url, errors } = fixture;
 const revisions: unknown[] = [];
 const squashes: { version: string; target?: string; selections: unknown[] }[] =
@@ -78,15 +86,9 @@ page.on("request", (request) => {
   if (request.url().endsWith("/api/squash-lines"))
     squashes.push(request.postDataJSON());
 });
-await page.addInitScript(
-  ({ revset }) => {
-    document.hasFocus = () => false;
-    localStorage.setItem("jj-stamp.log-revset", revset);
-    localStorage.setItem("jj-stamp.diff-style", "unified");
-    localStorage.setItem("jj-stamp.hover-sidebars", "false");
-  },
-  { revset: `${source} | ${older} | ${immutable} | @` },
-);
+await page.addInitScript(() => {
+  document.hasFocus = () => false;
+});
 const destination = page.locator(".squash-destination");
 const trigger = page.getByRole("button", {
   name: /^Squash into/,
@@ -197,6 +199,10 @@ try {
   await page.getByRole("button", { name: "Collapse log sidebar" }).click();
   await expect(graph).toBeHidden();
   await expect(trigger).toBeVisible();
+  await expect
+    .poll(async () => (await fixture.readConfig())["log-expanded"])
+    .toBe(false);
+  const hiddenLogConfig = await fixture.readConfig();
   await screenshot("parent-hidden-log");
 
   // Keyboard menu behavior and Escape ownership: a menu dismisses first.
@@ -221,6 +227,11 @@ try {
   await expect(row(older)).toBeVisible();
   await row(older).hover();
   await expect(destination).toContainText(older.slice(0, 8));
+  assert.deepEqual(
+    await fixture.readConfig(),
+    hiddenLogConfig,
+    "Temporarily revealing the picker must not persist shared preferences",
+  );
   await expect(page.locator(".destination-arrow.is-preview")).toBeVisible();
   await expect(page.getByRole("status")).toContainText(
     `Preview destination: ${older.slice(0, 8)}`,
@@ -247,6 +258,7 @@ try {
   await expect(trigger).toBeFocused();
   await expect(destination).toContainText("Parent");
   await assertSourceAndSelection(selectionCount);
+  assert.deepEqual(await fixture.readConfig(), hiddenLogConfig);
 
   // Source, immutable ancestors, and @ descendants cannot become destinations.
   await chooseInLog();
@@ -264,6 +276,11 @@ try {
   await expect(trigger).toBeFocused();
   await expect(squash).toBeEnabled();
   await assertSourceAndSelection(selectionCount);
+  assert.deepEqual(
+    await fixture.readConfig(),
+    hiddenLogConfig,
+    "Choosing a destination must not persist the target or temporary layout",
+  );
   await screenshot("custom-hidden-log");
 
   // There is no remembered Custom option: Parent discards the custom target.
@@ -442,10 +459,9 @@ try {
     if (size !== 24)
       for (let i = 10; i < size; i++) await slider.press("ArrowRight");
     await expect(slider).toHaveValue(String(size));
-    assert.equal(
-      await page.evaluate(() => localStorage.getItem("jj-stamp.font-size")),
-      String(size),
-    );
+    await expect
+      .poll(async () => (await fixture.readConfig())["font-size"])
+      .toBe(size);
     await settings
       .getByRole("button", { name: "Close settings", exact: true })
       .click();
@@ -496,6 +512,10 @@ try {
   console.log(
     "Custom squash destination browser E2E passed (real jj/API, picker, queue, undo).",
   );
+} catch (error) {
+  await screenshot("failure");
+  console.error("Custom destination browser errors:", errors);
+  throw error;
 } finally {
   releaseSquash?.();
   await fixture.close();
