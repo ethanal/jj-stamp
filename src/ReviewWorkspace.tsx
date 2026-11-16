@@ -21,6 +21,7 @@ import { ChangeId } from "./ReviewToolbar";
 import { SidebarResize } from "./SidebarResize";
 import { SplitDiffLayout } from "./SplitDiffLayout";
 import { SquashFileButton } from "./SquashFileButton";
+import "./squash-destination.css";
 import type { ColorScheme, FileView } from "./preferences";
 import type {
   DiffFile,
@@ -1083,6 +1084,9 @@ export function RevisionGraph({
   vimMode,
   rows,
   source,
+  destination,
+  pickingDestination = false,
+  eligibleDestinationIds = [],
   expanded,
   peeking = false,
   hoverHandlers,
@@ -1097,11 +1101,17 @@ export function RevisionGraph({
   onToggle,
   onSelectRevision,
   onOpenRevision,
+  onPreviewDestination,
+  onChooseDestination,
+  onCancelDestination,
 }: {
   focusRequest?: number;
   vimMode: boolean;
   rows: LogRow[];
   source?: Revision;
+  destination?: Revision | null;
+  pickingDestination?: boolean;
+  eligibleDestinationIds?: readonly string[];
   expanded: boolean;
   peeking?: boolean;
   hoverHandlers?: HTMLAttributes<HTMLElement>;
@@ -1116,19 +1126,97 @@ export function RevisionGraph({
   onToggle: () => void;
   onSelectRevision: (changeId: string) => void;
   onOpenRevision: (changeId: string) => void;
+  onPreviewDestination?: (changeId: string) => void;
+  onChooseDestination?: (changeId: string) => void;
+  onCancelDestination?: () => void;
 }) {
   const visible = expanded || peeking;
   const graph = useRef<HTMLPreElement>(null);
+  const graphViewport = useRef<HTMLDivElement>(null);
+  const [arrow, setArrow] = useState<{ source: number; target: number } | null>(
+    null,
+  );
+  const destinationIds = useMemo(
+    () => new Set(eligibleDestinationIds),
+    [eligibleDestinationIds],
+  );
+  const pickingDisabled =
+    idleActionDisabled || dragging || !hasVersion || pending > 0 || switching;
+  const canChoose = (row: LogRow) =>
+    !pickingDisabled &&
+    !!row.revision &&
+    row.revision.changeId !== source?.changeId &&
+    row.mutable !== false &&
+    destinationIds.has(row.revision.changeId);
   const [hovered, setHovered] = useState(false);
   const focusGraph = useCallback(() => {
     const element = graph.current;
     if (!element) return;
-    const current = element.querySelector<HTMLButtonElement>(
-      '.log-change[aria-pressed="true"]:not(:disabled)',
-    );
+    const current = pickingDestination
+      ? (element.querySelector<HTMLButtonElement>(
+          ".log-row.is-destination .log-change:not(:disabled)",
+        ) ??
+        element.querySelector<HTMLButtonElement>(".log-change:not(:disabled)"))
+      : element.querySelector<HTMLButtonElement>(
+          '.log-change[aria-pressed="true"]:not(:disabled)',
+        );
     (current ?? element).focus({ preventScroll: true });
     current?.scrollIntoView({ block: "nearest" });
-  }, []);
+  }, [pickingDestination]);
+  useLayoutEffect(() => {
+    if (pickingDestination) {
+      // Finishing a mouse pick must not let Vim hover reclaim focus from
+      // the destination trigger while the pointer is still over the graph.
+      setHovered(false);
+      if (visible) focusGraph();
+    }
+  }, [pickingDestination, visible, focusGraph]);
+  useLayoutEffect(() => {
+    if (!visible || !destination || !source) {
+      setArrow(null);
+      return;
+    }
+    const element = graph.current;
+    const viewport = graphViewport.current;
+    if (!element || !viewport) return;
+    const measure = () => {
+      const entries = [...element.querySelectorAll<HTMLElement>(".log-change")];
+      const sourceRow = entries
+        .find((entry) => entry.dataset.changeId === source.changeId)
+        ?.closest(".log-row");
+      const targetRow = entries
+        .find((entry) => entry.dataset.changeId === destination.changeId)
+        ?.closest(".log-row");
+      if (!sourceRow || !targetRow || sourceRow === targetRow) {
+        setArrow(null);
+        return;
+      }
+      const origin = viewport.getBoundingClientRect().top;
+      const start = sourceRow.getBoundingClientRect();
+      const end = targetRow.getBoundingClientRect();
+      const next = {
+        source: start.top + start.height / 2 - origin,
+        target: end.top + end.height / 2 - origin,
+      };
+      setArrow((previous) =>
+        previous?.source === next.source && previous.target === next.target
+          ? previous
+          : next,
+      );
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(element);
+    observer.observe(viewport);
+    if (element.firstElementChild) observer.observe(element.firstElementChild);
+    element.addEventListener("scroll", measure);
+    window.addEventListener("resize", measure);
+    return () => {
+      observer.disconnect();
+      element.removeEventListener("scroll", measure);
+      window.removeEventListener("resize", measure);
+    };
+  }, [visible, source, destination, rows, pickingDestination]);
   const lastFocusRequest = useRef(0);
   useLayoutEffect(() => {
     if (!visible || focusRequest === lastFocusRequest.current) return;
@@ -1140,6 +1228,7 @@ export function RevisionGraph({
     if (
       !hovered ||
       !visible ||
+      pickingDestination ||
       !vimMode ||
       dragging ||
       document.querySelector("dialog[open]") ||
@@ -1151,13 +1240,18 @@ export function RevisionGraph({
     // Wait for a hover preview to render before focusing its selected row.
     // Reuse normal log key handling rather than letting the diff consume j/k.
     focusGraph();
-  }, [hovered, visible, vimMode, dragging, focusGraph]);
+  }, [hovered, visible, vimMode, dragging, focusGraph, pickingDestination]);
   return (
     <aside
       {...hoverHandlers}
       onPointerEnter={(event) => {
         hoverHandlers?.onPointerEnter?.(event);
-        if (event.pointerType !== "touch" && !event.buttons) setHovered(true);
+        if (
+          !pickingDestination &&
+          event.pointerType !== "touch" &&
+          !event.buttons
+        )
+          setHovered(true);
       }}
       onPointerLeave={(event) => {
         setHovered(false);
@@ -1169,6 +1263,15 @@ export function RevisionGraph({
       }}
       className={`log-panel ${visible ? "" : "is-collapsed"} ${peeking ? "is-peeking" : ""}`}
       aria-label="Revision graph"
+      onKeyDownCapture={(event) => {
+        hoverHandlers?.onKeyDownCapture?.(event);
+        if (!pickingDestination || event.defaultPrevented) return;
+        if (event.key === "Escape") {
+          event.preventDefault();
+          event.stopPropagation();
+          onCancelDestination?.();
+        }
+      }}
     >
       {visible && (
         <SidebarResize
@@ -1211,154 +1314,285 @@ export function RevisionGraph({
           Log
         </span>
       )}
-      <pre
-        ref={graph}
-        tabIndex={0}
-        onKeyDown={(event) => {
-          if (
-            !event.defaultPrevented &&
-            !event.repeat &&
-            !event.ctrlKey &&
-            !event.metaKey &&
-            !event.altKey &&
-            !event.nativeEvent.isComposing
-          ) {
-            // @ changes the source; the next arrow should start there, not at
-            // the old focused row. l must move focus before hiding the graph.
-            if (event.key === "@")
-              event.currentTarget.focus({ preventScroll: true });
-            else if (event.key.toLowerCase() === "l" && expanded)
-              event.currentTarget.parentElement
-                ?.querySelector<HTMLButtonElement>(".sidebar-toggle")
-                ?.focus({ preventScroll: true });
-          }
-          const up = event.key === "ArrowUp" || (vimMode && event.key === "k");
-          const down =
-            event.key === "ArrowDown" || (vimMode && event.key === "j");
-          const open = event.key === "Enter";
-          if (
-            !visible ||
-            (!up && !down && !open) ||
-            event.nativeEvent
-              .composedPath()
-              .some(
-                (node) =>
-                  node instanceof HTMLElement &&
-                  (node.matches("input, textarea, select") ||
-                    node.isContentEditable),
+      {visible && pickingDestination && (
+        <div className="destination-pick-help">
+          <span>
+            Choose a revision · ↑↓ preview · Enter choose · Esc cancel
+          </span>
+          <button type="button" onClick={onCancelDestination}>
+            Cancel
+          </button>
+        </div>
+      )}
+      <div
+        ref={graphViewport}
+        className="destination-graph-viewport"
+        hidden={!visible}
+      >
+        <pre
+          ref={graph}
+          tabIndex={0}
+          onKeyDown={(event) => {
+            if (pickingDestination) {
+              const up =
+                event.key === "ArrowUp" || (vimMode && event.key === "k");
+              const down =
+                event.key === "ArrowDown" || (vimMode && event.key === "j");
+              const choose = event.key === "Enter";
+              // No source navigation, vim shortcuts, or bookmark shortcuts may
+              // escape from this picker into the normal workspace handlers.
+              event.stopPropagation();
+              if (!up && !down && !choose) return;
+              event.preventDefault();
+              if (
+                pickingDisabled ||
+                event.ctrlKey ||
+                event.metaKey ||
+                event.altKey ||
+                event.shiftKey ||
+                event.nativeEvent.isComposing ||
+                (choose && event.repeat)
               )
-          )
-            return;
-          const ignored =
-            event.defaultPrevented ||
-            event.ctrlKey ||
-            event.metaKey ||
-            event.altKey ||
-            event.shiftKey ||
-            event.nativeEvent.isComposing ||
-            (open && event.repeat);
-          if (open) {
-            // Suppress the button's native click, including repeated/modified
-            // Enter, so confirming never dispatches a second selection.
+                return;
+              const buttons = [
+                ...event.currentTarget.querySelectorAll<HTMLButtonElement>(
+                  ".log-change:not(:disabled)",
+                ),
+              ];
+              if (!buttons.length) return;
+              let index = buttons.indexOf(
+                document.activeElement as HTMLButtonElement,
+              );
+              if (index < 0)
+                index = buttons.findIndex(
+                  (button) => button.dataset.changeId === destination?.changeId,
+                );
+              if (choose) {
+                const changeId = buttons[index]?.dataset.changeId;
+                if (changeId) onChooseDestination?.(changeId);
+                return;
+              }
+              const next =
+                index < 0
+                  ? down
+                    ? 0
+                    : buttons.length - 1
+                  : Math.max(
+                      0,
+                      Math.min(buttons.length - 1, index + (down ? 1 : -1)),
+                    );
+              const button = buttons[next];
+              button.focus({ preventScroll: true });
+              button.scrollIntoView({ block: "nearest" });
+              return;
+            }
+            if (
+              !event.defaultPrevented &&
+              !event.repeat &&
+              !event.ctrlKey &&
+              !event.metaKey &&
+              !event.altKey &&
+              !event.nativeEvent.isComposing
+            ) {
+              // @ changes the source; the next arrow should start there, not at
+              // the old focused row. l must move focus before hiding the graph.
+              if (event.key === "@")
+                event.currentTarget.focus({ preventScroll: true });
+              else if (event.key.toLowerCase() === "l" && expanded)
+                event.currentTarget.parentElement
+                  ?.closest(".log-panel")
+                  ?.querySelector<HTMLButtonElement>(".sidebar-toggle")
+                  ?.focus({ preventScroll: true });
+            }
+            const up =
+              event.key === "ArrowUp" || (vimMode && event.key === "k");
+            const down =
+              event.key === "ArrowDown" || (vimMode && event.key === "j");
+            const open = event.key === "Enter";
+            if (
+              !visible ||
+              (!up && !down && !open) ||
+              event.nativeEvent
+                .composedPath()
+                .some(
+                  (node) =>
+                    node instanceof HTMLElement &&
+                    (node.matches("input, textarea, select") ||
+                      node.isContentEditable),
+                )
+            )
+              return;
+            const ignored =
+              event.defaultPrevented ||
+              event.ctrlKey ||
+              event.metaKey ||
+              event.altKey ||
+              event.shiftKey ||
+              event.nativeEvent.isComposing ||
+              (open && event.repeat);
+            if (open) {
+              // Suppress the button's native click, including repeated/modified
+              // Enter, so confirming never dispatches a second selection.
+              event.preventDefault();
+              event.stopPropagation();
+            }
+            if (ignored) return;
             event.preventDefault();
             event.stopPropagation();
-          }
-          if (ignored) return;
-          event.preventDefault();
-          event.stopPropagation();
-          const buttons = [
-            ...event.currentTarget.querySelectorAll<HTMLButtonElement>(
-              ".log-change:not(:disabled)",
-            ),
-          ];
-          if (!buttons.length) return;
-          let index = buttons.findIndex(
-            (button) => button === document.activeElement,
-          );
-          if (index < 0)
-            index = buttons.findIndex(
-              (button) => button.getAttribute("aria-pressed") === "true",
+            const buttons = [
+              ...event.currentTarget.querySelectorAll<HTMLButtonElement>(
+                ".log-change:not(:disabled)",
+              ),
+            ];
+            if (!buttons.length) return;
+            let index = buttons.findIndex(
+              (button) => button === document.activeElement,
             );
-          if (open) {
-            const changeId = buttons[index]?.dataset.changeId;
-            if (changeId) onOpenRevision(changeId);
-            return;
-          }
-          const next =
-            index < 0
-              ? down
-                ? 0
-                : buttons.length - 1
-              : Math.max(
-                  0,
-                  Math.min(buttons.length - 1, index + (down ? 1 : -1)),
-                );
-          const button = buttons[next];
-          button.focus({ preventScroll: true });
-          button.scrollIntoView({ block: "nearest" });
-          if (next !== index) button.click();
-        }}
-        className="jj-log"
-        id="log-sidebar-content"
-        hidden={!visible}
-        aria-label="jj log output"
-      >
-        {rows.length
-          ? rows.map((row, index) => {
-              const current = row.revision?.changeId === source?.changeId;
-              return (
-                <span
-                  className={`log-row${current ? " is-current" : ""}`}
-                  key={row.revision?.commitId ?? `graph-${index}`}
-                >
-                  <span aria-hidden="true">
-                    {row.graph.split(/(×)/).map((part, index) =>
-                      part === "×" ? (
-                        <span className="log-conflict" key={index}>
-                          {part}
+            if (index < 0)
+              index = buttons.findIndex(
+                (button) => button.getAttribute("aria-pressed") === "true",
+              );
+            if (open) {
+              const changeId = buttons[index]?.dataset.changeId;
+              if (changeId) onOpenRevision(changeId);
+              return;
+            }
+            const next =
+              index < 0
+                ? down
+                  ? 0
+                  : buttons.length - 1
+                : Math.max(
+                    0,
+                    Math.min(buttons.length - 1, index + (down ? 1 : -1)),
+                  );
+            const button = buttons[next];
+            button.focus({ preventScroll: true });
+            button.scrollIntoView({ block: "nearest" });
+            if (next !== index) button.click();
+          }}
+          className={`jj-log${pickingDestination ? " is-picking-destination" : ""}`}
+          id="log-sidebar-content"
+          hidden={!visible}
+          aria-label="jj log output"
+        >
+          {rows.length
+            ? rows.map((row, index) => {
+                const current = row.revision?.changeId === source?.changeId;
+                const target =
+                  !!destination &&
+                  row.revision?.changeId === destination.changeId;
+                const eligible = canChoose(row);
+                const unavailable = current
+                  ? "The reviewed source cannot be its own squash destination."
+                  : row.mutable === false
+                    ? "Immutable revisions cannot be squash destinations."
+                    : !destinationIds.has(row.revision?.changeId ?? "")
+                      ? "This revision is not an eligible squash destination."
+                      : "Destination selection is temporarily unavailable.";
+                return (
+                  <span
+                    className={`log-row${current ? " is-current" : ""}${target ? " is-destination" : ""}${pickingDestination && eligible ? " is-eligible-destination" : ""}`}
+                    key={row.revision?.commitId ?? `graph-${index}`}
+                    title={
+                      pickingDestination && row.revision && !eligible
+                        ? unavailable
+                        : undefined
+                    }
+                    onPointerEnter={() => {
+                      if (pickingDestination && eligible)
+                        onPreviewDestination?.(row.revision!.changeId);
+                    }}
+                    onClick={(event) => {
+                      if (!pickingDestination) return;
+                      event.stopPropagation();
+                      if (eligible)
+                        onChooseDestination?.(row.revision!.changeId);
+                    }}
+                  >
+                    <span aria-hidden="true">
+                      {row.graph.split(/(×)/).map((part, index) =>
+                        part === "×" ? (
+                          <span className="log-conflict" key={index}>
+                            {part}
+                          </span>
+                        ) : (
+                          part
+                        ),
+                      )}
+                    </span>
+                    {row.revision && (
+                      <>
+                        <button
+                          className="log-change"
+                          data-change-id={row.revision.changeId}
+                          aria-label={
+                            pickingDestination
+                              ? `Choose destination revision ${row.revision.changeId}`
+                              : `Review change ${row.revision.changeId}`
+                          }
+                          aria-pressed={current}
+                          title={
+                            pickingDestination && !eligible
+                              ? unavailable
+                              : `${row.revision.changeId}\n${row.revision.description}${row.mutable ? "" : "\nImmutable change"}`
+                          }
+                          disabled={
+                            pickingDestination
+                              ? !eligible
+                              : idleActionDisabled || dragging || !hasVersion
+                          }
+                          onFocus={() => {
+                            if (pickingDestination && eligible)
+                              onPreviewDestination?.(row.revision!.changeId);
+                          }}
+                          onClick={(event) => {
+                            if (pickingDestination) {
+                              event.stopPropagation();
+                              if (eligible)
+                                onChooseDestination?.(row.revision!.changeId);
+                            } else onSelectRevision(row.revision!.changeId);
+                          }}
+                        >
+                          <ChangeId revision={row.revision} />
+                        </button>
+                        {row.bookmarks?.length ? (
+                          <>
+                            {" "}
+                            <span className="log-bookmarks">
+                              {row.bookmarks.join(" ")}
+                            </span>
+                            {" | "}
+                          </>
+                        ) : (
+                          " "
+                        )}
+                        {row.isEmpty && <span>(empty) </span>}
+                        <span title={row.revision.description}>
+                          {row.revision.description || "(no description)"}
                         </span>
-                      ) : (
-                        part
-                      ),
+                      </>
                     )}
                   </span>
-                  {row.revision && (
-                    <>
-                      <button
-                        className="log-change"
-                        data-change-id={row.revision.changeId}
-                        aria-label={`Review change ${row.revision.changeId}`}
-                        aria-pressed={current}
-                        title={`${row.revision.changeId}\n${row.revision.description}${row.mutable ? "" : "\nImmutable change"}`}
-                        disabled={idleActionDisabled || dragging || !hasVersion}
-                        onClick={() => onSelectRevision(row.revision!.changeId)}
-                      >
-                        <ChangeId revision={row.revision} />
-                      </button>
-                      {row.bookmarks?.length ? (
-                        <>
-                          {" "}
-                          <span className="log-bookmarks">
-                            {row.bookmarks.join(" ")}
-                          </span>
-                          {" | "}
-                        </>
-                      ) : (
-                        " "
-                      )}
-                      {row.isEmpty && <span>(empty) </span>}
-                      <span title={row.revision.description}>
-                        {row.revision.description || "(no description)"}
-                      </span>
-                    </>
-                  )}
-                </span>
-              );
-            })
-          : loading
-            ? "Loading…"
-            : ""}
-      </pre>
+                );
+              })
+            : loading
+              ? "Loading…"
+              : ""}
+        </pre>
+        {arrow && (
+          <svg
+            className={`destination-arrow${pickingDestination ? " is-preview" : ""}`}
+            aria-hidden="true"
+          >
+            <path
+              className="destination-arrow-elbow"
+              d={`M17 ${arrow.source} H8 V${arrow.target} H17`}
+            />
+            <path d={`m13 ${arrow.target - 3} 4 3-4 3`} />
+          </svg>
+        )}
+      </div>
     </aside>
   );
 }
@@ -1371,6 +1605,7 @@ export function ReviewStatusBar({
   recovering,
   halted,
   notice,
+  destinationNotice,
   queueNotice,
   showSquash,
   canSquash,
@@ -1389,6 +1624,7 @@ export function ReviewStatusBar({
   recovering: boolean;
   halted: boolean;
   notice: string;
+  destinationNotice?: string;
   queueNotice: string;
   showSquash: boolean;
   canSquash: boolean;
@@ -1423,6 +1659,15 @@ export function ReviewStatusBar({
           <span className="queue-count">{pending} queued · </span>
         )}
         {status}
+        {destinationNotice && (
+          <span
+            className="destination-status-context"
+            title={destinationNotice}
+          >
+            {" · "}
+            {destinationNotice}
+          </span>
+        )}
       </span>
       <div className="statusbar-actions">
         {showSquash && (

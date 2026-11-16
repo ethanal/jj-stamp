@@ -1483,6 +1483,9 @@ kbd {
   .repo-path {
     max-width: 18%;
   }
+  .revision-info .commit-id {
+    display: none;
+  }
   .file-bar-tools {
     gap: 10px;
   }
@@ -1491,6 +1494,11 @@ kbd {
   }
   .revision-info {
     gap: 9px;
+  }
+}
+@media (min-width: 851px) and (max-width: 1200px) {
+  .repo-path {
+    display: none;
   }
 }
 @media (max-width: 850px) {
@@ -1556,6 +1564,10 @@ kbd {
   }
 }
 @media (max-width: 600px) {
+  .toolbar-actions {
+    max-width: 100%;
+    flex-wrap: wrap;
+  }
   .workspace {
     --log-height: 150px;
   }
