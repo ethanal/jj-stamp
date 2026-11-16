@@ -227,7 +227,7 @@
         white-space: nowrap;
       }
       .destination-control select {
-        width: 116px;
+        width: 112px;
         height: 24px;
         padding: 2px 4px;
         font-size: 11px;
@@ -236,15 +236,9 @@
         border-color: #c18c66;
       }
       .app-header .destination-control button {
-        width: 66px;
         height: 24px;
-        padding: 0;
-        border-color: transparent;
-        background: transparent;
-      }
-      .destination-control button:hover:not(:disabled) {
-        text-decoration: underline;
-        text-underline-offset: 3px;
+        padding: 2px 4px;
+        font-size: 10px;
       }
       .workspace {
         display: grid;
@@ -419,6 +413,7 @@
         font-size: 10px;
       }
       .target-id {
+        width: 8ch;
         font-size: 11px;
         color: var(--amber);
         white-space: nowrap;
@@ -781,7 +776,7 @@
           aria-pressed="false"
         >
           <b>3 · Custom, log hidden</b
-          ><span>Click the amber ID to pick again; the log opens briefly.</span>
+          ><span>Use Change… to pick again; the log opens briefly.</span>
         </button>
       </nav>
       <div class="controls">
@@ -815,7 +810,7 @@
           ><code class="commit muted">8b9d0e2714af</code
           ><span class="green optional">+8 −4</span><span class="grow"></span>
           <div class="destination-control" id="destination-control">
-            <label for="destination-mode">Squash →</label>
+            <label for="destination-mode">Squash into →</label>
             <select
               id="destination-mode"
               aria-label="Squash destination mode"
@@ -824,18 +819,19 @@
               <option value="parent">Commit below</option>
               <option value="custom">Custom…</option>
             </select>
+            <output
+              class="target-id"
+              id="destination-id"
+              aria-label="Resolved destination ID"
+              >pqxvqmoo</output
+            >
             <button
               id="change-custom"
               type="button"
-              aria-label="Choose a custom squash destination"
+              aria-label="Change squash destination"
               aria-controls="log-list"
             >
-              <output
-                class="target-id"
-                id="destination-id"
-                aria-label="Resolved destination ID"
-                >pqxvqmoo</output
-              >
+              Change…
             </button>
           </div>
           <button type="button" data-demo="Go to">Go to</button
@@ -1004,17 +1000,17 @@
         <article>
           <h2><span class="number">02</span>Always visible, not duplicated</h2>
           <p>
-            A 24px-high selector and clickable amber ID sit in the existing top
-            bar. No separate Change button and no persistent destination row in
-            the log. Hiding the log gives the space back to the diff.
+            A 24px-high control sits in the existing top bar: Squash into →, the
+            selector, a read-only amber ID, and an explicit Change… button. No
+            persistent destination row in the log.
           </p>
         </article>
         <article>
           <h2><span class="number">03</span>Open just long enough to pick</h2>
           <p>
-            Custom or the amber ID opens a hidden log. Click a commit to
-            confirm, or Escape to cancel; either returns to your hidden-log
-            layout. No text field, Apply step, or dot at the arrow’s source.
+            Custom or Change… opens a hidden log. Click a commit to confirm, or
+            Escape to cancel; either returns to your hidden-log layout. No text
+            field, Apply step, or dot at the arrow’s source.
           </p>
         </article>
       </section>
@@ -1151,9 +1147,9 @@
             result.id || "—";
         const outside =
           result.id && !displayRevisions().some((r) => r.id === result.id);
-        byId("change-custom").title =
+        byId("destination-id").title =
           result.error ||
-          `${picking ? "Preview" : "Squash destination"}: ${result.id || "none"}${outside ? " (outside log filter)" : ""}. Click to choose a commit.`;
+          `${picking ? "Preview" : "Squash destination"}: ${result.id || "none"}${outside ? " (outside log filter)" : ""}`;
         document
           .querySelectorAll(".revision")
           .forEach((row) =>
@@ -1241,7 +1237,7 @@
                 ? "hidden"
                 : view;
         byId("try-hint").textContent = logCollapsed
-          ? "Destination stays in the top bar. Custom or the amber ID briefly opens the log to pick."
+          ? "Destination stays in the top bar. Custom or Change… briefly opens the log to pick."
           : mode === "parent" && !picking
             ? "Commit below follows the reviewed source’s parent, independently of @."
             : "Custom: click a commit in the log. No text entry or Apply step.";
@@ -1249,6 +1245,10 @@
         byId("destination-mode").disabled = queued;
         byId("cancel-custom").disabled = queued;
         byId("change-custom").disabled = queued || picking;
+        byId("change-custom").setAttribute("aria-expanded", String(picking));
+        byId("change-custom").title = queued
+          ? "Destination locked while queued work drains"
+          : "Choose a commit in the log";
         byId("destination-control").dataset.invalid = String(!!result.error);
         byId("pick-help").hidden = !picking;
         byId("destination-error").hidden = !result.error;
@@ -1347,7 +1347,7 @@
             ? "Preview only. Click a commit or press Enter; Esc restores the previous mode."
             : mode === "parent"
               ? "Commit below = the reviewed source’s actual parent. @ is not used."
-              : "Custom stays fixed when @ moves. Click the amber ID in the top bar to choose another.";
+              : "Custom stays fixed when @ moves. Use Change… in the top bar to choose another.";
         refreshIndicators();
       }
       function loadExample(state) {

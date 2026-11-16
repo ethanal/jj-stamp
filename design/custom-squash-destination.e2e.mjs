@@ -154,6 +154,24 @@ async function captureWorkspace(page, filename) {
 async function expectTopBar(page, collapsed = false) {
   await expect(page.locator(".app-header #destination-mode")).toBeVisible();
   await expect(page.locator(".app-header #destination-id")).toBeVisible();
+  await expect(page.locator(".destination-control label")).toHaveText(
+    "Squash into →",
+  );
+  const change = page.getByRole("button", {
+    name: "Change squash destination",
+    exact: true,
+  });
+  await expect(change).toBeVisible();
+  await expect(change).toHaveText("Change…");
+  const destination = page.locator("#destination-id");
+  await expect(destination).toHaveJSProperty("tagName", "OUTPUT");
+  assert.equal(
+    await destination.evaluate(
+      (node) => !!node.closest("button, a, [role=button], [role=link]"),
+    ),
+    false,
+    "destination ID is read-only, not a disguised action",
+  );
   await expect(
     page.locator(".log .destination-control, .destination-bar"),
   ).toHaveCount(0);
@@ -177,7 +195,7 @@ async function expectTopBar(page, collapsed = false) {
     };
   });
   assert.equal(geometry.controlHeight, 24);
-  assert.ok(geometry.controlWidth <= 250, "destination control stays compact");
+  assert.ok(geometry.controlWidth <= 315, "destination control stays compact");
   assert.equal(geometry.fits, true, "destination remains inside the top bar");
   assert.equal(geometry.overflow, false, "top bar must not overflow");
   if (page.viewportSize().width > 800)
@@ -259,7 +277,7 @@ try {
   );
   await expectRoute(page, "rwpxovrz");
   await expectCompactGraph(page);
-  await captureWorkspace(page, "topbar-01-log-open.png");
+  await captureWorkspace(page, "explicit-change-01-log-open.png");
   await page.locator("#move-working-copy").click();
   await expect(target).toHaveText("rwpxovrz");
   await page.locator("#scenario").selectOption("filtered");
@@ -406,7 +424,12 @@ try {
     (await page.locator(".diff").boundingBox()).width > openDiffWidth + 400,
     "diff reclaims the log space",
   );
-  await captureWorkspace(page, "topbar-02-log-hidden.png");
+  // The ID is just information; only the clearly labeled control starts picking.
+  await target.click();
+  await expectTopBar(page, true);
+  await expect(mode).toHaveValue("parent");
+  await expect(target).toHaveText("pqxvqmoo");
+  await captureWorkspace(page, "explicit-change-02-log-hidden.png");
 
   // Picking from a hidden log opens it temporarily, then restores the layout.
   await mode.selectOption("custom");
@@ -416,7 +439,7 @@ try {
   await page.locator('[data-revision="rwpxovrz"] .row-title').hover();
   await expectRoute(page, "rwpxovrz", true);
   await expectCompactGraph(page);
-  await captureWorkspace(page, "topbar-03-picking-from-hidden.png");
+  await captureWorkspace(page, "explicit-change-03-picking-from-hidden.png");
   await page.locator('[data-revision="rwpxovrz"] .row-title').click();
   await expectTopBar(page, true);
   await expect(target).toHaveText("rwpxovrz");
@@ -426,10 +449,19 @@ try {
   await expect(source).toHaveText("vqkqszmu");
   await expect(page.locator(".line.sel")).toHaveCount(3);
   await expect(squash).toBeEnabled();
-  await captureWorkspace(page, "topbar-04-custom-log-hidden.png");
+  await captureWorkspace(page, "explicit-change-04-custom-log-hidden.png");
+  await page
+    .locator("#destination-control")
+    .screenshot({ path: ".planka-artifacts/explicit-change-control.png" });
 
-  // Amber ID replaces Change…, including when the log is hidden.
-  await page.locator("#change-custom").click();
+  // Change… is an explicit action, including when the log is hidden.
+  await target.click();
+  await expectTopBar(page, true);
+  await expect(mode).toHaveValue("custom");
+  await expect(target).toHaveText("rwpxovrz");
+  await page
+    .getByRole("button", { name: "Change squash destination", exact: true })
+    .click();
   await expectTopBar(page);
   await page.locator('[data-revision="ksuunvyp"] .row-title').hover();
   await page.keyboard.press("Escape");
@@ -573,10 +605,18 @@ try {
   await page.keyboard.press("Enter");
   await expectTopBar(page, true);
   await expect(target).toHaveText("ksuunvyp");
+  await page.setViewportSize({ width: 360, height: 800 });
+  await expectTopBar(page, true);
+  assert.equal(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= innerWidth,
+    ),
+    true,
+  );
   assert.deepEqual(errors, [], "no uncaught browser errors");
   assert.deepEqual(requests, [], "no HTTP/API requests");
   console.log(
-    "PASS: compact always-visible top-bar destination; hidden-log pick/confirm/cancel/layout restore, reclaiming diff space, hidden-log errors and queue locks, row/ID/keyboard choice, source-relative default, fixed custom IDs, compact graph/arrow, mobile and both standalone bundles; zero page errors or HTTP requests.",
+    "PASS: Squash into → label, explicit Change… button and non-interactive ID; compact top bar, hidden-log pick/confirm/cancel/layout restore, hidden-log errors and queue locks, row/keyboard choice, source-relative default, fixed custom IDs, compact graph/arrow, 360px/390px mobile and both standalone bundles; zero page errors or HTTP requests.",
   );
 } finally {
   await browser.close();
