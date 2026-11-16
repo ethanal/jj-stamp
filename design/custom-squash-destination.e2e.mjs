@@ -249,7 +249,7 @@ async function openMenu(page) {
     "menuitem",
   );
   await expect(page.locator("#choose-custom")).toContainText(
-    "Choose commit in log…",
+    "Choose revision in log…",
   );
   assert.equal(
     await page
@@ -349,7 +349,7 @@ try {
 
   // A single clearly labelled action combines mode, read-only output and menu.
   await expectClickOnly(page);
-  await expectCommitted(page, "Commit below", "pqxvqmoo");
+  await expectCommitted(page, "Parent", "pqxvqmoo");
   await expectRoute(page, "pqxvqmoo");
   await expectCompactGraph(page);
   await expect(squash).toBeEnabled();
@@ -374,15 +374,15 @@ try {
   await expect(page.locator("#parent-destination")).toHaveText("pqxvqmoo");
   await expect(page.locator("#use-custom")).toBeHidden();
   for (const [id, primary] of [
-    ["choose-parent", "Commit below"],
-    ["choose-custom", "Choose commit in log…"],
+    ["choose-parent", "Parent"],
+    ["choose-custom", "Choose revision in log…"],
   ]) {
     const text = (await page.locator(`#${id}`).innerText())
       .replace(/\s+/g, " ")
       .trim();
     assert.ok(
       text.replace("pqxvqmoo", "").trim().length > primary.length,
-      `${id} explains the choice beyond its title and commit ID`,
+      `${id} explains the choice beyond its title and revision ID`,
     );
   }
   await expectMenuFits(page);
@@ -408,11 +408,11 @@ try {
   await expect(page.locator("#choose-custom")).toBeFocused();
   await page.keyboard.press("Tab");
   await expectClosedMenu(page);
-  await expectCommitted(page, "Commit below", "pqxvqmoo");
+  await expectCommitted(page, "Parent", "pqxvqmoo");
   await openMenu(page);
   await page.locator(".app-header .app-title").click();
   await expectClosedMenu(page);
-  await expectCommitted(page, "Commit below", "pqxvqmoo");
+  await expectCommitted(page, "Parent", "pqxvqmoo");
 
   // Default uses the reviewed source's real parent, never @ or visible adjacency.
   await page.locator("#move-working-copy").click();
@@ -430,7 +430,7 @@ try {
   await expectCompactGraph(page);
   await captureWorkspace(page, "design-a-01-default.png");
   await page.locator("#hide-log").click();
-  await expectCommitted(page, "Commit below", "rwpxovrz", true);
+  await expectCommitted(page, "Parent", "rwpxovrz", true);
   await openMenu(page);
   await expect(page.locator("#parent-destination")).toHaveText("rwpxovrz");
   await captureWorkspace(page, "design-a-02-menu.png");
@@ -455,7 +455,7 @@ try {
     .screenshot({ path: ".planka-artifacts/design-a-control.png" });
 
   await reset("filtered");
-  await expect(mode).toHaveText("Commit below");
+  await expect(mode).toHaveText("Parent");
   await expect(target).toHaveText("pqxvqmoo");
   await expect(page.locator('[data-revision="pqxvqmoo"]')).toHaveCount(0);
   await expect(page.locator("#outside")).toBeVisible();
@@ -492,7 +492,7 @@ try {
   await expect(target).toHaveText("rwpxovrz");
   await expect(page.locator("#footer-destination")).toHaveText("rwpxovrz");
   await page.keyboard.press("Escape");
-  await expectCommitted(page, "Commit below", "pqxvqmoo");
+  await expectCommitted(page, "Parent", "pqxvqmoo");
   await expect(trigger).toBeFocused();
   await expectRoute(page, "pqxvqmoo");
   await startPicking(page);
@@ -516,7 +516,7 @@ try {
   await expect(page.locator("#use-custom")).toBeEnabled();
   await expect(page.locator("#custom-destination")).toHaveText("rwpxovrz");
   await menuChoice(page, "choose-parent");
-  await expectCommitted(page, "Commit below", "pqxvqmoo");
+  await expectCommitted(page, "Parent", "pqxvqmoo");
   await expect(trigger).toBeFocused();
   await openMenu(page);
   await expect(page.locator("#choose-parent")).toHaveAttribute(
@@ -561,7 +561,7 @@ try {
   const openDiffWidth = (await page.locator(".diff").boundingBox()).width;
   const openControl = await page.locator("#destination-control").boundingBox();
   await page.locator("#hide-log").click();
-  await expectCommitted(page, "Commit below", "pqxvqmoo", true);
+  await expectCommitted(page, "Parent", "pqxvqmoo", true);
   await expect(page.locator("#show-log")).toBeFocused();
   assert.equal(
     (await page.locator("#destination-control").boundingBox()).x,
@@ -601,7 +601,7 @@ try {
   await expect(page.locator("#pick-help")).toBeVisible();
   await expect(mode).toHaveText("Choosing…");
   await page.keyboard.press("Escape");
-  await expectCommitted(page, "Commit below", "pqxvqmoo", true);
+  await expectCommitted(page, "Parent", "pqxvqmoo", true);
   await expect(trigger).toBeFocused();
   await startPicking(page);
   await row("rwpxovrz").hover();
@@ -624,7 +624,7 @@ try {
   await startPicking(page);
   await row("ksuunvyp").hover();
   await menuChoice(page, "choose-parent");
-  await expectCommitted(page, "Commit below", "pqxvqmoo", true);
+  await expectCommitted(page, "Parent", "pqxvqmoo", true);
   await expect(trigger).toBeFocused();
 
   // An explicitly open log stays open on confirm, cancel and mode selection.
@@ -637,7 +637,7 @@ try {
   await expectCommitted(page, "Custom", "pqxvqmoo");
   await startPicking(page);
   await menuChoice(page, "choose-parent");
-  await expectCommitted(page, "Commit below", "pqxvqmoo");
+  await expectCommitted(page, "Parent", "pqxvqmoo");
   // Hiding the log during picking cancels; subsequent errors stay above the diff.
   await startPicking(page);
   await chooseRow("pqxvqmoo");
@@ -672,7 +672,7 @@ try {
   await expect(target).toHaveText("—");
   await expect(page.locator("#destination-error")).toBeVisible();
   await menuChoice(page, "choose-parent");
-  await expectCommitted(page, "Commit below", "rwpxovrz", true);
+  await expectCommitted(page, "Parent", "rwpxovrz", true);
   await expect(page.locator("#destination-error")).toBeHidden();
   await expect(squash).toBeEnabled();
   await reset("invalid");
@@ -706,7 +706,7 @@ try {
   await expectRoute(page, "rwpxovrz", true);
   await expect(squash).toBeDisabled();
   await page.locator("#cancel-custom").click();
-  await expectCommitted(page, "Commit below", "rwpxovrz");
+  await expectCommitted(page, "Parent", "rwpxovrz");
 
   // Off-filter custom IDs remain fixed, with a notice and no invented arrow.
   await reset("hidden");
@@ -736,7 +736,7 @@ try {
 
   // Queued work pins source/destination, but hiding/showing the log is safe.
   await reset("queued");
-  await expectCommitted(page, "Commit below", "pqxvqmoo");
+  await expectCommitted(page, "Parent", "pqxvqmoo");
   await expectRoute(page, "pqxvqmoo");
   for (const id of [
     "destination-toggle",
@@ -778,7 +778,7 @@ try {
       await page.evaluate(() => document.fonts.check("13px Source")),
       true,
     );
-    await expectCommitted(page, "Commit below", "pqxvqmoo");
+    await expectCommitted(page, "Parent", "pqxvqmoo");
     await expectClickOnly(page);
     await expectCompactGraph(page);
     await expectRoute(page, "pqxvqmoo");

@@ -421,7 +421,7 @@
         Ready · choose an option to try its interaction.
       </p>
       <p class="footnote">
-        Default = the reviewed commit’s actual parent, not @-. No text entry.
+        Default = the reviewed revision’s actual parent, not @-. No text entry.
         IDs are read-only unless part of an obvious, labeled dropdown. The 13px
         monospace log keeps normal line height and a plain-ended margin arrow.
       </p>
@@ -439,7 +439,7 @@
           id: 2,
           name: "Two explicit choices",
           description:
-            "Commit below or Pick commit… as adjacent buttons. The ID stays read-only.",
+            "Parent or Pick revision… as adjacent buttons. The ID stays read-only.",
           kind: "segments",
         },
         {
@@ -525,7 +525,7 @@
           instance.design.kind === "segments" ? "parent" : "trigger",
         );
         announce(
-          `Option ${instance.design.id}: Commit below → ${currentId(instance)}`,
+          `Option ${instance.design.id}: Parent → ${currentId(instance)}`,
         );
       }
       function beginPick(instance, action = "trigger") {
@@ -538,7 +538,7 @@
           .querySelector(`[data-revision="${instance.candidate}"] button`)
           .focus({ preventScroll: true });
         announce(
-          `Option ${instance.design.id}: choose a commit; Escape cancels`,
+          `Option ${instance.design.id}: choose a revision; Escape cancels`,
         );
       }
       function cancelPick(instance, focus = true) {
@@ -566,7 +566,7 @@
       function renderControl(instance) {
         const bar = instance.root.querySelector(".topbar");
         const id = currentId(instance),
-          mode = instance.mode === "parent" ? "Commit below" : "Custom";
+          mode = instance.mode === "parent" ? "Parent" : "Custom";
         const summary = `<span class="mode">${mode}</span><span class="separator"> · </span><span class="destination">${id}</span>`;
         const label = '<span class="squash-label">Squash into →</span>';
         const expanded =
@@ -581,7 +581,7 @@
             bar.innerHTML = `${label}<button class="combined" ${menuAttrs}>${summary}<span class="chevron" aria-hidden="true">⌄</span></button>`;
             break;
           case "segments":
-            bar.innerHTML = `${label}<div class="segments" role="group" aria-label="Squash destination"><button data-action="parent" aria-pressed="${instance.mode === "parent"}">Commit below</button><button data-action="pick" aria-pressed="${instance.mode === "custom"}" aria-controls="${instance.key}-picker" aria-expanded="${instance.picking}">Pick commit…</button></div><output class="destination" aria-label="Resolved destination ID">${id}</output>`;
+            bar.innerHTML = `${label}<div class="segments" role="group" aria-label="Squash destination"><button data-action="parent" aria-pressed="${instance.mode === "parent"}">Parent</button><button data-action="pick" aria-pressed="${instance.mode === "custom"}" aria-controls="${instance.key}-picker" aria-expanded="${instance.picking}">Pick revision…</button></div><output class="destination" aria-label="Resolved destination ID">${id}</output>`;
             break;
           case "summary":
             bar.innerHTML = `${label}<span class="summary">${summary}</span><button ${menuAttrs}>Change…</button>`;
@@ -621,7 +621,7 @@
           menu.id = instance.key + "-menu";
           menu.setAttribute("role", "menu");
           menu.setAttribute("aria-label", "Squash destination choices");
-          menu.innerHTML = `<button role="menuitemradio" aria-checked="${instance.mode === "parent"}" data-choice="parent"><span>Commit below</span><span class="destination">${parents[sourceId]}</span></button><button role="menuitem" data-choice="pick">Choose commit in log…</button><div class="menu-note">Reviewed source: ${sourceId}</div>`;
+          menu.innerHTML = `<button role="menuitemradio" aria-checked="${instance.mode === "parent"}" data-choice="parent"><span>Parent</span><span class="destination">${parents[sourceId]}</span></button><button role="menuitem" data-choice="pick">Choose revision in log…</button><div class="menu-note">Reviewed source: ${sourceId}</div>`;
           menu.querySelector('[data-choice="parent"]').onclick = () =>
             setParent(instance);
           menu.querySelector('[data-choice="pick"]').onclick = () =>
@@ -702,7 +702,7 @@
             : "Log temporarily open · choosing or cancelling hides it again"
           : "Log hidden";
         if (!instance.picking) return;
-        panel.innerHTML = `<div class="pick-head"><span>Choose destination · Esc cancels</span><button data-cancel>Cancel</button></div><div class="graph-viewport"><div class="gutter"><svg class="route" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"><path class="shaft" stroke-dasharray="3 2"></path><path class="tip"></path></svg></div><div class="graph" tabindex="0" role="region" aria-label="Monospace jj log graph"></div></div><div class="pick-foot"><span>Source stays ${sourceId}</span><button data-parent>Use commit below</button></div>`;
+        panel.innerHTML = `<div class="pick-head"><span>Choose destination · Esc cancels</span><button data-cancel>Cancel</button></div><div class="graph-viewport"><div class="gutter"><svg class="route" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"><path class="shaft" stroke-dasharray="3 2"></path><path class="tip"></path></svg></div><div class="graph" tabindex="0" role="region" aria-label="Monospace jj log graph"></div></div><div class="pick-foot"><span>Source stays ${sourceId}</span><button data-parent>Use parent</button></div>`;
         panel.querySelector("[data-cancel]").onclick = () =>
           cancelPick(instance);
         panel.querySelector("[data-parent]").onclick = () =>
@@ -727,7 +727,7 @@
             revision.id === sourceId
               ? "Reviewed source"
               : revision.id === "zzzzzzzz"
-                ? "Immutable commit"
+                ? "Immutable revision"
                 : revision.eligible
                   ? "Choose this destination"
                   : "Not an older ancestor";

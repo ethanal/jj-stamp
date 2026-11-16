@@ -844,8 +844,8 @@
           <div class="eyebrow">jj-stamp / design A</div>
           <h1>One dropdown. A clear destination.</h1>
           <p class="muted">
-            Mode and destination in one compact control. Use the commit below,
-            or choose a commit in the log—even when it starts hidden.
+            Mode and destination in one compact control. Use the parent, or
+            choose a revision in the log—even when it starts hidden.
           </p>
         </div>
         <span class="prototype"
@@ -872,8 +872,8 @@
       </nav>
       <div class="controls">
         <span class="hint" id="try-hint"
-          >Try: review the parent (demo). Commit below follows the blue source,
-          not @.</span
+          >Try: review the parent (demo). Parent follows the blue source, not
+          @.</span
         >
         <div class="demo-controls">
           <button id="review-parent">Review parent (demo)</button
@@ -881,10 +881,10 @@
           ><label
             >Example state
             <select id="scenario" aria-label="Example state">
-              <option value="default">Commit below (default)</option>
-              <option value="collapsed">Commit below, log hidden</option>
-              <option value="picking">Picking a custom commit</option>
-              <option value="custom">Custom commit chosen</option>
+              <option value="default">Parent (default)</option>
+              <option value="collapsed">Parent, log hidden</option>
+              <option value="picking">Picking a custom revision</option>
+              <option value="custom">Custom revision chosen</option>
               <option value="custom-collapsed">Custom, log hidden</option>
               <option value="invalid">Custom target became the source</option>
               <option value="queued">Queue in progress</option>
@@ -913,7 +913,7 @@
               aria-labelledby="destination-label destination-mode destination-id"
               aria-describedby="destination-error"
             >
-              <span id="destination-mode">Commit below</span>
+              <span id="destination-mode">Parent</span>
               <span class="muted" aria-hidden="true">·</span>
               <output class="target-id" id="destination-id">pqxvqmoo</output>
               <span class="destination-chevron" aria-hidden="true">⌄</span>
@@ -936,7 +936,7 @@
               >
                 <span class="menu-item-top"
                   ><span class="menu-check" aria-hidden="true">✓</span
-                  ><strong>Commit below</strong
+                  ><strong>Parent</strong
                   ><code id="parent-destination">pqxvqmoo</code></span
                 >
                 <span class="menu-description" id="parent-detail"></span>
@@ -963,7 +963,7 @@
               >
                 <span class="menu-item-top"
                   ><span class="menu-check" aria-hidden="true"></span
-                  ><strong>Choose commit in log…</strong></span
+                  ><strong>Choose revision in log…</strong></span
                 >
                 <span class="menu-description" id="choose-custom-detail"
                   >Opens the log temporarily. Click a row to confirm.</span
@@ -1064,7 +1064,7 @@
             </div>
 
             <div class="hidden-target" id="outside" hidden>
-              The destination is outside the log filter. No visible commit is
+              The destination is outside the log filter. No visible revision is
               substituted.
             </div>
             <div class="log-viewport" id="log-viewport">
@@ -1132,9 +1132,9 @@
         <article>
           <h2><span class="number">01</span>A source-relative default</h2>
           <p>
-            Commit below always means the reviewed commit’s immediate parent—not
-            the working copy’s parent, and not the next filtered log row.
-            Changing reviews updates this default.
+            Parent always means the reviewed revision’s immediate parent—not the
+            working copy’s parent, and not the next filtered log row. Changing
+            reviews updates this default.
           </p>
         </article>
         <article>
@@ -1142,7 +1142,7 @@
           <p>
             The bordered control combines mode and ID. Its menu explains the
             parent, remembers the last custom destination, and provides one
-            explicit Choose commit in log… action. No separate Change button.
+            explicit Choose revision in log… action. No separate Change button.
           </p>
         </article>
         <article>
@@ -1216,7 +1216,7 @@
           };
         if (revision.immutable)
           return {
-            error: `Commit ${revision.id} is immutable. Squash is blocked.`,
+            error: `Revision ${revision.id} is immutable. Squash is blocked.`,
           };
         if (
           revision.id === newWorkingCopy.id ||
@@ -1236,7 +1236,7 @@
         if (!parentId)
           return {
             error:
-              "The reviewed commit has no single usable parent. Choose a custom destination.",
+              "The reviewed revision has no single usable parent. Choose a custom destination.",
           };
         return resultFor(parentId);
       }
@@ -1346,7 +1346,7 @@
         render();
         byId("destination-toggle").focus({ preventScroll: true });
         tell(
-          `Commit below selected · source ${source().id} → parent ${parentResult().id}`,
+          `Parent selected · source ${source().id} → parent ${parentResult().id}`,
         );
       }
       function useCustom() {
@@ -1395,7 +1395,7 @@
         byId("destination-mode").textContent = picking
           ? "Choosing…"
           : mode === "parent"
-            ? "Commit below"
+            ? "Parent"
             : "Custom";
         byId("destination-id").textContent =
           byId("selection-target").textContent =
@@ -1420,16 +1420,16 @@
         byId("squash-demo").title =
           result.error ||
           (picking
-            ? "Click a commit to confirm the custom destination"
+            ? "Click a revision to confirm the custom destination"
             : queued
               ? "Queued work is pinned"
               : `Squash into ${result.id}`);
         byId("log-tip").textContent = result.error
-          ? "No destination fallback. Choose Commit below or click a different custom destination."
+          ? "No destination fallback. Choose Parent or click a different custom destination."
           : picking
-            ? "Preview only. Click a commit or press Enter; Esc restores the previous mode."
+            ? "Preview only. Click a revision or press Enter; Esc restores the previous mode."
             : mode === "parent"
-              ? "Commit below = the reviewed source’s actual parent. @ is not used."
+              ? "Parent = the reviewed source’s actual parent. @ is not used."
               : "Custom stays fixed when @ moves. Use the destination dropdown to choose another.";
         byId("selection-state").textContent = picking
           ? "Preview destination"
@@ -1449,7 +1449,7 @@
                   ? picking
                     ? "Preview squash destination"
                     : "Squash destination"
-                  : resultFor(row.dataset.revision).error || "Mutable commit",
+                  : resultFor(row.dataset.revision).error || "Mutable revision",
             );
         });
         drawRoute();
@@ -1504,7 +1504,7 @@
         finishPicking();
         render();
         tell(
-          `Destination unchanged · ${mode === "parent" ? "Commit below" : customId}`,
+          `Destination unchanged · ${mode === "parent" ? "Parent" : customId}`,
         );
         byId("destination-toggle").focus({ preventScroll: true });
       }
@@ -1539,12 +1539,12 @@
                 ? "hidden"
                 : view;
         byId("try-hint").textContent = logCollapsed
-          ? "Open the destination dropdown, then Choose commit in log… to reveal the log temporarily."
+          ? "Open the destination dropdown, then Choose revision in log… to reveal the log temporarily."
           : mode === "parent" && !picking
-            ? "Commit below follows the reviewed source’s parent, independently of @."
+            ? "Parent follows the reviewed source’s parent, independently of @."
             : picking
               ? "Choosing is a preview. Click a row to confirm; Escape restores the previous destination."
-              : "Custom stays fixed. Open the dropdown to choose again or return to Commit below.";
+              : "Custom stays fixed. Open the dropdown to choose again or return to Parent.";
         byId("destination-toggle").disabled = queued;
         byId("cancel-custom").disabled = queued;
         byId("pick-help").hidden = !picking;
@@ -1586,7 +1586,7 @@
               ? "Reviewed source"
               : revision.id === result.id
                 ? "Squash destination"
-                : unavailable || "Mutable commit",
+                : unavailable || "Mutable revision",
           );
           review.disabled = picking && !!unavailable;
           review.title = isSource
@@ -1768,7 +1768,7 @@
         sourceIndex++;
         render();
         tell(
-          `Now reviewing ${source().id} · Commit below follows its actual parent · diff content remains illustrative`,
+          `Now reviewing ${source().id} · Parent follows its actual parent · diff content remains illustrative`,
         );
       };
       document

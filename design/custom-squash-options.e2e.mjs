@@ -55,11 +55,11 @@ async function openPicker(root, id, keyboard = false) {
     if (keyboard) {
       await root.getByRole("menuitemradio").press("ArrowDown");
       await root
-        .getByRole("menuitem", { name: "Choose commit in log…" })
+        .getByRole("menuitem", { name: "Choose revision in log…" })
         .press("Enter");
     } else
       await root
-        .getByRole("menuitem", { name: "Choose commit in log…" })
+        .getByRole("menuitem", { name: "Choose revision in log…" })
         .click();
   }
   await expect(root.locator(".pick-panel")).toBeVisible();
@@ -162,9 +162,7 @@ async function resetParent(root, id) {
   if (id === 2) await root.locator('[data-action="parent"]').click();
   else if (id === 4) {
     await opener(root, id).click();
-    await root
-      .getByRole("button", { name: "Use commit below", exact: true })
-      .click();
+    await root.getByRole("button", { name: "Use parent", exact: true }).click();
   } else {
     await opener(root, id).click();
     await root.getByRole("menuitemradio").click();
@@ -278,14 +276,14 @@ try {
     await opener(root, id).click();
     if (![2, 4].includes(id))
       await root
-        .getByRole("menuitem", { name: "Choose commit in log…" })
+        .getByRole("menuitem", { name: "Choose revision in log…" })
         .click();
     await page.keyboard.press("Escape");
     await expectClosed(root, "rwpxovrz");
     await opener(root, id).click();
     if (![2, 4].includes(id))
       await root
-        .getByRole("menuitem", { name: "Choose commit in log…" })
+        .getByRole("menuitem", { name: "Choose revision in log…" })
         .click();
     await root.locator('[data-revision="ksuunvyp"] .title').click();
     await expectClosed(root, "ksuunvyp");

@@ -1,8 +1,9 @@
 # Design A: one squash-destination dropdown
 
-Design only. No production UI, API, or squash engine changed. This develops
-option A (the first/combined-dropdown option) from `custom-squash-options.html`
-into the full review-workspace demo. The five-option gallery remains available
+Interactive design reference for the implemented production destination picker.
+This standalone fixture develops option A (the first/combined-dropdown option)
+from `custom-squash-options.html` into the full review-workspace demo; it never
+calls the API or mutates a repository. The five-option gallery remains available
 for comparison in `custom-squash-options.md`.
 
 Open `design/custom-squash-destination.html`, or display the generated
@@ -12,7 +13,7 @@ Open `design/custom-squash-destination.html`, or display the generated
 
 The existing 44px top bar contains **Squash into →** and one bordered dropdown:
 
-- Default: **Commit below · pqxvqmoo ⌄**.
+- Default: **Parent · pqxvqmoo ⌄**.
 - Confirmed custom: **Custom · rwpxovrz ⌄**.
 - Unconfirmed row preview: **Choosing… · rwpxovrz ⌄**, with a dashed amber border.
 
@@ -25,13 +26,13 @@ ID is content inside an obvious dropdown, not an unmarked standalone action.
 
 The menu names the reviewed source and provides:
 
-1. **Commit below**: actual parent ID, commit title, and “Parent of <source>”.
+1. **Parent**: actual parent ID, revision title, and “Parent of <source>”.
    The checked radio indicates the committed mode, not a hover preview.
 2. **Custom destination**, once one has been chosen: the remembered fixed ID and
-   title. Switching to Commit below does not erase this choice; selecting the
+   title. Switching to Parent does not erase this choice; selecting the
    remembered row restores it without opening the log. Invalidated choices are
    disabled and explain why.
-3. **Choose commit in log…**: an explicit action for picking a new custom target.
+3. **Choose revision in log…**: an explicit action for picking a new custom target.
    Its description explains whether the log opens temporarily or is already open.
    During picking, it returns to the current preview rather than resetting it.
 
@@ -42,22 +43,22 @@ Scrolling its trigger out of view dismisses the menu without changing the target
 
 ## Default is source-relative, never `@-`
 
-Commit below uses explicit parent metadata for the reviewed source, not working
+Parent uses explicit parent metadata for the reviewed source, not working
 copy position or adjacency in a filtered graph:
 
 - Initially review `vqkqszmu`; its actual parent is `pqxvqmoo`.
 - **Move @ (demo)** advances the working copy without changing the destination.
-- **Review parent (demo)** reviews `pqxvqmoo`, so Commit below becomes `rwpxovrz`,
+- **Review parent (demo)** reviews `pqxvqmoo`, so Parent becomes `rwpxovrz`,
   even while `@` stays at `vqkqszmu` or moves to a new child.
 - **Parent hidden by log filter** keeps the true parent destination. The menu and
-  log notice explain that it is outside the filter; no visible commit substitutes.
+  log notice explain that it is outside the filter; no visible revision substitutes.
 
-Selecting Commit below explicitly returns to this mode from a custom choice or
+Selecting Parent explicitly returns to this mode from a custom choice or
 preview. There is no generated revset or hidden working-copy-relative expression.
 
 ## Choose a custom target
 
-1. Open the dropdown and select **Choose commit in log…**. The margin arrow is
+1. Open the dropdown and select **Choose revision in log…**. The margin arrow is
    also a keyboard-accessible shortcut. Neither changes the reviewed source.
 2. Hover or focus an eligible row. Its amber tint and dashed arrow preview the
    destination. The top bar says **Choosing…**, the diff footer says **Preview
@@ -90,9 +91,9 @@ when `@` moves. To change it again, use the same obvious dropdown and named acti
 
 ## Guardrails and limitations
 
-- Source, immutable commits, and other ineligible fixture rows cannot be chosen.
+- Source, immutable revisions, and other ineligible fixture rows cannot be chosen.
   If a custom target becomes the reviewed source, show the reason and block
-  squash—no stale-ID fallback or silent switch to Commit below. The menu still
+  squash—no stale-ID fallback or silent switch to Parent. The menu still
   allows explicit recovery using the parent or a new eligible target.
 - Previously chosen off-filter targets keep their ID, with an outside-filter
   notice, but no misleading graph arrow. Choosing a new target requires a visible
@@ -104,13 +105,20 @@ when `@` moves. To change it again, use the same obvious dropdown and named acti
   prefixes, no row gaps/padding/wrapping, and horizontal scrolling. The amber
   arrow stays in the existing 20px gutter, has no source dot, and lands at the
   destination. No extra role labels or destination stripe.
-- This is a static linear fixture, not jj evaluation. Merges, missing/immutable
-  parents, conflicts, ancestry validation, operation/version checks, persistence,
-  and navigation scope need production decisions and backend validation. Browser
-  control state is not write authority.
+- This is a static linear fixture, not jj evaluation. Production separately
+  validates eligible mutable ancestors, full IDs, mutability, divergence, source
+  parentage, exact selected bytes, and operation/version state on the server.
+  Merges and unavailable parents remain unsupported. Browser control state is
+  never write authority; destination choices are local to the current review.
 - Source navigation, working-copy moves, filters, and queue states are demo
   fixtures. Headings and log highlights update; diff contents remain illustrative.
-  Squash only describes what it would do. The actual engine is parent-only.
+  Squash only describes what it would do. The production engine supports Parent
+  and eligible custom ancestors, with pinned queue destinations and undo.
+
+Production coverage lives in `tests/custom-squash.e2e.ts`,
+`tests/custom-squash.test.ts`, `tests/squash-destination.test.ts`, and
+`tests/queue.test.ts`; the browser test exercises actual jj rewrites and undo,
+not this fixture.
 
 ## Checks and presentation
 
