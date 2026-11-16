@@ -24,7 +24,7 @@ import {
   ColorSchemePicker,
   SettingsDialog,
   RevisionHeading,
-  revisionPageTitle,
+  repositoryPageTitle,
 } from "../src/ReviewToolbar.tsx";
 
 const source = {
@@ -129,25 +129,23 @@ test("resizers expose their purpose, minimum and current width without a maximum
   assert.match(html, /tabindex="0"/);
 });
 
-test("page title puts the description before the short change ID and full repository path", () => {
+test("page title uses jj-stamp and only the last repository path component", () => {
   assert.equal(
-    revisionPageTitle(source, "/home/me/repository"),
-    "Review a change (abcdefgh /home/me/repository)",
+    repositoryPageTitle("/home/me/repository"),
+    "jj-stamp: repository",
   );
   assert.equal(
-    revisionPageTitle(
-      { ...source, changeIdPrefix: "abcdefghij" },
-      "/repo with spaces",
-    ),
-    "Review a change (abcdefghij /repo with spaces)",
+    repositoryPageTitle("/home/me/repo with spaces/"),
+    "jj-stamp: repo with spaces",
   );
   assert.equal(
-    revisionPageTitle({ ...source, description: "" }, "/repo"),
-    "(no description) (abcdefgh /repo)",
+    repositoryPageTitle("C:\\Users\\me\\repository\\"),
+    "jj-stamp: repository",
   );
-  assert.equal(revisionPageTitle(source, undefined), "jj-stamp");
-  assert.equal(revisionPageTitle(undefined, "/repo"), "jj-stamp");
-  assert.equal(revisionPageTitle(undefined, undefined), "jj-stamp");
+  assert.equal(repositoryPageTitle("répertoire"), "jj-stamp: répertoire");
+  assert.equal(repositoryPageTitle(undefined), "jj-stamp");
+  assert.equal(repositoryPageTitle(""), "jj-stamp");
+  assert.equal(repositoryPageTitle("/"), "jj-stamp");
 });
 
 test("heading groups change ID, title, commit ID and totals without the author", () => {

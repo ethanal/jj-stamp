@@ -48,7 +48,7 @@ import {
 import {
   SettingsDialog,
   RevisionHeading,
-  revisionPageTitle,
+  repositoryPageTitle,
 } from "./ReviewToolbar";
 import { GoToRevision } from "./GoToRevision";
 import { ShortcutsDialog } from "./ShortcutsDialog";
@@ -130,13 +130,8 @@ function App() {
     [contentStore, state?.source.commitId, state?.version],
   );
   useEffect(() => {
-    document.title = revisionPageTitle(source, state?.repo.path);
-  }, [
-    source?.changeId,
-    source?.changeIdPrefix,
-    source?.description,
-    state?.repo.path,
-  ]);
+    document.title = repositoryPageTitle(state?.repo.path);
+  }, [state?.repo.path]);
   const [activePath, setActivePath] = useState("");
   const [range, setRange] = useState<SelectedLineRange | null>(null);
   // Refresh stays stable (it also drives initial loading), but must inspect the
