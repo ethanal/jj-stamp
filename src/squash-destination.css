@@ -40,7 +40,7 @@
   border-color: var(--error-border);
 }
 .squash-destination-trigger:disabled {
-  opacity: 0.55;
+  opacity: 0.4;
   cursor: not-allowed;
 }
 .squash-destination-dot {

@@ -207,7 +207,7 @@ function mockedState(
     version: `version-${label}`,
     source,
     parent: parentRevision,
-    targets: [],
+    targets: [parentRevision],
     files: [diff(label)],
     operation,
     canUndo: false,

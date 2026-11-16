@@ -85,7 +85,9 @@ async function drag(from: Locator, to: Locator) {
   await expect(page.getByRole("button", { name: "Settings" })).toBeDisabled();
   for (const button of await page.locator("button:disabled").all()) {
     const outlined = await button.evaluate((element) =>
-      element.matches(".action-button, .layout-toggle button"),
+      element.matches(
+        ".action-button, .layout-toggle button, .squash-destination-trigger",
+      ),
     );
     await expect(button).toHaveCSS("opacity", outlined ? "0.4" : "1");
   }
