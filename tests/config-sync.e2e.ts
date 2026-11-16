@@ -67,15 +67,23 @@ await first.page.addInitScript(() => {
   localStorage.setItem("jj-stamp.vim-mode", "true");
 });
 // Unlike repository refresh, settings observation must stay alive in background.
-await second.page.addInitScript(() => {
+// A source string avoids capturing tsx's keepNames helper in the getter.
+await second.page.addInitScript(`
   Object.defineProperty(document, "visibilityState", { get: () => "hidden" });
   document.hasFocus = () => false;
-});
+`);
 await Promise.all([
   first.page.goto(first.url),
   second.page.goto(second.url),
   third.goto(first.url),
 ]);
+assert.deepEqual(
+  await second.page.evaluate(() => ({
+    visibility: document.visibilityState,
+    focused: document.hasFocus(),
+  })),
+  { visibility: "hidden", focused: false },
+);
 for (const page of pages) {
   await expect(page.locator("html")).toHaveAttribute(
     "data-color-scheme",
