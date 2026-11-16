@@ -1483,9 +1483,7 @@ kbd {
   .repo-path {
     max-width: 18%;
   }
-  .revision-info .commit-id {
-    display: none;
-  }
+
   .file-bar-tools {
     gap: 10px;
   }
@@ -1498,6 +1496,11 @@ kbd {
 }
 @media (min-width: 851px) and (max-width: 1200px) {
   .repo-path {
+    display: none;
+  }
+}
+@media (min-width: 851px) and (max-width: 1100px) {
+  .revision-info .commit-id {
     display: none;
   }
 }

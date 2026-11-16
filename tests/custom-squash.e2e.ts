@@ -358,6 +358,8 @@ try {
   for (const width of [1200, 1000, 800, 390, 320]) {
     await page.setViewportSize({ width, height: 900 });
     await expect(trigger).toBeVisible();
+    if (width <= 850)
+      await expect(page.getByLabel("Current commit ID")).toBeVisible();
     await openMenu();
     const bounds = await menu.boundingBox();
     assert(bounds && bounds.x >= 0 && bounds.x + bounds.width <= width);
