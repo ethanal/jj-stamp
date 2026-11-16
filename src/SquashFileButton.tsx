@@ -23,7 +23,7 @@ export function SquashFileButton({
       title={
         reason ||
         (file.oldPath
-          ? "Squash all text edits into the original path; keep the rename in this change"
+          ? "Squash the rename and all text edits into the immediate parent"
           : "Squash all changes in this file into the immediate parent")
       }
       disabled={disabled || !!reason || !(file.additions + file.deletions)}

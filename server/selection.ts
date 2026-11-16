@@ -40,10 +40,9 @@ export function materializeSelection(
   if (Buffer.from(input.patch, "utf8").toString("utf8") !== input.patch)
     throw new Error("Patch is not lossless UTF-8 text.");
   const file = parseFile(input.patch, input.path);
-  // Select content independently of the move: the parent keeps the old path,
-  // while jj leaves the rename and unselected edits in the source change.
+  // Selecting any edits in a rename also moves the file into the parent.
   // The caller must account for BOTH paths in the scratch inventories.
-  const resultPath = file.oldPath ?? input.path;
+  const oldPath = file.oldPath ?? input.path;
   const baseLines = textLines(base, "Base file");
   const sourceLines = textLines(source, "Source file");
   const headerLines = input.patch.split("\n").slice(
@@ -199,9 +198,12 @@ export function materializeSelection(
         ? "deleted file mode 100644\n"
         : "";
   const preview =
-    `diff --git a/${resultPath} b/${resultPath}\n${mode}` +
-    `--- ${base === null ? "/dev/null" : `a/${resultPath}`}\n` +
-    `+++ ${result === null ? "/dev/null" : `b/${resultPath}`}\n` +
+    `diff --git a/${oldPath} b/${input.path}\n${mode}` +
+    (file.oldPath === undefined
+      ? ""
+      : `rename from ${oldPath}\nrename to ${input.path}\n`) +
+    `--- ${base === null ? "/dev/null" : `a/${oldPath}`}\n` +
+    `+++ ${result === null ? "/dev/null" : `b/${input.path}`}\n` +
     previewHunks.join("");
   return { result, preview };
 }

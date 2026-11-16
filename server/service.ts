@@ -1659,20 +1659,20 @@ export class ReviewService {
         );
         if (file.oldPath !== undefined) {
           // Account for the complete two-path inventory, not just the content
-          // diff. The selected parent tree keeps the old name; the source tree
-          // (and workspace) keeps the move plus any unselected content edits.
+          // diff. The parent receives the move and selected edits; the source
+          // tree (and workspace) keeps its contents at the destination path.
           editPlan.files.push(
             {
               path: file.oldPath,
               base: base!.toString("base64"),
               source: null,
-              result: materialized.result!.toString("base64"),
+              result: null,
             },
             {
               path: file.path,
               base: null,
               source: source!.toString("base64"),
-              result: null,
+              result: materialized.result!.toString("base64"),
             },
           );
         } else {

@@ -660,7 +660,7 @@ test("files with an explicit squash restriction cannot enter the optimistic queu
   assert.deepEqual(projected.files, [renamed]);
 });
 
-test("optimistic rename squash preserves both paths and retains a pure move after all edits", () => {
+test("optimistic rename squash moves the rename with selected edits and leaves ordinary edits", () => {
   const renamed = {
     ...file("new.ts", "@@ -1,2 +1,2 @@\n-old\n+new\n-tail\n+end"),
     oldPath: "old.ts",
@@ -677,8 +677,9 @@ test("optimistic rename squash preserves both paths and retains a pure move afte
   const first = select(repo, "new.ts-0", 1, 2);
   const partial = projectSquash(repo, first);
   validatePatches(partial);
-  assert.equal(parseFile(partial.files[0].patch, "new.ts").oldPath, "old.ts");
-  assert.equal(partial.files[0].oldPath, "old.ts");
+  assert.equal(parseFile(partial.files[0].patch, "new.ts").oldPath, undefined);
+  assert.equal(partial.files[0].oldPath, undefined);
+  assert.ok(!partial.files[0].patch.includes("rename from"));
   assert.equal(partial.files[0].additions, 1);
   assert.equal(partial.files[0].deletions, 1);
   assert.equal(partial.files[1], ordinary);
@@ -687,11 +688,8 @@ test("optimistic rename squash preserves both paths and retains a pure move afte
   const completed = projectSquash(partial, rest);
   validatePatches(completed);
   assert.deepEqual(completed, projectSquash(repo, combined));
-  assert.equal(completed.files[0].path, "new.ts");
-  assert.equal(completed.files[0].oldPath, "old.ts");
-  assert.equal(completed.files[0].additions, 0);
-  assert.equal(completed.files[0].deletions, 0);
-  assert.deepEqual(completed.files[0].hunks, []);
-  assert.deepEqual(refsFromFile(completed, "new.ts"), []);
-  assert.equal(completed.files[1], ordinary);
+  assert.deepEqual(completed.files, [ordinary]);
+  assert.deepEqual(projectSquash(repo, refsFromFile(repo, "new.ts")).files, [
+    ordinary,
+  ]);
 });

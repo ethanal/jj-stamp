@@ -136,16 +136,20 @@ function checkMaterializedRename(
   if (actual.preview) {
     assert.match(
       actual.preview,
-      /^diff --git a\/old\/file.txt b\/old\/file.txt\n/,
+      /^diff --git a\/old\/file.txt b\/new\/file.txt\n/,
     );
-    assert.ok(!actual.preview.includes("rename from"));
-    assert.ok(!actual.preview.includes("new/file.txt"));
-    const parsed = parseFile(actual.preview, "old/file.txt");
-    assert.equal(parsed.oldPath, undefined);
+    assert.ok(actual.preview.includes("rename from old/file.txt\n"));
+    assert.ok(actual.preview.includes("rename to new/file.txt\n"));
+    const parsed = parseFile(actual.preview, "new/file.txt");
+    assert.equal(parsed.oldPath, "old/file.txt");
+    assert.equal(
+      parsed.hunks.length,
+      selections.filter((selection) => selection.lines.length).length,
+    );
     assert.deepEqual(
       materializeSelection(
         {
-          path: "old/file.txt",
+          path: "new/file.txt",
           patch: actual.preview,
           selections: parsed.hunks.map((hunk, index) => ({
             hunk: index,
@@ -163,7 +167,7 @@ function checkMaterializedRename(
   return actual;
 }
 
-test("rename materialization selects exact edits at the old path, never the move", () => {
+test("rename materialization previews the move together with exactly the selected edits", () => {
   const patch = renamePatch(
     "old/file.txt",
     "new/file.txt",
@@ -469,6 +473,17 @@ async function treeAt(repoPath: string, revision: string) {
   return tree;
 }
 
+function withRenamedFile(
+  tree: Record<string, Buffer>,
+  oldPath: string,
+  newPath: string,
+  contents: string,
+) {
+  const result = { ...tree, [newPath]: Buffer.from(contents) };
+  delete result[oldPath];
+  return result;
+}
+
 async function assertWorkspace(
   repoPath: string,
   oldPath: string,
@@ -482,7 +497,7 @@ async function assertWorkspace(
     });
 }
 
-test("direct and legacy rename squash move only selected text into the parent's old path and undo exactly", async (t) => {
+test("direct and legacy rename squash move the rename and selected text into the parent and undo exactly", async (t) => {
   for (const api of ["direct", "legacy"] as const)
     for (const scope of ["partial", "all"] as const)
       for (const mixed of [false, true])
@@ -553,15 +568,19 @@ test("direct and legacy rename squash move only selected text into the parent's 
                       target: state.parent!.changeId,
                       selections,
                     });
-                    assert.match(
-                      preview.patch,
-                      new RegExp(
-                        `^diff --git a/${oldPath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")} b/`,
-                        "m",
+                    assert.ok(
+                      preview.patch.includes(
+                        `diff --git a/${oldPath} b/${newPath}\n`,
                       ),
                     );
-                    assert.ok(!preview.patch.includes("rename from"));
-                    assert.ok(!preview.patch.includes(newPath));
+                    assert.ok(
+                      preview.patch.includes(`rename from ${oldPath}\n`),
+                    );
+                    assert.ok(preview.patch.includes(`rename to ${newPath}\n`));
+                    if (scope === "partial") {
+                      assert.ok(!preview.patch.includes("+modified line 10"));
+                      assert.ok(!preview.patch.includes("modified line 20"));
+                    }
                     assert.equal(
                       (await service.getState()).operation,
                       state.operation,
@@ -585,8 +604,12 @@ test("direct and legacy rename squash move only selected text into the parent's 
             assert.deepEqual(
               await treeAt(repoPath, result.state.parent!.commitId),
               {
-                ...originalParent,
-                [oldPath]: Buffer.from(expectedParent),
+                ...withRenamedFile(
+                  originalParent,
+                  oldPath,
+                  newPath,
+                  expectedParent,
+                ),
                 ...(mixed
                   ? { "regular.txt": Buffer.from("regular new\n") }
                   : {}),
@@ -598,32 +621,46 @@ test("direct and legacy rename squash move only selected text into the parent's 
             );
             const retained = result.state.files.find(
               (file) => file.path === newPath,
-            )!;
-            assert.equal(
-              retained.oldPath,
-              oldPath,
-              "the rename itself always stays in source",
             );
-            assert.equal(retained.unsupported, undefined);
-            assert.equal(retained.squashUnsupported, undefined);
-            if (scope === "all") assert.deepEqual(retained.hunks, []);
-            else {
+            if (scope === "all") {
+              assert.equal(
+                retained,
+                undefined,
+                "all selected text and the rename leave the source diff",
+              );
+              await assert.rejects(
+                service.getFile({
+                  version: result.state.version,
+                  path: newPath,
+                }),
+                code("INVALID_PATH"),
+              );
+            } else {
+              assert.ok(retained);
+              assert.equal(
+                retained.oldPath,
+                undefined,
+                "remaining edits are an ordinary modification at the new path",
+              );
+              assert.equal(retained.unsupported, undefined);
+              assert.equal(retained.squashUnsupported, undefined);
               assert.equal(retained.additions, 2);
               assert.equal(retained.deletions, 1);
+              assert.ok(!retained.patch.includes("rename from"));
+              assert.deepEqual(
+                await service.getFile({
+                  version: result.state.version,
+                  path: newPath,
+                }),
+                {
+                  oldFile: { name: newPath, contents: expectedParent },
+                  newFile: { name: newPath, contents: source },
+                },
+              );
             }
             assert.equal(
               result.state.files.some((file) => file.path === "regular.txt"),
               !mixed,
-            );
-            assert.deepEqual(
-              await service.getFile({
-                version: result.state.version,
-                path: newPath,
-              }),
-              {
-                oldFile: { name: oldPath, contents: expectedParent },
-                newFile: { name: newPath, contents: source },
-              },
             );
             await assertWorkspace(repoPath, oldPath, originalSource);
             const undone = await service.undo(result.state.version);
@@ -644,7 +681,7 @@ test("direct and legacy rename squash move only selected text into the parent's 
         );
 });
 
-test("remaining renamed edits can squash in a second batch through a pure rename, with exact latest-batch undo", async (t) => {
+test("first squash carries the rename and a second batch squashes ordinary remaining edits, with exact latest-batch undo", async (t) => {
   for (const api of ["direct", "legacy"] as const)
     await t.test(api, async (t) => {
       const { repoPath, oldPath, newPath, base, source } = await fixture(t);
@@ -672,15 +709,15 @@ test("remaining renamed edits can squash in a second batch through a pure rename
       const first = await squash(initial, [
         {
           id: firstHunk.id,
-          lines: firstHunk.rows
-            .filter((row) => row.raw.startsWith("-"))
-            .map((row) => row.index),
+          lines: changes(firstHunk),
         },
       ]);
-      const partialParent = {
-        ...originalParent,
-        [oldPath]: Buffer.from(base.replace("original line 10\n", "")),
-      };
+      const partialParent = withRenamedFile(
+        originalParent,
+        oldPath,
+        newPath,
+        base.replace("original line 10\n", "modified line 10\n"),
+      );
       assert.deepEqual(
         await treeAt(repoPath, first.state.parent!.commitId),
         partialParent,
@@ -688,24 +725,28 @@ test("remaining renamed edits can squash in a second batch through a pure rename
       const remaining = first.state.files.find(
         (file) => file.path === newPath,
       )!;
-      assert.equal(remaining.oldPath, oldPath);
-      assert.equal(remaining.additions, 2);
+      assert.equal(remaining.oldPath, undefined);
+      assert.ok(!remaining.patch.includes("rename from"));
+      assert.equal(remaining.hunks.length, 1);
+      assert.equal(remaining.additions, 1);
       assert.equal(remaining.deletions, 1);
       const second = await squash(
         first.state,
         remaining.hunks.map((hunk) => ({ id: hunk.id, lines: changes(hunk) })),
       );
       assert.equal(second.warning, undefined);
-      const pure = second.state.files.find((file) => file.path === newPath)!;
-      assert.equal(pure.oldPath, oldPath);
-      assert.deepEqual(pure.hunks, []);
-      assert.equal(pure.additions, 0);
-      assert.equal(pure.deletions, 0);
-      assert.equal(pure.squashUnsupported, undefined);
-      assert.deepEqual(await treeAt(repoPath, second.state.parent!.commitId), {
-        ...originalParent,
-        [oldPath]: Buffer.from(source),
-      });
+      assert.equal(
+        second.state.files.find((file) => file.path === newPath),
+        undefined,
+      );
+      await assert.rejects(
+        service.getFile({ version: second.state.version, path: newPath }),
+        code("INVALID_PATH"),
+      );
+      assert.deepEqual(
+        await treeAt(repoPath, second.state.parent!.commitId),
+        withRenamedFile(originalParent, oldPath, newPath, source),
+      );
       assert.deepEqual(
         await treeAt(repoPath, second.state.source.commitId),
         originalSource,
@@ -811,10 +852,10 @@ test("real renamed CRLF and unterminated EOF selections retain byte-exact parent
               ).token,
             );
       assert.equal(result.warning, undefined);
-      assert.deepEqual(await treeAt(repoPath, result.state.parent!.commitId), {
-        ...originalParent,
-        [oldPath]: Buffer.from(expected),
-      });
+      assert.deepEqual(
+        await treeAt(repoPath, result.state.parent!.commitId),
+        withRenamedFile(originalParent, oldPath, newPath, expected),
+      );
       assert.deepEqual(
         await treeAt(repoPath, result.state.source.commitId),
         originalSource,
@@ -822,14 +863,15 @@ test("real renamed CRLF and unterminated EOF selections retain byte-exact parent
       assert.deepEqual(
         await service.getFile({ version: result.state.version, path: newPath }),
         {
-          oldFile: { name: oldPath, contents: expected },
+          oldFile: { name: newPath, contents: expected },
           newFile: { name: newPath, contents: source },
         },
       );
       const remaining = result.state.files.find(
         (file) => file.path === newPath,
       )!;
-      assert.equal(remaining.oldPath, oldPath);
+      assert.equal(remaining.oldPath, undefined);
+      assert.ok(!remaining.patch.includes("rename from"));
       assert.equal(remaining.additions, 1);
       assert.equal(remaining.deletions, 1);
       await assertWorkspace(repoPath, oldPath, originalSource);

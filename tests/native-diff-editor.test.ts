@@ -145,24 +145,24 @@ const renameEdits = (): DiffEditorPlan["files"] => [
     path: "old/file.txt",
     base: b64("original\n"),
     source: null,
-    result: b64("selected\n"),
+    result: null,
   },
   {
     path: "new/file.txt",
     base: null,
     source: b64("selected\nremaining\n"),
-    result: null,
+    result: b64("selected\n"),
   },
 ];
 
-test("two-path rename inventory materializes selected text at the original path only", async (t) => {
+test("two-path rename inventory moves the rename and selected text into the parent", async (t) => {
   const f = await fixture(t, renameEdits());
   await f.apply();
   assert.equal(
-    await readFile(path.join(f.right, "old/file.txt"), "utf8"),
+    await readFile(path.join(f.right, "new/file.txt"), "utf8"),
     "selected\n",
   );
-  await assert.rejects(lstat(path.join(f.right, "new/file.txt")), {
+  await assert.rejects(lstat(path.join(f.right, "old/file.txt")), {
     code: "ENOENT",
   });
   assert.equal(

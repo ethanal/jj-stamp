@@ -103,7 +103,7 @@ try {
     /^Diff for/,
   );
   await expect(page.locator(".rename-notice")).toContainText(
-    "Squash text edits into the original path",
+    "Squashing selected edits also squashes the rename into the parent.",
   );
 
   // Renamed sides hydrate from distinct paths, including collapsed old-side context.
@@ -129,8 +129,18 @@ try {
     .fill("MAX_ATTEMPTS");
   await expect(page.locator(".diff-search-count")).toHaveText("1 / 2");
   await page.keyboard.press("Escape");
-  // A single addition can be squashed while the deletion and other edits stay.
-  await changedLine("MAX_ATTEMPTS = 5").click();
+  // Select the complete delivery-key hunk. Its edits and the rename move
+  // together, leaving the retry-settings hunk at the destination path.
+  await page
+    .locator('[data-line-type="change-deletion"]')
+    .filter({ hasText: "return notification.id;" })
+    .last()
+    .click();
+  await changedLine(
+    "return `${notification.channel}:${notification.id}`;",
+  ).click({
+    modifiers: ["Shift"],
+  });
   await page.keyboard.press("s");
   await expect(
     page.getByRole("button", { name: "Undo", exact: true }),
@@ -144,53 +154,67 @@ try {
       "-r",
       after.parent!.commitId,
       "--",
-      `root-file:${JSON.stringify(oldPath)}`,
+      `root-file:${JSON.stringify(newPath)}`,
     ])
   ).stdout;
   assert.ok(parentText.includes("MAX_ATTEMPTS = 3"));
-  assert.ok(parentText.includes("MAX_ATTEMPTS = 5"));
+  assert.ok(!parentText.includes("MAX_ATTEMPTS = 5"));
   assert.ok(parentText.includes("RETRY_DELAY_MS = 500"));
+  assert.ok(
+    parentText.includes("return `${notification.channel}:${notification.id}`;"),
+  );
+  const parentPaths = (
+    await jj(repoPath, [
+      "file",
+      "list",
+      "-r",
+      after.parent!.commitId,
+      "--ignore-working-copy",
+    ])
+  ).stdout.split("\n");
+  assert.ok(parentPaths.includes(newPath));
+  assert.ok(!parentPaths.includes(oldPath));
   assert.equal(
     after.files.find((file) => file.path === newPath)?.oldPath,
-    oldPath,
+    undefined,
   );
+  await expect(page.locator(".rename-notice")).toHaveCount(0);
+  await expect(page.locator(".file-bar-filename")).toHaveText(newPath);
+  await expect(treeRow(newPath)).toContainText("M");
+  await expect(changedLine("MAX_ATTEMPTS = 5")).toBeVisible();
+  // Once the rename moves, context must hydrate both sides at the new path.
+  await page.locator("[data-expand-button]").first().click();
+  await expect(page.locator('[data-line="10"]').last()).toBeVisible();
   await expect(page.getByRole("alert")).toHaveCount(0);
   await page.screenshot({
-    path: path.join(screenshots, "renamed-partial-squash.png"),
+    path: path.join(screenshots, "rename-and-hunk-squashed.png"),
   });
   await page.getByRole("button", { name: "Undo", exact: true }).click();
-  await expect(changedLine("MAX_ATTEMPTS = 5")).toBeVisible();
+  await expect(page.locator(".file-bar-filename")).toHaveText(
+    `${oldPath} → ${newPath}`,
+  );
 
-  // Whole-file squash moves all text edits, not the path change. The optimistic
-  // view must retain a reviewable pure rename even before a refresh.
+  // Whole-file squash moves the rename and all edits, removing the file from
+  // the source diff in both the optimistic and confirmed views.
   await page
     .getByRole("button", { name: `Squash file ${newPath}`, exact: true })
     .click();
   await expect(
     page.getByRole("button", { name: "Undo", exact: true }),
   ).toBeEnabled();
-  await expect(page.locator(".rename-notice")).toContainText(
-    "Renamed without content changes.",
-  );
-  await expect(page.locator(".code-surface")).toHaveCount(0);
-  await expect(
-    page.getByRole("button", { name: `Squash file ${newPath}`, exact: true }),
-  ).toBeDisabled();
+  await expect(treeRow(newPath)).toHaveCount(0);
   after = await service.getState();
-  assert.deepEqual(
-    after.files.find((file) => file.path === newPath)?.hunks,
-    [],
-  );
   assert.equal(
-    after.files.find((file) => file.path === newPath)?.oldPath,
-    oldPath,
+    after.files.find((file) => file.path === newPath),
+    undefined,
   );
   assert.equal(mutations.length, 2);
   await expect(page.getByRole("alert")).toHaveCount(0);
   await page.screenshot({
-    path: path.join(screenshots, "renamed-all-text-squashed.png"),
+    path: path.join(screenshots, "rename-and-all-edits-squashed.png"),
   });
   await page.getByRole("button", { name: "Undo", exact: true }).click();
+  await treeRow(newPath).click();
   await expect(changedLine("MAX_ATTEMPTS = 5")).toBeVisible();
 
   await treeRow("src/settings.ts").click();
