@@ -1,120 +1,116 @@
-# Compact top-bar squash destination
+# Design A: one squash-destination dropdown
 
-For the subsequent five alternatives, see `custom-squash-options.md` and
-`custom-squash-options.html`. This document retains the previous single mockup.
-
-Design only. No production UI, API, or squash behavior changed. The main control
-is a **select** with two choices: **Commit below** (default) and **Custom…**, now
-in the existing top bar instead of the log. The control is 24px high and about
-310px wide, including the **Squash into →** label, amber destination ID, and
-explicit **Change…** button.
-There is no extra desktop toolbar row or persistent destination row in the log.
-The amber ID is read-only—not a disguised button. Use Change… to open the picker.
-
-The amber destination tint and thin source-to-destination margin arrow remain.
-The arrow has a plain source end and an arrowhead at the destination—no source
-dot. There are no role labels, colored left stripe, or extra graph-row spacing.
+Design only. No production UI, API, or squash engine changed. This develops
+option A (the first/combined-dropdown option) from `custom-squash-options.html`
+into the full review-workspace demo. The five-option gallery remains available
+for comparison in `custom-squash-options.md`.
 
 Open `design/custom-squash-destination.html`, or display the generated
 `.planka-artifacts/interactive-mockups.html` with Shelley's `output_iframe`.
 
-## When the log is hidden
+## Compact control, full workspace
 
-- Keep the same top-bar selector and resolved ID visible. Collapsing the log does
-  not change the destination; the diff reclaims its space beside a narrow rail.
-- Selecting **Custom…** or clicking **Change…** temporarily opens the log and
-  enters the same click-only picker.
-- Confirm a row, press Escape, or click Cancel: restore the previously hidden
-  layout. The top bar keeps showing the committed mode and destination.
-- If the log was already open, leave it open after picking. Users can also reopen
-  it explicitly from the rail. Hiding the log during picking cancels the preview.
-- Errors and queued-work notices live below the top bar, outside the log, so they
-  remain visible when the log is hidden. Queued work still locks destination
-  changes, but not the visibility toggle.
-- On narrow screens the header wraps compactly rather than hiding the destination
-  or overflowing. The selector and full destination ID remain available.
+The existing 44px top bar contains **Squash into →** and one bordered dropdown:
 
-## Commit below is source-relative, not `@-`
+- Default: **Commit below · pqxvqmoo ⌄**.
+- Confirmed custom: **Custom · rwpxovrz ⌄**.
+- Unconfirmed row preview: **Choosing… · rwpxovrz ⌄**, with a dashed amber border.
 
-**Commit below** means the reviewed source's actual immediate parent, resolved
-from explicit parent metadata. It is not a generated revset, not working-copy
-relative, and not the next visible row in the filtered graph.
+The complete control is 26px high and about 288px wide, including its label.
+There is no separate Change button, native mode select, or persistent destination
+row in the log. The full mode and ID remain visible when the log is hidden. The
+ID is content inside an obvious dropdown, not an unmarked standalone action.
 
-The prototype demonstrates the distinction:
+## Dropdown anatomy
 
-- Initially review `vqkqszmu`; its parent is `pqxvqmoo`.
-- **Move @ (demo)** advances the working copy without changing that default.
-- **Review parent (demo)** selects `pqxvqmoo`, so Commit below becomes `rwpxovrz`,
-  even while the working copy remains at `vqkqszmu` or its new child.
-- **Parent hidden by log filter** removes `pqxvqmoo` from the displayed graph but
-  keeps it as the destination. Show an outside-filter notice, not an arrow to the
-  next visible commit.
+The menu names the reviewed source and provides:
 
-Switching the select back to Commit below explicitly restores this behavior from
-any custom selection or invalidated target. There is no default `@-` field,
-source-ID expression, or hidden working-copy dependency.
+1. **Commit below**: actual parent ID, commit title, and “Parent of <source>”.
+   The checked radio indicates the committed mode, not a hover preview.
+2. **Custom destination**, once one has been chosen: the remembered fixed ID and
+   title. Switching to Commit below does not erase this choice; selecting the
+   remembered row restores it without opening the log. Invalidated choices are
+   disabled and explain why.
+3. **Choose commit in log…**: an explicit action for picking a new custom target.
+   Its description explains whether the log opens temporarily or is already open.
+   During picking, it returns to the current preview rather than resetting it.
 
-## Custom: click a commit
+The note “Choosing a destination does not squash any lines” separates destination
+selection from the existing Squash selection action. The menu is viewport-clamped,
+flips above its trigger when needed, and scrolls if vertical space is limited.
+Scrolling its trigger out of view dismisses the menu without changing the target.
 
-1. Select **Custom…**, click **Change…**, or use the margin arrow. This explicitly
-   enters a destination picker without changing the current review.
-2. Hover an eligible row to preview a dashed arrow. **Click the row** to confirm
-   a fixed custom destination. Source and immutable/ineligible rows are disabled.
-3. The arrow becomes solid, the amber tint moves, and squash is available. The
-   selector remains Custom; **Change…** reopens the picker. A temporarily
-   opened log returns to its hidden state.
+## Default is source-relative, never `@-`
 
-Keyboard: Change…, the arrow, and the selector are focusable; Up/Down inside the
-focused log move among eligible rows and Enter chooses. Escape or Cancel restores
-the previous committed mode and destination—including returning to Commit below
-if that was active before opening the picker.
+Commit below uses explicit parent metadata for the reviewed source, not working
+copy position or adjacency in a filtered graph:
 
-Commit IDs keep their review-navigation role outside pick mode. Choosing a
-custom destination preserves the source and selected lines and does not squash.
-After clicking a commit, the picking instructions and Cancel disappear. The
-chosen ID stays visible beside the select; Change… chooses another row.
+- Initially review `vqkqszmu`; its actual parent is `pqxvqmoo`.
+- **Move @ (demo)** advances the working copy without changing the destination.
+- **Review parent (demo)** reviews `pqxvqmoo`, so Commit below becomes `rwpxovrz`,
+  even while `@` stays at `vqkqszmu` or moves to a new child.
+- **Parent hidden by log filter** keeps the true parent destination. The menu and
+  log notice explain that it is outside the filter; no visible commit substitutes.
 
-## Click-only custom destinations
+Selecting Commit below explicitly returns to this mode from a custom choice or
+preview. There is no generated revset or hidden working-copy-relative expression.
 
-There is no custom text field, revset parser, or Apply step. A clicked destination
-stays fixed when the working copy moves; it is not a moving expression.
+## Choose a custom target
 
-While picking, squash is disabled until a row is confirmed. Escape or Cancel
-restores the previous committed choice.
+1. Open the dropdown and select **Choose commit in log…**. The margin arrow is
+   also a keyboard-accessible shortcut. Neither changes the reviewed source.
+2. Hover or focus an eligible row. Its amber tint and dashed arrow preview the
+   destination. The top bar says **Choosing…**, the diff footer says **Preview
+   destination**, and Squash selection is disabled.
+3. Click a row/ID, or press Enter, to confirm. The dropdown becomes **Custom**,
+   the arrow becomes solid, and squash is available. The selected lines and
+   source remain unchanged; nothing is squashed merely by choosing.
+4. Escape or Cancel restores the prior committed mode/ID. Opening the dropdown
+   while picking allows an explicit switch to the parent or remembered custom
+   target instead. Cancelling only the menu leaves the underlying picker active.
 
-The source itself, immutable commits, and other ineligible targets cannot be
-chosen. If a custom target becomes the selected source, show a reason and block
-squash with no stale-target fallback. Do not silently switch to Commit below;
-the user can explicitly select that mode to recover.
+There is no text field, revset parser, or Apply step. A clicked target stays fixed
+when `@` moves. To change it again, use the same obvious dropdown and named action.
 
-A previously clicked target may later leave the log filter. Keep its ID and show
-the outside-filter notice rather than drawing a misleading arrow. To select a
-different target, it must be visible in the log; there is no text-entry shortcut.
+## Hidden-log and focus behavior
+
+- Hiding the log does not change the destination. The diff reclaims the space
+  beside the existing narrow rail; the top-bar control stays put.
+- Picking temporarily opens a hidden log. Confirm, Cancel, Escape, or selecting a
+  menu radio restores the previously hidden layout. If the log was already open,
+  leave it open. Hiding the log during picking cancels the preview.
+- Confirming/cancelling returns focus to the dropdown trigger. Closing only the
+  menu restores trigger focus without cancelling the row preview.
+- Enter/Space opens the menu. Up/Down on the trigger opens at the last/first item.
+  Menu arrows, Home, and End move among enabled items. Enter/Space activates an
+  item. In the graph, Up/Down skip unavailable rows; Enter confirms.
+- Escape first closes the menu, then cancels an active picker on a second press.
+  Tab or outside pointer/focus dismisses the menu without committing a choice.
+- Narrow headers wrap compactly instead of hiding the destination or overflowing.
 
 ## Guardrails and limitations
 
-- This is a static linear fixture, **not jj evaluation**. Default destinations
-  use explicit parent metadata; custom destinations use clicked fixture IDs.
-  Merges, missing parents, immutable parents, and conflicts require explicit
-  production diagnostics rather than guessed destinations.
-- Accepted queued batches pin source/destination IDs. The selector, arrow,
-  custom picker, and demo navigation lock while work drains. Neither a later
-  destination nor source selection may reroute accepted work.
-- Production must validate source/version and target eligibility at a captured
-  operation and repeat checks immediately before accepting mutations. Disabled
-  browser controls are not write authority.
-- Preserve normal monospace log line height and the existing 20px arrow margin.
-  No row cards, vertical padding, wrapping, extra connectors, or title truncation.
-  Horizontal scrolling does not move the arrow gutter.
-- The prototype stores custom choice only in runtime state. Persistence
-  scope across reloads/restarts and custom-mode behavior across navigation need
-  explicit production decisions; default mode always follows the reviewed source.
-- Source navigation controls, working-copy moves, queue states, and graph filters
-  are demo fixtures. Source headings and log highlights update, but the diff
-  content remains illustrative. Squash only prints what it would do.
-- The actual backend/native selection engine remain immediate-parent-only. This
-  design does not implement custom-target mutations, conflict handling, undo, or
-  cross-branch destination safety.
+- Source, immutable commits, and other ineligible fixture rows cannot be chosen.
+  If a custom target becomes the reviewed source, show the reason and block
+  squash—no stale-ID fallback or silent switch to Commit below. The menu still
+  allows explicit recovery using the parent or a new eligible target.
+- Previously chosen off-filter targets keep their ID, with an outside-filter
+  notice, but no misleading graph arrow. Choosing a new target requires a visible
+  row. The fixture includes an example of an already-chosen hidden target.
+- Queue examples pin source/destination IDs and disable the dropdown, picker,
+  squash, and source/working-copy demo navigation. Log visibility can still
+  change. Queue/error notices remain outside the log, visible when it is hidden.
+- Preserve 13px Source Code Pro with normal log line height, literal graph
+  prefixes, no row gaps/padding/wrapping, and horizontal scrolling. The amber
+  arrow stays in the existing 20px gutter, has no source dot, and lands at the
+  destination. No extra role labels or destination stripe.
+- This is a static linear fixture, not jj evaluation. Merges, missing/immutable
+  parents, conflicts, ancestry validation, operation/version checks, persistence,
+  and navigation scope need production decisions and backend validation. Browser
+  control state is not write authority.
+- Source navigation, working-copy moves, filters, and queue states are demo
+  fixtures. Headings and log highlights update; diff contents remain illustrative.
+  Squash only describes what it would do. The actual engine is parent-only.
 
 ## Checks and presentation
 
@@ -124,33 +120,24 @@ With npm dependencies and Playwright Chromium installed, from repository root:
 node design/custom-squash-destination.e2e.mjs
 ```
 
-The check generates local and iframe-ready HTML bundles and actual browser
-screenshots of the whole workspace in ignored `.planka-artifacts/`:
+The check generates local `index.html`, a self-contained `interactive-mockups.html`
+with the bundled font, and browser screenshots in ignored `.planka-artifacts/`:
 
-- `explicit-change-01-log-open.png`: compact top-bar control with the log visible.
-  The reviewed source is not `@`; the default still selects its correct parent.
-- `explicit-change-02-log-hidden.png`: default destination stays visible, while
-  the diff reclaims the log's space.
-- `explicit-change-03-picking-from-hidden.png`: Custom temporarily reveals the log
-  with picking instructions, Cancel, and the dashed preview.
-- `explicit-change-04-custom-log-hidden.png`: a confirmed clicked destination
-  stays in the top bar after restoring the hidden-log layout.
-- `explicit-change-control.png`: a close-up of the label, selector, read-only ID,
-  and explicit Change… button.
+- `design-a-01-default.png`: full workspace; reviewed source differs from `@`.
+- `design-a-02-menu.png`: open destination menu with the log hidden.
+- `design-a-03-picking.png`: temporary log and unconfirmed row preview.
+- `design-a-04-custom.png`: confirmed custom target with hidden layout restored.
+- `design-a-control.png`: close-up of the single combined control.
 
-Attach screenshots directly to the ticket. Display the interactive document with
-`output_iframe` in the linked Shelley conversation; raw HTML/sandbox links are
-not interactive previews in Planka.
+Attach actual PNGs to the ticket. Display the interactive document with
+`output_iframe` in the linked Shelley conversation. Run this check after the
+five-option gallery check to make the shared iframe show the developed A demo.
 
-Checks cover the visible Squash into → label, explicit Change… action,
-non-interactive destination ID, compact top-bar geometry, log collapse and diff
-expansion, temporary reveal and layout restoration on confirm/cancel, hidden-log errors and
-queue locks, source-relative defaults independent of `@` and filtering, source
-switches, the native selector, click/keyboard custom choice, cancel/mode restore,
-absence of text entry and the arrow source dot, fail-closed eligibility checks,
-queue pinning, off-filter targets, source/selection preservation, compact graph
-metrics, arrow geometry, mobile scrolling, and both standalone bundles. Uncaught
-page errors or HTTP/API requests fail the check.
-
-Source Code Pro is bundled locally without CDNs. No live jj evaluation,
-repository mutations, production build, or backend tests run in this mockup check.
+Browser checks cover the menu and keyboard/dismissal rules, remembered custom
+choice, source/working-copy/filter independence, preview and confirmation,
+cancel/focus/layout restoration, invalid/off-filter/queued destinations, compact
+graph/arrow and toolbar geometry, live notice/error updates during preview,
+narrow-screen popup placement and offscreen dismissal, and both offline bundles.
+Uncaught page errors or HTTP/API requests fail the check. The local font
+and license are bundled without CDNs. No backend mutation/build tests are run by
+this design-only check.

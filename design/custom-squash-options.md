@@ -1,5 +1,9 @@
 # Five compact squash-destination alternatives
 
+Option A (the first/combined dropdown) is now developed in the full interactive
+workspace: `custom-squash-destination.html`. See `custom-squash-destination.md`
+for its menu, picker, keyboard, and guardrail behavior.
+
 Design only; the existing production UI and parent-only squash engine are
 unchanged. These alternatives respond to the crowded combination of a select,
 resolved ID, and Change button in the previous mockup.

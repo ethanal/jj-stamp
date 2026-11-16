@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>jj-stamp · Commit below or a custom squash destination</title>
+    <title>jj-stamp · Design A: one destination dropdown</title>
     <style>
       @font-face {
         font-family: Source;
@@ -215,30 +215,121 @@
         padding: 4px 9px;
       }
       .destination-control {
+        position: relative;
         display: inline-flex;
         align-items: center;
         flex-shrink: 0;
-        gap: 5px;
-        height: 24px;
+        gap: 6px;
+        height: 26px;
       }
-      .destination-control label {
+      .destination-label {
         color: var(--muted);
         font-size: 10px;
         white-space: nowrap;
       }
-      .destination-control select {
-        width: 112px;
-        height: 24px;
-        padding: 2px 4px;
+      #destination-toggle {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        width: 204px;
+        height: 26px;
+        padding: 3px 8px;
         font-size: 11px;
+        line-height: 18px;
+        white-space: nowrap;
       }
-      .destination-control[data-invalid="true"] select {
+      #destination-toggle .target-id {
+        flex-shrink: 0;
+      }
+      .destination-chevron {
+        margin-left: auto;
+        color: var(--muted);
+      }
+      .destination-control[data-invalid="true"] #destination-toggle {
         border-color: #c18c66;
       }
-      .app-header .destination-control button {
-        height: 24px;
-        padding: 2px 4px;
+      .destination-control[data-picking="true"] #destination-toggle {
+        border-style: dashed;
+        border-color: var(--amber);
+      }
+      .destination-menu {
+        position: fixed;
+        z-index: 50;
+        width: 320px;
+        max-width: calc(100vw - 24px);
+        overflow: auto;
+        overscroll-behavior: contain;
+        padding: 4px;
+        border: 1px solid #506071;
+        border-radius: 5px;
+        background: #1b222b;
+        box-shadow: 0 12px 32px #0009;
+      }
+      .menu-context {
+        padding: 7px 10px;
         font-size: 10px;
+        color: var(--muted);
+      }
+      .menu-context code {
+        color: var(--blue);
+      }
+      .app-header .destination-menu button {
+        display: block;
+        width: 100%;
+        height: auto;
+        padding: 9px 10px;
+        border: 0;
+        border-radius: 3px;
+        background: transparent;
+        text-align: left;
+        font-size: 11px;
+        line-height: 16px;
+      }
+      .destination-menu button[aria-checked="true"] {
+        background: #253344;
+      }
+      .menu-item-top {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+      .menu-item-top strong {
+        font-weight: 500;
+      }
+      .menu-item-top code {
+        margin-left: auto;
+        color: var(--amber);
+      }
+      .menu-check {
+        flex: 0 0 14px;
+        visibility: hidden;
+        color: var(--blue);
+      }
+      [aria-checked="true"] .menu-check {
+        visibility: visible;
+      }
+      .menu-description {
+        display: block;
+        margin-top: 3px;
+        margin-left: 22px;
+        color: var(--muted);
+        font-size: 10px;
+        line-height: 1.5;
+        white-space: normal;
+      }
+      .destination-menu button:disabled .menu-description {
+        color: #ba957f;
+      }
+      .app-header #choose-custom {
+        margin-top: 4px;
+        border-top: 1px solid var(--border);
+        border-radius: 0;
+      }
+      .menu-note {
+        padding: 6px 10px;
+        font-size: 9px;
+        line-height: 1.5;
+        color: var(--muted);
       }
       .workspace {
         display: grid;
@@ -750,11 +841,11 @@
     <main class="page">
       <header class="intro">
         <div>
-          <div class="eyebrow">jj-stamp / interaction studies</div>
-          <h1>A small control. Always in view.</h1>
+          <div class="eyebrow">jj-stamp / design A</div>
+          <h1>One dropdown. A clear destination.</h1>
           <p class="muted">
-            Squash destination lives in the top bar, even with the log hidden.
-            Custom temporarily opens the log so you can click a commit.
+            Mode and destination in one compact control. Use the commit below,
+            or choose a commit in the log—even when it starts hidden.
           </p>
         </div>
         <span class="prototype"
@@ -764,7 +855,7 @@
       <nav class="options" aria-label="Interaction walkthrough">
         <button class="option" data-view="default" aria-pressed="true">
           <b>1 · Log open</b
-          ><span>One compact control; no extra row above the graph.</span>
+          ><span>Combined mode and ID; no separate Change button.</span>
         </button>
         <button class="option" data-view="collapsed" aria-pressed="false">
           <b>2 · Log hidden</b
@@ -776,7 +867,7 @@
           aria-pressed="false"
         >
           <b>3 · Custom, log hidden</b
-          ><span>Use Change… to pick again; the log opens briefly.</span>
+          ><span>Open the same dropdown to choose another destination.</span>
         </button>
       </nav>
       <div class="controls">
@@ -810,29 +901,78 @@
           ><code class="commit muted">8b9d0e2714af</code
           ><span class="green optional">+8 −4</span><span class="grow"></span>
           <div class="destination-control" id="destination-control">
-            <label for="destination-mode">Squash into →</label>
-            <select
-              id="destination-mode"
-              aria-label="Squash destination mode"
-              aria-describedby="destination-error"
-            >
-              <option value="parent">Commit below</option>
-              <option value="custom">Custom…</option>
-            </select>
-            <output
-              class="target-id"
-              id="destination-id"
-              aria-label="Resolved destination ID"
-              >pqxvqmoo</output
+            <span class="destination-label" id="destination-label"
+              >Squash into →</span
             >
             <button
-              id="change-custom"
+              id="destination-toggle"
               type="button"
-              aria-label="Change squash destination"
-              aria-controls="log-list"
+              aria-haspopup="menu"
+              aria-expanded="false"
+              aria-controls="destination-menu"
+              aria-labelledby="destination-label destination-mode destination-id"
+              aria-describedby="destination-error"
             >
-              Change…
+              <span id="destination-mode">Commit below</span>
+              <span class="muted" aria-hidden="true">·</span>
+              <output class="target-id" id="destination-id">pqxvqmoo</output>
+              <span class="destination-chevron" aria-hidden="true">⌄</span>
             </button>
+            <div
+              class="destination-menu"
+              id="destination-menu"
+              role="menu"
+              aria-label="Squash destination options"
+              hidden
+            >
+              <div class="menu-context">
+                Reviewed source: <code id="menu-source">vqkqszmu</code>
+              </div>
+              <button
+                id="choose-parent"
+                type="button"
+                role="menuitemradio"
+                aria-checked="true"
+              >
+                <span class="menu-item-top"
+                  ><span class="menu-check" aria-hidden="true">✓</span
+                  ><strong>Commit below</strong
+                  ><code id="parent-destination">pqxvqmoo</code></span
+                >
+                <span class="menu-description" id="parent-detail"></span>
+              </button>
+              <button
+                id="use-custom"
+                type="button"
+                role="menuitemradio"
+                aria-checked="false"
+                hidden
+              >
+                <span class="menu-item-top"
+                  ><span class="menu-check" aria-hidden="true">✓</span
+                  ><strong>Custom destination</strong
+                  ><code id="custom-destination"></code
+                ></span>
+                <span class="menu-description" id="custom-detail"></span>
+              </button>
+              <button
+                id="choose-custom"
+                type="button"
+                role="menuitem"
+                aria-controls="log-list"
+              >
+                <span class="menu-item-top"
+                  ><span class="menu-check" aria-hidden="true"></span
+                  ><strong>Choose commit in log…</strong></span
+                >
+                <span class="menu-description" id="choose-custom-detail"
+                  >Opens the log temporarily. Click a row to confirm.</span
+                >
+              </button>
+              <div class="menu-note">
+                Choosing a destination does not squash any lines.
+              </div>
+            </div>
           </div>
           <button type="button" data-demo="Go to">Go to</button
           ><button type="button" class="optional" data-demo="Settings">
@@ -896,7 +1036,7 @@
             </div>
             <div class="diff-bottom">
               <span
-                ><span class="blue">3 lines</span> selected
+                ><span class="blue" id="selection-state">3 lines selected</span>
                 <span class="muted">→</span>
                 <code class="amber" id="selection-target">pqxvqmoo</code></span
               ><button class="squash-button" id="squash-demo">
@@ -998,19 +1138,19 @@
           </p>
         </article>
         <article>
-          <h2><span class="number">02</span>Always visible, not duplicated</h2>
+          <h2><span class="number">02</span>One obvious dropdown</h2>
           <p>
-            A 24px-high control sits in the existing top bar: Squash into →, the
-            selector, a read-only amber ID, and an explicit Change… button. No
-            persistent destination row in the log.
+            The bordered control combines mode and ID. Its menu explains the
+            parent, remembers the last custom destination, and provides one
+            explicit Choose commit in log… action. No separate Change button.
           </p>
         </article>
         <article>
           <h2><span class="number">03</span>Open just long enough to pick</h2>
           <p>
-            Custom or Change… opens a hidden log. Click a commit to confirm, or
-            Escape to cancel; either returns to your hidden-log layout. No text
-            field, Apply step, or dot at the arrow’s source.
+            Choosing opens a hidden log temporarily. Hover previews; click or
+            Enter confirms. Escape or Cancel restores the prior destination and
+            layout. “Choosing…” and a dashed border distinguish the preview.
           </p>
         </article>
       </section>
@@ -1056,7 +1196,8 @@
         picking = false,
         candidate = null,
         logCollapsed = false,
-        restoreCollapsed = false;
+        restoreCollapsed = false,
+        menuOpen = false;
       const source = () => revisions[sourceIndex];
       const allRevisions = () =>
         moved ? [newWorkingCopy, ...revisions] : revisions;
@@ -1107,6 +1248,116 @@
       function tell(text) {
         byId("status").textContent = text;
       }
+      function menuButtons() {
+        return [...byId("destination-menu").querySelectorAll("button")].filter(
+          (button) => !button.hidden && !button.disabled,
+        );
+      }
+      function positionDestinationMenu() {
+        if (!menuOpen) return;
+        const menu = byId("destination-menu");
+        const trigger = byId("destination-toggle").getBoundingClientRect();
+        if (trigger.bottom <= 12 || trigger.top >= innerHeight - 12) {
+          closeMenu(false);
+          return;
+        }
+        menu.style.maxHeight = `${Math.max(1, innerHeight - 24)}px`;
+        const wanted = menu.scrollHeight + 2;
+        const below = Math.max(1, innerHeight - trigger.bottom - 18);
+        const above = Math.max(1, trigger.top - 18);
+        const flip = below < wanted && above > below;
+        const height = Math.min(wanted, flip ? above : below);
+        menu.style.maxHeight = `${height}px`;
+        menu.style.top = `${flip ? trigger.top - 6 - height : trigger.bottom + 6}px`;
+        menu.style.left = `${Math.max(12, Math.min(trigger.right - menu.offsetWidth, innerWidth - menu.offsetWidth - 12))}px`;
+        menu.dataset.placement = flip ? "above" : "below";
+      }
+      function renderDestinationMenu() {
+        const parent = parentResult(),
+          custom = resultFor(customId);
+        const parentRevision = revisions.find(
+          (r) => r.id === parents[source().id],
+        );
+        const customRevision = [...allRevisions(), external].find(
+          (r) => r.id === customId,
+        );
+        const outside = (id) =>
+          id && !displayRevisions().some((r) => r.id === id);
+        byId("menu-source").textContent = source().id;
+        byId("parent-destination").textContent = parents[source().id] || "—";
+        byId("choose-parent").disabled = queued || !!parent.error;
+        byId("choose-parent").setAttribute(
+          "aria-checked",
+          String(mode === "parent"),
+        );
+        byId("parent-detail").textContent =
+          parent.error ||
+          `Parent of ${source().id} · ${parentRevision.title}${outside(parent.id) ? " · outside the log filter" : ""}`;
+        byId("use-custom").hidden = !customId;
+        byId("use-custom").disabled = queued || !!custom.error;
+        byId("use-custom").setAttribute(
+          "aria-checked",
+          String(mode === "custom"),
+        );
+        byId("custom-destination").textContent = customId || "—";
+        byId("custom-detail").textContent =
+          custom.error ||
+          `${customRevision.title} · fixed destination${outside(custom.id) ? " · outside the log filter" : ""}`;
+        byId("choose-custom").disabled = queued;
+        byId("choose-custom-detail").textContent = picking
+          ? "Return to the current row preview. Click a row to confirm."
+          : logCollapsed
+            ? "Opens the log temporarily. Click a row to confirm."
+            : "Click a row in the log. Your review stays unchanged.";
+        menuOpen = menuOpen && !queued;
+        byId("destination-menu").hidden = !menuOpen;
+        byId("destination-toggle").setAttribute(
+          "aria-expanded",
+          String(menuOpen),
+        );
+        positionDestinationMenu();
+      }
+      function closeMenu(focus = true) {
+        menuOpen = false;
+        byId("destination-menu").hidden = true;
+        byId("destination-toggle").setAttribute("aria-expanded", "false");
+        if (focus) byId("destination-toggle").focus({ preventScroll: true });
+      }
+      function openMenu(edge = "checked") {
+        if (queued) return;
+        menuOpen = true;
+        renderDestinationMenu();
+        const buttons = menuButtons();
+        const button =
+          edge === "last"
+            ? buttons.at(-1)
+            : edge === "first"
+              ? buttons[0]
+              : buttons.find(
+                  (button) => button.getAttribute("aria-checked") === "true",
+                ) || buttons[0];
+        button?.focus({ preventScroll: true });
+      }
+      function useParent() {
+        if (queued || parentResult().error) return;
+        closeMenu(false);
+        mode = "parent";
+        finishPicking();
+        render();
+        byId("destination-toggle").focus({ preventScroll: true });
+        tell(
+          `Commit below selected · source ${source().id} → parent ${parentResult().id}`,
+        );
+      }
+      function useCustom() {
+        if (queued || resultFor(customId).error) return;
+        closeMenu(false);
+        mode = "custom";
+        finishPicking();
+        render();
+        byId("destination-toggle").focus({ preventScroll: true });
+        tell(`Custom destination ${customId} restored · no squash performed`);
+      }
       function drawRoute() {
         const result = currentResult(),
           handle = byId("route-handle");
@@ -1141,6 +1392,11 @@
       }
       function refreshIndicators() {
         const result = currentResult();
+        byId("destination-mode").textContent = picking
+          ? "Choosing…"
+          : mode === "parent"
+            ? "Commit below"
+            : "Custom";
         byId("destination-id").textContent =
           byId("selection-target").textContent =
           byId("footer-destination").textContent =
@@ -1150,11 +1406,52 @@
         byId("destination-id").title =
           result.error ||
           `${picking ? "Preview" : "Squash destination"}: ${result.id || "none"}${outside ? " (outside log filter)" : ""}`;
-        document
-          .querySelectorAll(".revision")
-          .forEach((row) =>
-            row.classList.toggle("target", row.dataset.revision === result.id),
-          );
+        byId("outside").hidden = !outside;
+        byId("destination-error").hidden = !result.error;
+        byId("destination-error").textContent = result.error || "";
+        byId("destination-control").dataset.invalid = String(!!result.error);
+        byId("destination-toggle").title =
+          result.error ||
+          (queued
+            ? "Destination locked while queued work drains"
+            : "Change squash destination");
+        byId("squash-demo").disabled =
+          queued || picking || !result.id || !!result.error;
+        byId("squash-demo").title =
+          result.error ||
+          (picking
+            ? "Click a commit to confirm the custom destination"
+            : queued
+              ? "Queued work is pinned"
+              : `Squash into ${result.id}`);
+        byId("log-tip").textContent = result.error
+          ? "No destination fallback. Choose Commit below or click a different custom destination."
+          : picking
+            ? "Preview only. Click a commit or press Enter; Esc restores the previous mode."
+            : mode === "parent"
+              ? "Commit below = the reviewed source’s actual parent. @ is not used."
+              : "Custom stays fixed when @ moves. Use the destination dropdown to choose another.";
+        byId("selection-state").textContent = picking
+          ? "Preview destination"
+          : "3 lines selected";
+        byId("destination-control").dataset.picking = String(picking);
+        renderDestinationMenu();
+        document.querySelectorAll(".revision").forEach((row) => {
+          const isTarget = row.dataset.revision === result.id;
+          row.classList.toggle("target", isTarget);
+          row
+            .querySelector(".review-id")
+            .setAttribute(
+              "aria-description",
+              row.classList.contains("current")
+                ? "Reviewed source"
+                : isTarget
+                  ? picking
+                    ? "Preview squash destination"
+                    : "Squash destination"
+                  : resultFor(row.dataset.revision).error || "Mutable commit",
+            );
+        });
         drawRoute();
       }
       function preview(id) {
@@ -1164,13 +1461,16 @@
       }
       function beginCustom() {
         if (queued) return;
+        closeMenu(false);
         const previous = currentResult();
-        if (!picking) restoreCollapsed = logCollapsed;
+        if (!picking) {
+          restoreCollapsed = logCollapsed;
+          candidate = !resultFor(customId).error
+            ? customId
+            : previous.id || parentResult().id || null;
+        }
         logCollapsed = false;
         picking = true;
-        candidate = !resultFor(customId).error
-          ? customId
-          : previous.id || parentResult().id || null;
         render();
         const button = document.querySelector(
           `[data-revision="${candidate}"] .review-id`,
@@ -1188,6 +1488,7 @@
       function choose(id) {
         const result = resultFor(id);
         if (queued || result.error) return;
+        closeMenu(false);
         mode = "custom";
         customId = id;
         finishPicking();
@@ -1195,16 +1496,17 @@
         tell(
           `Custom destination ${id} selected · source ${source().id} unchanged · no squash performed`,
         );
-        byId("change-custom").focus();
+        byId("destination-toggle").focus({ preventScroll: true });
       }
       function cancel() {
         if (queued) return;
+        closeMenu(false);
         finishPicking();
         render();
         tell(
           `Destination unchanged · ${mode === "parent" ? "Commit below" : customId}`,
         );
-        byId("destination-mode").focus();
+        byId("destination-toggle").focus({ preventScroll: true });
       }
       function render() {
         const result = currentResult(),
@@ -1237,38 +1539,20 @@
                 ? "hidden"
                 : view;
         byId("try-hint").textContent = logCollapsed
-          ? "Destination stays in the top bar. Custom or Change… briefly opens the log to pick."
+          ? "Open the destination dropdown, then Choose commit in log… to reveal the log temporarily."
           : mode === "parent" && !picking
             ? "Commit below follows the reviewed source’s parent, independently of @."
-            : "Custom: click a commit in the log. No text entry or Apply step.";
-        byId("destination-mode").value = picking ? "custom" : mode;
-        byId("destination-mode").disabled = queued;
+            : picking
+              ? "Choosing is a preview. Click a row to confirm; Escape restores the previous destination."
+              : "Custom stays fixed. Open the dropdown to choose again or return to Commit below.";
+        byId("destination-toggle").disabled = queued;
         byId("cancel-custom").disabled = queued;
-        byId("change-custom").disabled = queued || picking;
-        byId("change-custom").setAttribute("aria-expanded", String(picking));
-        byId("change-custom").title = queued
-          ? "Destination locked while queued work drains"
-          : "Choose a commit in the log";
-        byId("destination-control").dataset.invalid = String(!!result.error);
         byId("pick-help").hidden = !picking;
-        byId("destination-error").hidden = !result.error;
-        byId("destination-error").textContent = result.error || "";
         byId("locked").hidden = !queued;
         byId("locked").textContent =
           `2 squash batches queued · destination pinned to ${pinned?.id || "—"}`;
-        byId("outside").hidden =
-          !result.id || displayRevisions().some((r) => r.id === result.id);
         byId("move-working-copy").disabled = moved || queued;
         byId("review-parent").disabled = sourceIndex >= 1 || queued;
-        byId("squash-demo").disabled =
-          queued || picking || !result.id || !!result.error;
-        byId("squash-demo").title =
-          result.error ||
-          (picking
-            ? "Click a commit to confirm the custom destination"
-            : queued
-              ? "Queued work is pinned"
-              : `Squash into ${result.id}`);
         document.querySelector(".app-header .blue").textContent = source().id;
         document.querySelector(".app-header .app-title").textContent =
           source().title;
@@ -1341,16 +1625,10 @@
           }
           byId("log-list").append(row);
         });
-        byId("log-tip").textContent = result.error
-          ? "No destination fallback. Choose Commit below or click a different custom destination."
-          : picking
-            ? "Preview only. Click a commit or press Enter; Esc restores the previous mode."
-            : mode === "parent"
-              ? "Commit below = the reviewed source’s actual parent. @ is not used."
-              : "Custom stays fixed when @ moves. Use Change… in the top bar to choose another.";
         refreshIndicators();
       }
       function loadExample(state) {
+        closeMenu(false);
         moved = false;
         sourceIndex = state === "invalid" ? 1 : 0;
         filtered = state === "filtered";
@@ -1379,22 +1657,43 @@
         render();
         tell("Fixture example loaded · no repository writes");
       }
-      byId("destination-mode").onchange = () => {
-        if (queued) return;
-        if (byId("destination-mode").value === "custom") beginCustom();
-        else {
-          mode = "parent";
-          finishPicking();
-          render();
-          tell(
-            `Commit below selected · source ${source().id} → parent ${parentResult().id || "unavailable"}`,
-          );
-        }
+      byId("destination-toggle").onclick = () => {
+        if (menuOpen) closeMenu();
+        else openMenu();
       };
+      byId("destination-toggle").onkeydown = (event) => {
+        if (!["ArrowDown", "ArrowUp"].includes(event.key)) return;
+        event.preventDefault();
+        openMenu(event.key === "ArrowUp" ? "last" : "first");
+      };
+      byId("destination-menu").onkeydown = (event) => {
+        if (event.key === "Tab") {
+          closeMenu();
+          return;
+        }
+        if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key))
+          return;
+        event.preventDefault();
+        const buttons = menuButtons(),
+          index = buttons.indexOf(document.activeElement);
+        const next =
+          event.key === "Home"
+            ? 0
+            : event.key === "End"
+              ? buttons.length - 1
+              : (index +
+                  (event.key === "ArrowDown" ? 1 : -1) +
+                  buttons.length) %
+                buttons.length;
+        buttons[next]?.focus();
+      };
+      byId("choose-parent").onclick = useParent;
+      byId("use-custom").onclick = useCustom;
+      byId("choose-custom").onclick = beginCustom;
       byId("cancel-custom").onclick = cancel;
-      byId("change-custom").onclick = byId("route-handle").onclick =
-        beginCustom;
+      byId("route-handle").onclick = beginCustom;
       byId("hide-log").onclick = () => {
+        closeMenu(false);
         if (picking) finishPicking();
         logCollapsed = true;
         render();
@@ -1438,11 +1737,24 @@
           .focus({ preventScroll: true });
       };
       document.addEventListener("keydown", (event) => {
-        if (event.key === "Escape" && picking) {
+        if (event.key === "Escape" && menuOpen) {
+          event.preventDefault();
+          closeMenu();
+        } else if (event.key === "Escape" && picking) {
           event.preventDefault();
           cancel();
         }
       });
+      document.addEventListener("pointerdown", (event) => {
+        if (menuOpen && !byId("destination-control").contains(event.target))
+          closeMenu(false);
+      });
+      document.addEventListener("focusin", (event) => {
+        if (menuOpen && !byId("destination-control").contains(event.target))
+          closeMenu(false);
+      });
+      window.addEventListener("resize", positionDestinationMenu);
+      window.addEventListener("scroll", positionDestinationMenu, true);
       byId("move-working-copy").onclick = () => {
         if (queued || moved) return;
         moved = true;
