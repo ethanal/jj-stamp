@@ -1,123 +1,124 @@
-# Squash destination: a saved, moving revset
+# Squash destination: Commit below or Custom
 
-Design only. No production UI, API, or squash behavior changed. This iteration
-makes a revset text box the primary destination control, retaining the amber tint
-and the thin source-to-destination arrow without stripes or role labels.
+Design only. No production UI, API, or squash behavior changed. The main control
+is a **select** with two choices: **Commit below** (default) and **Custom…**.
+The amber destination tint and thin source-to-destination margin arrow remain;
+there are no role labels, colored left stripe, or extra graph-row spacing.
 
 Open `design/custom-squash-destination.html`, or display the generated
 `.planka-artifacts/interactive-mockups.html` with Shelley's `output_iframe`.
 
-## Interaction
+## Commit below is source-relative, not `@-`
 
-- The compact **Squash into** field starts at `@-` in this fixture, where the
-  reviewed source is initially `@`. The resolved change ID appears next to it.
-- Edit the expression. A valid one-commit result previews with a dashed arrow;
-  squash stays disabled while the edit is unapplied. **Enter** or **Apply** saves
-  the expression, not its current result. **Escape** restores the saved expression.
-- Applying `@--` first resolves to `rwpxovrz`. Click **Move @ (demo)** above the
-  mock workspace: the same `@--` then resolves to `pqxvqmoo`. The arrow and tint
-  update; the reviewed source and selected lines remain unchanged.
-- `@--` uses two ASCII hyphens and means two parent steps behind the working-copy
-  commit. `@` is **not** an alias for the currently selected review. The example
-  deliberately keeps the blue reviewed source fixed while moving the `@` marker
-  to a newly created child row.
-- Enter a specific change ID to keep a fixed target instead. The demo checks this
-  contrast: `rwpxovrz` stays the destination when `@` moves.
-- Clicking the arrow now focuses/selects the revset field. It no longer enters a
-  competing graph-picking mode. Commit IDs retain their review-navigation role.
+**Commit below** means the reviewed source's actual immediate parent, resolved
+from explicit parent metadata. It is not a generated revset, not working-copy
+relative, and not the next visible row in the filtered graph.
 
-This prototype saves the expression only in its runtime state; durable settings
-across reloads/restarts are not implemented. **Move @** and the walkthrough are
-fixture controls, not production repository operations.
+The prototype demonstrates the distinction:
 
-## Resolve exactly one eligible commit, or block
+- Initially review `vqkqszmu`; its parent is `pqxvqmoo`.
+- **Move @ (demo)** advances the working copy without changing that default.
+- **Review parent (demo)** selects `pqxvqmoo`, so Commit below becomes `rwpxovrz`,
+  even while the working copy remains at `vqkqszmu` or its new child.
+- **Parent hidden by log filter** removes `pqxvqmoo` from the displayed graph but
+  keeps it as the destination. Show an outside-filter notice, not an arrow to the
+  next visible commit.
 
-The expression must resolve to exactly one commit. Zero matches, multiple matches,
-unsupported fixture syntax, the source itself, and immutable/ineligible targets
-show an inline reason and disable squash. Invalid drafts hide the arrow, tint,
-and resolved ID; **never silently fall back to the previous destination**.
+Switching the select back to Commit below explicitly restores this behavior from
+any custom selection or invalid custom draft. There is no default `@-` field,
+source-ID expression, or hidden working-copy dependency.
 
-An applied expression can become invalid after a working-copy move. In particular,
-when `@` advances to a new child of the still-reviewed source, `@-` now names that
-source. The prototype blocks squash instead of substituting an older ancestor.
-Reset explicitly restores the selected source's actual parent: initially `@-`,
-or `vqkqszmu-` once the working copy has moved in this example.
+## Custom: click a commit
 
-A valid target outside the log filter gets a compact notice. The field and
-resolved ID remain visible; don't draw an arrow to a nonexistent row or silently
-change the filter.
+1. Select **Custom…**, or click the margin arrow. This explicitly enters a
+   destination picker without changing the current review.
+2. Hover an eligible row to preview a dashed arrow. **Click the row** to confirm
+   a fixed custom destination. Source and immutable/ineligible rows are disabled.
+3. The arrow becomes solid, the amber tint moves, and squash is available. The
+   selector remains Custom; **Change…** reopens the picker.
 
-## Preserve the log
+Keyboard: the arrow and selector are focusable; Up/Down inside the focused log
+move among eligible rows and Enter chooses. Escape or Cancel restores the
+previous committed mode and destination—including returning to Commit below if
+that was active before opening the picker.
 
-- Keep the source's blue highlight and destination's quiet amber tint. No left
-  stripe or inline `[reviewing]` / `[target]` / `[immutable]` labels.
-- The thin amber elbow arrow occupies the existing 20px left margin, not a new
-  graph column. It connects real row centers and stays in the fixed margin while
-  long text scrolls horizontally.
-- Graph prefixes, IDs, bookmarks, and descriptions retain the existing monospace
-  font and **normal line height**. No commit cards, extra vertical padding,
-  invented connector rows, wrapping, or title truncation.
-- Repeat the resolved ID next to the squash selection and in the file-sidebar
-  footer. Unapplied edits and invalid resolution cannot authorize squash.
+Commit IDs keep their review-navigation role outside pick mode. Choosing a
+custom destination preserves the source and selected lines and does not squash.
+After clicking a fixed commit, collapse the extra editor row: the resolved ID is
+already visible beside the select. Change… can reveal it again.
 
-## Production semantics to implement after approval
+## Optional revset, only under Custom
 
-- Use **jj**, not this fixture resolver, to evaluate arbitrary revsets. Require
-  exactly one visible, non-divergent, eligible commit at a captured operation.
-  The mockup recognizes only `@` plus parent steps, its listed full short IDs,
-  `vqkqszmu-`, `parents(vqkqszmu)`, `all()`, and `none()`. It is not a jj parser;
-  unknown expressions are labeled as unsupported by this fixture, not necessarily
-  invalid jj syntax. `all()` counts fixture commits, not a live repository.
-- Retain the expression as the user's destination rule, separately from the
-  resolved change/commit IDs. Re-evaluate on validated refreshes, working-copy
-  moves, and after completed rewrites, with another check immediately before
-  accepting a new squash. Display the new resolution or block; don't pin a moving
-  expression forever to its first match.
-- **Pin accepted queued batches** to their validated source and destination IDs.
-  A moving revset must not reroute work already accepted. The demo locks its field,
-  arrow, Reset, and movement control during a pinned queue; re-evaluation for new
-  work happens after draining. External history changes still require backend
-  stale-state checks, not reliance on disabled browser controls.
-- Decide persistence scope (for example, workspace-level preference) explicitly.
-  Custom `@` expressions stay working-copy-relative across review navigation.
-  A source-parent default for non-`@` reviews needs an explicit source-relative
-  expression, not reinterpretation of `@` or substitution of the next log row.
-- Preserve source selection, line selections, and queue recovery rules where safe;
-  destination resolution is not permission to switch source or replay a mutation.
-- Resolve allowed relationships (ancestors versus other branches), conflicts,
-  descriptions, undo, and vanished/divergent destinations before adding mutations.
-  This fixture only offers older mutable ancestors plus an off-filter example.
-- The backend/native selection engine remain immediate-parent-only. Multiple
-  parents or an immutable parent need an explicit no-default reason. This mockup
-  does not claim custom-destination squashing already works.
+The custom picker also accepts a revset or change ID instead of a row click.
+A typed rule previews with a dashed arrow; Enter/Apply saves it. Unapplied edits
+cannot squash, and Escape restores the previous choice.
+
+An explicitly chosen `@--` retains working-copy-relative meaning and re-resolves
+when `@` moves. A clicked or typed fixed change ID stays fixed. This is **opt-in
+custom behavior**, never the default. Applied moving expressions stay visible
+in the custom editor so the rule is not confused with a fixed destination.
+
+Zero/multiple matches, unsupported fixture syntax, the source itself, immutable
+commits, or other ineligible targets show a reason and block squash, with no
+stale-target fallback. If a custom target becomes the selected source, block it;
+do not silently switch to Commit below. The user can explicitly select that
+mode to recover.
+
+## Guardrails and limitations
+
+- This is a finite fixture resolver, **not jj evaluation**. It recognizes `@`
+  with parent steps, listed IDs, `vqkqszmu-`, `parents(vqkqszmu)`, `all()`, and
+  `none()`. Unknown expressions are labeled unsupported by this fixture, not
+  necessarily invalid jj syntax. `all()` counts fixture commits.
+- The default uses a separate parent-metadata path and never calls that resolver.
+  The fixture is linear; merges, missing parents, immutable parents, and conflicts
+  require explicit production diagnostics rather than guessed destinations.
+- Accepted queued batches pin source/destination IDs. The selector, arrow,
+  custom editor, and demo navigation lock while work drains. Neither a moving
+  custom revset nor a later source selection may reroute accepted work.
+- Production must validate source/version and target eligibility at a captured
+  operation, re-resolve moving rules for new work, and repeat checks immediately
+  before accepting mutations. Disabled browser controls are not write authority.
+- Preserve normal monospace log line height and the existing 20px arrow margin.
+  No row cards, vertical padding, wrapping, extra connectors, or title truncation.
+  Horizontal scrolling does not move the arrow gutter.
+- The prototype stores custom choice/rules only in runtime state. Persistence
+  scope across reloads/restarts and custom-mode behavior across navigation need
+  explicit production decisions; default mode always follows the reviewed source.
+- Source navigation controls, working-copy moves, queue states, and graph filters
+  are demo fixtures. Source headings and log highlights update, but the diff
+  content remains illustrative. Squash only prints what it would do.
+- The actual backend/native selection engine remain immediate-parent-only. This
+  design does not implement custom-target mutations, conflict handling, undo, or
+  cross-branch destination safety.
 
 ## Checks and presentation
 
-With npm dependencies and Playwright Chromium installed, run from repository root:
+With npm dependencies and Playwright Chromium installed, from repository root:
 
 ```sh
 node design/custom-squash-destination.e2e.mjs
 ```
 
-The check generates local and iframe-ready HTML bundles and three actual browser
-screenshots of the mock log in ignored `.planka-artifacts/`:
+The check generates local and iframe-ready HTML bundles and actual browser
+screenshots of the log in ignored `.planka-artifacts/`:
 
-- `revset-01-saved-expression.png`: applied `@--`, resolving to `rwpxovrz`.
-- `revset-02-follows-working-copy.png`: unchanged `@--`, resolving to `pqxvqmoo`
-  after `@` moves, while the reviewed source remains fixed.
-- `revset-03-multiple-matches.png`: a multi-result draft blocks squash with an
-  inline error instead of keeping a stale target.
+- `selector-01-commit-below.png`: the source is not `@`; the default still selects
+  its correct immediate parent.
+- `selector-02-click-custom.png`: Custom selected and an eligible row previewed.
+- `selector-03-custom-selected.png`: confirmed clicked destination, with the
+  optional editor collapsed.
 
-Attach screenshots directly to the ticket. Present the interactive document with
-`output_iframe` in the linked Shelley conversation; Planka cannot display raw
-HTML/sandbox links as interactive previews.
+Attach screenshots directly to the ticket. Display the interactive document with
+`output_iframe` in the linked Shelley conversation; raw HTML/sandbox links are
+not interactive previews in Planka.
 
-Checks cover moving versus fixed expressions, Enter/Apply/Escape, invalid or
-ineligible results and fail-closed behavior, dynamic invalidation, explicit reset,
-queue pinning, off-filter targets, source/selection preservation, compact graph
-metrics, arrow geometry, mobile scrolling, and both HTML bundles. Uncaught page
-errors and HTTP/API requests fail the check.
+Checks cover source-relative defaults independent of `@` and filtering, source
+switches, the native selector, click/keyboard custom choice, cancel/mode restore,
+optional moving revsets, fail-closed validation, queue pinning, off-filter targets,
+source/selection preservation, compact graph metrics, arrow geometry, mobile
+scrolling, and both standalone bundles. Uncaught page errors or HTTP/API requests
+fail the check.
 
-The existing local Source Code Pro font is bundled without CDNs. These are design
-fixtures: no actual jj revset evaluation, repository mutation, production build,
-or backend tests are performed by this mockup check.
+Source Code Pro is bundled locally without CDNs. No live jj evaluation,
+repository mutations, production build, or backend tests run in this mockup check.

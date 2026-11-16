@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>jj-stamp · Following a squash destination revset</title>
+    <title>jj-stamp · Commit below or a custom squash destination</title>
     <style>
       @font-face {
         font-family: Source;
@@ -350,6 +350,25 @@
         font-size: 10px;
         white-space: nowrap;
       }
+      .destination-bar select {
+        min-width: 0;
+        flex: 1;
+        width: 160px;
+        max-width: 205px;
+        height: 27px;
+        padding: 3px 6px;
+        font-size: 12px;
+      }
+      .destination-bar.custom-editor input {
+        max-width: none;
+        font-size: 11px;
+      }
+      .pick-help {
+        padding: 5px 12px;
+        border-bottom: 1px solid var(--border);
+        font-size: 10px;
+        color: var(--blue);
+      }
       .destination-bar input {
         min-width: 0;
         flex: 1;
@@ -683,10 +702,10 @@
       <header class="intro">
         <div>
           <div class="eyebrow">jj-stamp / interaction studies</div>
-          <h1>Save the expression. Let the destination follow.</h1>
+          <h1>The commit below. Unless you choose another.</h1>
           <p class="muted">
-            A revset stays in the field. Its resolved commit and the margin
-            arrow update when the working copy moves.
+            Default to the reviewed commit’s parent, independently of @. Choose
+            Custom to click a commit or enter a revset.
           </p>
         </div>
         <span class="prototype"
@@ -695,33 +714,38 @@
       </header>
       <nav class="options" aria-label="Interaction walkthrough">
         <button class="option" data-view="default" aria-pressed="true">
-          <b>1 · Parent by default</b
-          ><span>@- initially resolves to the commit below.</span>
+          <b>1 · Commit below</b
+          ><span>The reviewed source’s actual parent. Not @-.</span>
         </button>
-        <button class="option" data-view="custom" aria-pressed="false">
-          <b>2 · Enter a revset</b
-          ><span>Apply @--, resolving to exactly one commit.</span>
+        <button class="option" data-view="picking" aria-pressed="false">
+          <b>2 · Custom → click a commit</b
+          ><span>Choose Custom, then click a row in the log.</span>
         </button>
-        <button class="option" data-view="following" aria-pressed="false">
-          <b>3 · It follows @</b
-          ><span>The same @-- expression resolves again after a move.</span>
+        <button class="option" data-view="revset" aria-pressed="false">
+          <b>3 · Custom → enter a revset</b
+          ><span>Optionally keep a moving expression like @--.</span>
         </button>
       </nav>
       <div class="controls">
         <span class="hint" id="try-hint"
-          >Try: enter @-- → Enter → Move @ (demo).</span
+          >Try: review the parent (demo). Commit below follows the blue source,
+          not @.</span
         >
         <div class="demo-controls">
-          <button id="move-working-copy">Move @ (demo)</button
+          <button id="review-parent">Review parent (demo)</button
+          ><button id="move-working-copy">Move @ (demo)</button
           ><label
             >Example state
             <select id="scenario" aria-label="Example state">
-              <option value="default">Immediate parent (default)</option>
-              <option value="custom">Applied @--</option>
-              <option value="following">After @ moves</option>
-              <option value="invalid">Multiple matches</option>
+              <option value="default">Commit below (default)</option>
+              <option value="picking">Picking a custom commit</option>
+              <option value="custom">Custom commit chosen</option>
+              <option value="revset">Custom revset @--</option>
+              <option value="following">Custom revset after @ moves</option>
+              <option value="invalid">Custom revset: multiple matches</option>
               <option value="queued">Queue in progress</option>
-              <option value="hidden">Target outside log filter</option>
+              <option value="filtered">Parent hidden by log filter</option>
+              <option value="hidden">Custom target outside log filter</option>
             </select>
           </label>
         </div>
@@ -794,21 +818,15 @@
           </section>
           <aside class="log" aria-label="Revision log">
             <div class="heading">jj log <span>›</span></div>
-            <form
-              class="destination-bar"
-              id="revset-form"
-              aria-label="Squash destination"
-            >
-              <label for="destination-revset">Squash into</label>
-              <input
-                id="destination-revset"
-                value="@-"
-                aria-label="Destination revset"
-                aria-describedby="revset-error log-tip"
-                aria-invalid="false"
-                autocomplete="off"
-                spellcheck="false"
-              />
+            <div class="destination-bar">
+              <label for="destination-mode">Squash into</label>
+              <select
+                id="destination-mode"
+                aria-label="Squash destination mode"
+              >
+                <option value="parent">Commit below</option>
+                <option value="custom">Custom…</option>
+              </select>
               <span class="muted" aria-hidden="true">→</span
               ><output
                 class="target-id"
@@ -816,11 +834,31 @@
                 aria-label="Resolved destination ID"
                 >pqxvqmoo</output
               >
+              <button id="change-custom" type="button" hidden>Change…</button>
+            </div>
+            <form
+              class="destination-bar custom-editor"
+              id="custom-editor"
+              aria-label="Custom squash destination"
+              hidden
+            >
+              <input
+                id="destination-revset"
+                value=""
+                placeholder="Click a commit, or enter a revset"
+                aria-label="Custom destination revset or ID"
+                aria-describedby="revset-error pick-help log-tip"
+                aria-invalid="false"
+                autocomplete="off"
+                spellcheck="false"
+              />
               <button id="apply-revset" type="submit" hidden>Apply</button
-              ><button class="reset" id="reset" type="button" hidden>
-                Reset
-              </button>
+              ><button id="cancel-custom" type="button" hidden>Cancel</button>
             </form>
+            <div class="pick-help" id="pick-help" hidden>
+              Click a row · ↑ / ↓ then Enter · Esc cancels. Or type a revset
+              above.
+            </div>
             <div
               class="revset-error"
               id="revset-error"
@@ -832,17 +870,17 @@
               2 squash batches queued · destination pinned until drained
             </div>
             <div class="hidden-target" id="outside" hidden>
-              Resolved target is outside the log filter. The revset remains
-              active.
+              The destination is outside the log filter. No visible commit is
+              substituted.
             </div>
             <div class="log-viewport" id="log-viewport">
               <div class="route-gutter">
                 <button
                   id="route-handle"
                   class="route-handle"
-                  aria-label="Edit destination revset"
-                  aria-controls="destination-revset"
-                  title="Edit destination revset"
+                  aria-label="Choose a custom squash destination"
+                  aria-controls="custom-editor"
+                  title="Choose a custom squash destination"
                 >
                   <svg
                     id="route-svg"
@@ -888,34 +926,34 @@
       </section>
       <section class="notes" aria-label="Design rationale">
         <article>
-          <h2><span class="number">01</span>Save a rule, not an ID</h2>
+          <h2><span class="number">01</span>A source-relative default</h2>
           <p>
-            Enter a revset and press Enter. It must resolve to exactly one
-            eligible commit. A dashed arrow previews edits; applying makes it
-            solid. A change ID works too, for a fixed target.
+            Commit below always means the reviewed commit’s immediate parent—not
+            the working copy’s parent, and not the next filtered log row.
+            Changing reviews updates this default.
           </p>
         </article>
         <article>
-          <h2><span class="number">02</span>@ is the working copy</h2>
+          <h2><span class="number">02</span>Custom stays explicit</h2>
           <p>
-            @-- means two parents behind @, not behind the selected review. Move
-            @ in the demo: the expression stays @-- while its resolved ID and
-            the arrow change. Your review stays pinned.
+            Select Custom, then click a commit in the log. The margin arrow
+            previews your choice without changing the review. Enter confirms;
+            Escape restores the prior mode and destination.
           </p>
         </article>
         <article>
-          <h2><span class="number">03</span>No silent fallback</h2>
+          <h2><span class="number">03</span>A revset is optional</h2>
           <p>
-            Zero matches, multiple matches, or an ineligible target block
-            squash. Queued batches keep their pinned destination; a moving
-            expression never reroutes work already accepted.
+            Custom also accepts a revset resolving to exactly one eligible
+            commit. @-- follows the working copy only when you explicitly choose
+            it. Queued batches keep their pinned destination.
           </p>
         </article>
       </section>
     </main>
     <script>
       const revisions = [
-        { id: "vqkqszmu", title: "Polish notification delivery", source: true },
+        { id: "vqkqszmu", title: "Polish notification delivery" },
         { id: "pqxvqmoo", title: "Add notification preferences" },
         { id: "rwpxovrz", title: "Build notification delivery service" },
         {
@@ -930,6 +968,13 @@
           bookmark: "main",
         },
       ];
+      // Explicit parent metadata, not adjacency in the filtered log.
+      const parents = {
+        vqkqszmu: "pqxvqmoo",
+        pqxvqmoo: "rwpxovrz",
+        rwpxovrz: "ksuunvyp",
+        ksuunvyp: "zzzzzzzz",
+      };
       const newWorkingCopy = {
         id: "xmturvkn",
         title: "Continue notification work",
@@ -937,20 +982,62 @@
       const external = { id: "nukxtrvy", title: "Extract delivery transport" };
       const byId = (id) => document.getElementById(id);
       let moved = false,
+        sourceIndex = 0,
+        filtered = false,
         queued = false,
-        applied = "@-",
         pinned = null;
-      const graphRevisions = () =>
+      let mode = "parent",
+        appliedCustom = "",
+        picking = false,
+        candidate = null;
+      const source = () => revisions[sourceIndex];
+      const allRevisions = () =>
         moved ? [newWorkingCopy, ...revisions] : revisions;
-      const defaultRevset = () => (moved ? "vqkqszmu-" : "@-");
-      // This is deliberately a fixture resolver, NOT a jj revset parser. Real
-      // validation must be performed by jj against one captured operation.
+      const displayRevisions = () =>
+        allRevisions().filter(
+          (r) => !filtered || r.id !== parents[source().id],
+        );
+      function eligible(revision) {
+        if (!revision)
+          return {
+            error: "The destination is unavailable. Squash is blocked.",
+          };
+        if (revision.id === source().id)
+          return {
+            error: `Resolves to the reviewed source ${revision.id}. Choose a different destination.`,
+          };
+        if (revision.immutable)
+          return {
+            error: `Resolved commit ${revision.id} is immutable. Squash is blocked.`,
+          };
+        if (
+          revision.id === newWorkingCopy.id ||
+          (revision !== external && revisions.indexOf(revision) <= sourceIndex)
+        )
+          return {
+            error:
+              "This fixture only offers older ancestors as squash destinations.",
+          };
+        return { id: revision.id };
+      }
+      function parentResult() {
+        const parentId = parents[source().id];
+        if (!parentId)
+          return {
+            error:
+              "The reviewed commit has no single usable parent. Choose a custom destination.",
+          };
+        return eligible(revisions.find((r) => r.id === parentId));
+      }
+      // Deliberately a fixture resolver, NOT a jj revset parser. The default
+      // parent mode never calls this and never invents an @- expression.
       function resolve(expression) {
         const value = expression.trim(),
-          graph = graphRevisions();
+          graph = allRevisions();
         if (!value)
           return {
-            error: "Enter a revset that resolves to exactly one commit.",
+            error:
+              "Enter a revset resolving to one commit, or click a commit in the log.",
           };
         if (value.includes("—") || value.includes("–"))
           return {
@@ -968,36 +1055,38 @@
         else
           return {
             error:
-              "Not a supported fixture expression. Try @-, @--, a listed ID, all(), or none().",
+              "Not a supported fixture expression. Try @--, a listed ID, all(), or none().",
           };
         if (matches.length !== 1)
           return {
             error: `Resolved to ${matches.length} commits. Expected exactly one; squash is blocked.`,
           };
-        const revision = matches[0];
-        if (revision.source)
-          return {
-            error: `Resolves to the reviewed source ${revision.id}. Choose a different destination.`,
-          };
-        if (revision.immutable)
-          return {
-            error: `Resolved commit ${revision.id} is immutable. Squash is blocked.`,
-          };
-        if (revision.id === newWorkingCopy.id)
-          return {
-            error:
-              "This fixture only offers older ancestors as squash destinations.",
-          };
-        return { id: revision.id };
+        return eligible(matches[0]);
+      }
+      function pending() {
+        return (
+          picking ||
+          (mode === "custom" &&
+            byId("destination-revset").value !== appliedCustom)
+        );
+      }
+      function currentResult() {
+        if (queued) return pinned;
+        if (picking) {
+          if (candidate)
+            return eligible(
+              [...allRevisions(), external].find((r) => r.id === candidate),
+            );
+          return byId("destination-revset").value.trim()
+            ? resolve(byId("destination-revset").value)
+            : {};
+        }
+        return mode === "parent"
+          ? parentResult()
+          : resolve(byId("destination-revset").value);
       }
       function tell(text) {
         byId("status").textContent = text;
-      }
-      function currentResult() {
-        return queued ? pinned : resolve(byId("destination-revset").value);
-      }
-      function dirty() {
-        return byId("destination-revset").value !== applied;
       }
       function drawRoute() {
         const result = currentResult(),
@@ -1009,15 +1098,15 @@
         handle.hidden = !result.id || !sourceRow || !destinationRow;
         if (handle.hidden) return;
         const viewport = byId("log-viewport").getBoundingClientRect();
-        const source = sourceRow.getBoundingClientRect(),
+        const start = sourceRow.getBoundingClientRect(),
           destination = destinationRow.getBoundingClientRect();
-        const sourceY = source.top + source.height / 2,
+        const sourceY = start.top + start.height / 2,
           destinationY = destination.top + destination.height / 2;
         const delta = destinationY - sourceY,
           height = delta + 12;
         handle.style.top = `${sourceY - viewport.top - 6}px`;
         handle.style.height = `${height}px`;
-        handle.classList.toggle("preview", dirty());
+        handle.classList.toggle("preview", pending());
         handle.disabled = queued;
         byId("route-svg").setAttribute("viewBox", `0 0 18 ${height}`);
         byId("route-shaft").setAttribute(
@@ -1030,16 +1119,104 @@
         );
         handle.dataset.destination = result.id;
       }
+      function preview(id) {
+        if (
+          !picking ||
+          queued ||
+          eligible(allRevisions().find((r) => r.id === id)).error
+        )
+          return;
+        const draft = byId("destination-revset").value;
+        // Don't let incidental mouse movement overwrite a typed revset preview.
+        if (draft && draft !== appliedCustom) return;
+        candidate = id;
+        refreshIndicators();
+      }
+      function refreshIndicators() {
+        const result = currentResult();
+        byId("destination-id").textContent =
+          byId("selection-target").textContent =
+          byId("footer-destination").textContent =
+            result.id || "—";
+        document
+          .querySelectorAll(".revision")
+          .forEach((row) =>
+            row.classList.toggle("target", row.dataset.revision === result.id),
+          );
+        drawRoute();
+      }
+      function beginCustom() {
+        if (queued) return;
+        const previous = currentResult();
+        picking = true;
+        byId("destination-revset").value = appliedCustom;
+        candidate = !resolve(appliedCustom).error
+          ? resolve(appliedCustom).id
+          : previous.id || parentResult().id || null;
+        render();
+        if (
+          candidate &&
+          document.querySelector(`[data-revision="${candidate}"] .review-id`)
+        )
+          document
+            .querySelector(`[data-revision="${candidate}"] .review-id`)
+            .focus({ preventScroll: true });
+        else byId("destination-revset").focus();
+        tell(
+          "Choose a custom destination: click a row, or enter a revset. Escape cancels.",
+        );
+      }
+      function choose(id) {
+        const result = eligible(
+          [...allRevisions(), external].find((r) => r.id === id),
+        );
+        if (queued || result.error) return;
+        mode = "custom";
+        appliedCustom = byId("destination-revset").value = id;
+        picking = false;
+        candidate = null;
+        render();
+        tell(
+          `Custom destination ${id} selected · source ${source().id} unchanged · no squash performed`,
+        );
+        byId("change-custom").focus();
+      }
+      function apply() {
+        const field = byId("destination-revset");
+        if (queued || resolve(field.value).error) return;
+        mode = "custom";
+        appliedCustom = field.value;
+        picking = false;
+        candidate = null;
+        render();
+        tell(
+          `Saved custom rule ${appliedCustom} · resolved to ${currentResult().id} · no squash performed`,
+        );
+      }
+      function cancel() {
+        if (queued) return;
+        picking = false;
+        candidate = null;
+        byId("destination-revset").value = appliedCustom;
+        render();
+        tell(
+          `Destination unchanged · ${mode === "parent" ? "Commit below" : appliedCustom}`,
+        );
+        byId("destination-mode").focus();
+      }
       function render() {
         const field = byId("destination-revset"),
           result = currentResult(),
-          pending = dirty();
-        const blocked = !!result.error || pending || queued;
-        const view = moved
-          ? "following"
-          : applied === "@-"
+          fixedCustom = [...allRevisions(), external].some(
+            (revision) => revision.id === appliedCustom,
+          ),
+          editing = picking || (mode === "custom" && !fixedCustom),
+          draftPending = pending();
+        const view = picking
+          ? "picking"
+          : mode === "parent"
             ? "default"
-            : "custom";
+            : "revset";
         document
           .querySelectorAll("[data-view]")
           .forEach((button) =>
@@ -1047,42 +1224,65 @@
           );
         byId("scenario").value = queued
           ? "queued"
-          : result.error
-            ? "invalid"
-            : result.id === external.id
-              ? "hidden"
-              : view;
-        byId("try-hint").textContent = moved
-          ? "@ moved. The expression stayed; the destination resolved again."
-          : "Try: enter @-- → Enter → Move @ (demo).";
+          : filtered
+            ? "filtered"
+            : result.error
+              ? "invalid"
+              : result.id === external.id
+                ? "hidden"
+                : moved && mode === "custom"
+                  ? "following"
+                  : picking
+                    ? "picking"
+                    : mode === "parent"
+                      ? "default"
+                      : appliedCustom === "@--"
+                        ? "revset"
+                        : "custom";
+        byId("try-hint").textContent =
+          mode === "parent" && !picking
+            ? "Commit below follows the reviewed source’s parent, independently of @."
+            : "Custom: click a commit in the log, or enter a one-commit revset.";
+        byId("destination-mode").value = picking ? "custom" : mode;
+        byId("destination-mode").disabled = queued;
+        byId("custom-editor").hidden = !editing;
         field.disabled = queued;
         field.setAttribute("aria-invalid", String(!!result.error));
-        byId("destination-id").textContent = result.id || "—";
-        byId("selection-target").textContent = byId(
-          "footer-destination",
-        ).textContent = result.id || "—";
-        byId("apply-revset").hidden = !pending;
-        byId("apply-revset").disabled = !!result.error || queued;
-        byId("reset").hidden = field.value === defaultRevset();
-        byId("reset").disabled = queued;
+        byId("apply-revset").hidden = !draftPending;
+        byId("apply-revset").disabled = queued || !!resolve(field.value).error;
+        byId("cancel-custom").hidden = !draftPending;
+        byId("cancel-custom").disabled = queued;
+        byId("change-custom").hidden = mode !== "custom" || picking;
+        byId("change-custom").disabled = queued;
+        byId("pick-help").hidden = !picking;
         byId("revset-error").hidden = !result.error;
         byId("revset-error").textContent = result.error || "";
         byId("locked").hidden = !queued;
         byId("locked").textContent =
           `2 squash batches queued · destination pinned to ${pinned?.id || "—"}`;
-        byId("outside").hidden = result.id !== external.id;
+        byId("outside").hidden =
+          !result.id || displayRevisions().some((r) => r.id === result.id);
         byId("move-working-copy").disabled = moved || queued;
-        byId("squash-demo").disabled = blocked;
-        byId("squash-demo").title = queued
-          ? "Destination is pinned while queued work drains"
-          : result.error ||
-            (pending
-              ? "Apply the edited revset first"
+        byId("review-parent").disabled = sourceIndex >= 1 || queued;
+        byId("squash-demo").disabled =
+          queued || draftPending || !result.id || !!result.error;
+        byId("squash-demo").title =
+          result.error ||
+          (draftPending
+            ? "Confirm the custom destination first"
+            : queued
+              ? "Queued work is pinned"
               : `Squash into ${result.id}`);
+        document.querySelector(".app-header .blue").textContent = source().id;
+        document.querySelector(".app-header .app-title").textContent =
+          source().title;
+        document.querySelector(".footer-route .blue").textContent = source().id;
         byId("log-list").replaceChildren();
-        graphRevisions().forEach((revision) => {
+        displayRevisions().forEach((revision) => {
+          const isSource = revision.id === source().id,
+            unavailable = eligible(revision).error;
           const row = document.createElement("div");
-          row.className = `revision${revision.source ? " current" : ""}${revision.id === result.id ? " target" : ""}`;
+          row.className = `revision${isSource ? " current" : ""}${revision.id === result.id ? " target" : ""}`;
           row.dataset.revision = revision.id;
           const graph = document.createElement("span");
           graph.className = "graph";
@@ -1096,26 +1296,34 @@
           const review = document.createElement("button");
           review.className = "review-id";
           review.textContent = revision.id;
-          review.setAttribute("aria-label", `Review change ${revision.id}`);
+          review.setAttribute(
+            "aria-label",
+            `${picking ? "Choose destination" : "Review change"} ${revision.id}`,
+          );
           review.setAttribute(
             "aria-description",
-            revision.source
+            isSource
               ? "Reviewed source"
               : revision.id === result.id
-                ? "Resolved squash destination"
-                : revision.immutable
-                  ? "Immutable commit"
-                  : "Mutable commit",
+                ? "Squash destination"
+                : unavailable || "Mutable commit",
           );
-          review.title = revision.source
-            ? "Reviewed source (pinned, independently of @)"
-            : revision.id === result.id
-              ? `Resolved from ${field.value}`
-              : "Review this change";
+          review.disabled = picking && !!unavailable;
+          review.title = isSource
+            ? "Reviewed source"
+            : picking && unavailable
+              ? unavailable
+              : revision.id === result.id
+                ? "Squash destination"
+                : picking
+                  ? "Set custom squash destination"
+                  : "Review this change";
           review.onclick = () =>
-            tell(
-              "Review navigation is not simulated · still reviewing vqkqszmu",
-            );
+            picking
+              ? choose(revision.id)
+              : tell(
+                  "Review navigation is illustrative; use Review parent (demo) to change the fixture source.",
+                );
           row.append(graph, review, document.createTextNode(" "));
           const title = document.createElement("span");
           title.className = "row-title";
@@ -1127,71 +1335,136 @@
           }
           title.append(document.createTextNode(revision.title));
           row.append(title);
+          if (picking && !unavailable) {
+            row.style.cursor = "pointer";
+            row.onpointerenter = () => preview(revision.id);
+            review.onfocus = () => preview(revision.id);
+            row.onclick = (event) => {
+              if (!event.target.closest("button")) choose(revision.id);
+            };
+          }
           byId("log-list").append(row);
         });
         byId("log-tip").textContent = result.error
-          ? "No destination fallback. Fix the revset before squashing."
-          : pending
-            ? "Preview only · Enter or Apply saves the expression · Esc restores it."
-            : queued
-              ? "Queued work keeps its resolved destination. Re-evaluate the expression after the queue drains."
-              : "The expression stays saved; its destination resolves again when @ changes. Fixture evaluator only.";
-        drawRoute();
-      }
-      function apply() {
-        if (queued || resolve(byId("destination-revset").value).error) return;
-        applied = byId("destination-revset").value;
-        render();
-        tell(
-          `Saved revset ${applied} · resolved to ${currentResult().id} · no squash performed`,
-        );
+          ? "No destination fallback. Choose Commit below or fix the custom expression."
+          : picking
+            ? "Preview only. Click a commit or press Enter; Esc restores the previous mode."
+            : mode === "parent"
+              ? "Commit below = the reviewed source’s actual parent. @ is not used."
+              : draftPending
+                ? "Preview only · Enter or Apply saves the custom rule · Esc restores it."
+                : "Custom is explicit: a clicked change stays fixed; an entered revset keeps its meaning. Fixture evaluator only.";
+        refreshIndicators();
       }
       function loadExample(state) {
         moved = state === "following";
-        queued = state === "queued";
-        applied =
-          state === "default" ? "@-" : state === "hidden" ? external.id : "@--";
+        sourceIndex = 0;
+        filtered = state === "filtered";
+        queued = false;
+        pinned = null;
+        mode = ["custom", "revset", "following", "invalid", "hidden"].includes(
+          state,
+        )
+          ? "custom"
+          : "parent";
+        appliedCustom =
+          state === "custom"
+            ? "rwpxovrz"
+            : state === "hidden"
+              ? external.id
+              : mode === "custom"
+                ? "@--"
+                : "";
         byId("destination-revset").value =
-          state === "invalid" ? "all()" : applied;
-        pinned = queued ? resolve(applied) : null;
+          state === "invalid" ? "all()" : appliedCustom;
+        picking = state === "picking";
+        candidate = picking ? "rwpxovrz" : null;
+        if (state === "queued") {
+          pinned = currentResult();
+          queued = true;
+        }
         render();
-        tell(
-          state === "following"
-            ? "Working copy moved to xmturvkn · saved @-- now resolves to pqxvqmoo · source unchanged"
-            : "Fixture example loaded · no repository writes",
-        );
+        tell("Fixture example loaded · no repository writes");
       }
-      byId("revset-form").onsubmit = (event) => {
+      byId("destination-mode").onchange = () => {
+        if (queued) return;
+        if (byId("destination-mode").value === "custom") beginCustom();
+        else {
+          mode = "parent";
+          picking = false;
+          candidate = null;
+          byId("destination-revset").value = appliedCustom;
+          render();
+          tell(
+            `Commit below selected · source ${source().id} → parent ${parentResult().id || "unavailable"}`,
+          );
+        }
+      };
+      byId("custom-editor").onsubmit = (event) => {
         event.preventDefault();
         apply();
       };
-      byId("destination-revset").oninput = render;
+      byId("destination-revset").oninput = () => {
+        candidate = null;
+        render();
+      };
       byId("destination-revset").onkeydown = (event) => {
-        if (event.key === "Escape" && !queued) {
+        if (event.key === "Escape") {
           event.preventDefault();
-          byId("destination-revset").value = applied;
-          render();
-          tell(`Restored saved expression ${applied}`);
+          cancel();
         }
       };
-      byId("route-handle").onclick = () => {
-        if (!queued) {
-          byId("destination-revset").focus();
-          byId("destination-revset").select();
+      byId("cancel-custom").onclick = cancel;
+      byId("change-custom").onclick = byId("route-handle").onclick =
+        beginCustom;
+      byId("log-list").onkeydown = (event) => {
+        if (
+          !picking ||
+          queued ||
+          !["ArrowDown", "ArrowUp", "Enter"].includes(event.key)
+        )
+          return;
+        event.preventDefault();
+        if (event.key === "Enter") {
+          if (candidate) choose(candidate);
+          return;
         }
+        const choices = displayRevisions().filter((r) => !eligible(r).error),
+          index = choices.findIndex((r) => r.id === candidate),
+          step = event.key === "ArrowDown" ? 1 : -1;
+        if (!choices.length) return;
+        const next =
+          choices[
+            index < 0
+              ? 0
+              : Math.max(0, Math.min(choices.length - 1, index + step))
+          ];
+        candidate = next.id;
+        refreshIndicators();
+        document
+          .querySelector(`[data-revision="${next.id}"] .review-id`)
+          .focus({ preventScroll: true });
       };
-      byId("reset").onclick = () => {
-        if (!queued) {
-          byId("destination-revset").value = defaultRevset();
-          apply();
+      document.addEventListener("keydown", (event) => {
+        if (event.key === "Escape" && pending()) {
+          event.preventDefault();
+          cancel();
         }
-      };
+      });
       byId("move-working-copy").onclick = () => {
         if (queued || moved) return;
         moved = true;
         render();
         tell(
-          `Working copy moved to xmturvkn · saved expression ${applied} re-evaluated · source stays vqkqszmu`,
+          `Working copy moved · source ${source().id} and ${mode === "parent" ? "Commit below mode stay independent of @" : "custom rule " + appliedCustom + " retains its meaning"}`,
+        );
+      };
+      byId("review-parent").onclick = () => {
+        if (queued || sourceIndex >= 1) return;
+        sourceIndex++;
+        render();
+        tell(
+          `Now reviewing ${source().id} · Commit below resolves its actual parent, not @- · diff content remains illustrative`,
         );
       };
       document
@@ -1206,7 +1479,7 @@
       byId("squash-demo").onclick = () => {
         if (!byId("squash-demo").disabled)
           tell(
-            `Mockup only · would squash 3 selected lines into ${currentResult().id} from saved revset ${applied} · no repository writes`,
+            `Mockup only · would squash selected lines from ${source().id} into ${currentResult().id} · no repository writes`,
           );
       };
       document
@@ -1215,7 +1488,7 @@
           (button) =>
             (button.onclick = () =>
               tell(
-                `${button.dataset.demo} is outside this destination-revset mockup`,
+                `${button.dataset.demo} is outside this destination mockup`,
               )),
         );
       render();
