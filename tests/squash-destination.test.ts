@@ -80,3 +80,44 @@ test("source eligibility blocks custom destinations too", () => {
   assert.equal(result.target, null);
   assert.match(result.error, /immutable/);
 });
+
+test("a merge has no default destination even with eligible direct parents", () => {
+  const merge = { ...state, parent: null };
+  const result = squashDestination(merge, null);
+  assert.equal(result.mode, "parent");
+  assert.equal(result.target, null);
+  assert.equal(
+    result.parentReason,
+    "Choose a destination in the log; this revision has multiple parents.",
+  );
+  assert.equal(result.error, result.parentReason);
+  for (const target of merge.targets) {
+    const selected = squashDestination(merge, {
+      sourceId: merge.source.changeId,
+      mode: "custom",
+      custom: target,
+    });
+    assert.equal(selected.target, target);
+    assert.equal(selected.error, "");
+  }
+});
+
+test("missing defaults retain global safety errors and unavailable wording", () => {
+  const unavailable = squashDestination(
+    {
+      ...state,
+      parent: null,
+      squashUnavailable: "The reviewed revision contains conflicts.",
+    },
+    null,
+  );
+  assert.equal(
+    unavailable.parentReason,
+    "The reviewed revision contains conflicts.",
+  );
+  assert.equal(
+    squashDestination({ ...state, parent: null, targets: [] }, null)
+      .parentReason,
+    "No mutable immediate parent is available.",
+  );
+});

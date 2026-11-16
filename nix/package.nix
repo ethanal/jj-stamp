@@ -41,6 +41,7 @@ buildNpmPackage {
     runHook preInstall
     mkdir -p "$out/lib/jj-stamp" "$out/bin"
     cp dist/cli.cjs dist/diff-editor.cjs "$out/lib/jj-stamp/"
+    cp dist/diff-reader.cjs "$out/lib/jj-stamp/"
     cp -R dist/client "$out/lib/jj-stamp/client"
     # Prefer the packaged, tested tools over any user-installed versions on PATH.
     makeWrapper ${lib.getExe nodejs_24} "$out/bin/jj-stamp" \

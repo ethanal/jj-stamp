@@ -35,3 +35,12 @@ await build({
   format: "cjs",
   define: { __JJ_STAMP_BUNDLED__: "true" },
 });
+await build({
+  entryPoints: ["server/diff-reader-cli.ts"],
+  outfile: "dist/diff-reader.cjs",
+  bundle: true,
+  platform: "node",
+  target: "node24",
+  format: "cjs",
+  define: { __JJ_STAMP_BUNDLED__: "true" },
+});

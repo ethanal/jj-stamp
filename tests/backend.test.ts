@@ -1220,7 +1220,7 @@ test("conflicted one-parent sources expose conflict diffs and file context acros
   );
 });
 
-test("merge parents are unavailable rather than selecting any ancestor; file context fails closed", async () => {
+test("merge parents require an explicit destination and support merged-parent file context", async () => {
   const { state, root } = await fixture();
   await jj(root, ["new", state.source.commitId, "-m", "left"]);
   await writeFile(path.join(root, "left.txt"), "left\n");
@@ -1234,7 +1234,7 @@ test("merge parents are unavailable rather than selecting any ancestor; file con
   const service = new ReviewService({ repoPath: root });
   const merged = await service.getState();
   assert.equal(merged.parent, null);
-  assert.match(merged.squashUnavailable!, /exactly one immediate parent/);
+  assert.equal(merged.squashUnavailable, undefined);
   assert.ok(merged.targets.length > 1);
   const hunk = merged.files[0].hunks[0];
   await rejectsCode(
@@ -1244,10 +1244,24 @@ test("merge parents are unavailable rather than selecting any ancestor; file con
     }),
     "SQUASH_UNAVAILABLE",
   );
-  await rejectsCode(
-    service.getFile({ version: merged.version, path: "merge.txt" }),
-    "UNSUPPORTED_DIFF",
+  assert.deepEqual(
+    await service.getFile({ version: merged.version, path: "merge.txt" }),
+    {
+      oldFile: null,
+      newFile: { name: "merge.txt", contents: "merge\n" },
+    },
   );
+  const result = await service.squashLines({
+    version: merged.version,
+    target: merged.targets.find((target) => target.commitId === left)!.changeId,
+    selections: [{ id: hunk.id, lines: changes(hunk) }],
+  });
+  assert.deepEqual(result.state.files, []);
+  assert.equal(result.state.parent, null);
+  assert.equal(result.state.canUndo, true);
+  const undone = await service.undo(result.state.version);
+  assert.deepEqual(undone.state.source, merged.source);
+  assert.deepEqual(undone.state.files, merged.files);
 });
 
 test("log uses the review revset and real jj graph output, with no custom app text template or ANSI", async () => {

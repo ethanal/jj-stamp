@@ -19,7 +19,11 @@ export function squashDestination(
     selected;
   const parentReason =
     state?.squashUnavailable ||
-    (!state?.parent ? "No mutable immediate parent is available." : "");
+    (!state?.parent
+      ? state?.targets.length
+        ? "Choose a destination in the log; this revision has multiple parents."
+        : "No mutable immediate parent is available."
+      : "");
   const customReason =
     state?.squashUnavailable ||
     (!selected

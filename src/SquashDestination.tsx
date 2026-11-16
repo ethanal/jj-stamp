@@ -180,6 +180,7 @@ export function SquashDestination({
     action();
   };
   const targetId = target?.changeId.slice(0, 8) ?? "—";
+  const needsDestination = !parent && canPick && !target && !picking;
   const stateLabel = picking
     ? "Choosing…"
     : mode === "parent"
@@ -219,8 +220,14 @@ export function SquashDestination({
         }}
       >
         <span id={`${id}-value`}>
-          {stateLabel} <span className="squash-destination-dot">·</span>{" "}
-          <code>{targetId}</code>
+          {needsDestination ? (
+            "Choose revision…"
+          ) : (
+            <>
+              {stateLabel} <span className="squash-destination-dot">·</span>{" "}
+              <code>{targetId}</code>
+            </>
+          )}
         </span>
         <span aria-hidden="true">⌄</span>
       </button>

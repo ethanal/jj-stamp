@@ -665,7 +665,7 @@ test("in-process pending recovery prevents source switching, but restart forgets
   ]);
 });
 
-test("selecting a mutable merge exposes no destination and refuses squash", async () => {
+test("selecting a mutable merge exposes explicit destinations but no default parent", async () => {
   const options = await fixture();
   const service = new ReviewService({ repoPath: options.repoPath });
   const initial = await service.getState();
@@ -693,13 +693,41 @@ test("selecting a mutable merge exposes no destination and refuses squash", asyn
   ).state;
   assert.equal(selected.source.changeId, merge);
   assert.equal(selected.parent, null);
-  assert.match(selected.squashUnavailable!, /exactly one immediate parent/);
+  assert.equal(selected.squashUnavailable, undefined);
+  const destination = selected.targets.find(
+    (target) => target.commitId === left,
+  );
+  assert.ok(destination);
   await rejectsCode(
     service.squashLines({
       version: selected.version,
       selections: selections(selected),
     }),
     "SQUASH_UNAVAILABLE",
+  );
+  assert.deepEqual(await service.getState(), selected);
+  assert.deepEqual(
+    await service.getFile({
+      version: selected.version,
+      path: "merge-only.txt",
+    }),
+    {
+      oldFile: null,
+      newFile: { name: "merge-only.txt", contents: "merge\n" },
+    },
+  );
+  const preview = await service.preview({
+    version: selected.version,
+    target: destination.changeId,
+    selections: selections(selected),
+  });
+  const result = await service.squash(preview.token);
+  assert.equal(result.state.source.changeId, merge);
+  assert.equal(result.state.parent, null);
+  assert.deepEqual(result.state.files, []);
+  assert.deepEqual(
+    (await service.undo(result.state.version)).state.source,
+    selected.source,
   );
 });
 
