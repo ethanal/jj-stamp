@@ -20,8 +20,29 @@ export function repositoryPageTitle(repoPath: string | undefined): string {
   const name = repoPath?.split(/[\\/]/).filter(Boolean).at(-1);
   return name ? `jj-stamp: ${name}` : "jj-stamp";
 }
-export function ChangeId({ revision }: { revision?: Revision }) {
-  return <>{revision ? shortChangeId(revision) : "—"}</>;
+export function ChangeId({
+  revision,
+  highlightPrefix = false,
+}: {
+  revision?: Revision;
+  highlightPrefix?: boolean;
+}) {
+  if (!revision) return <>—</>;
+  const shortId = shortChangeId(revision);
+  if (!highlightPrefix) return <>{shortId}</>;
+  const prefix = revision.changeIdPrefix;
+  const prefixLength =
+    prefix && revision.changeId.startsWith(prefix) ? prefix.length : 0;
+  return (
+    <>
+      {prefixLength > 0 && (
+        <span className="change-id-prefix">
+          {shortId.slice(0, prefixLength)}
+        </span>
+      )}
+      <span className="change-id-rest">{shortId.slice(prefixLength)}</span>
+    </>
+  );
 }
 export function RevisionHeading({
   source,

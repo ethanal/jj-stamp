@@ -22,6 +22,7 @@
   background: var(--panel);
   color: var(--fg);
   font: inherit;
+  white-space: normal;
   text-align: left;
 }
 .squash-destination-trigger-label {

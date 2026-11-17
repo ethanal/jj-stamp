@@ -43,6 +43,8 @@ export function TerminalPanel({
   const id = useId();
   const panel = useRef<HTMLElement>(null);
   const container = useRef<HTMLDivElement>(null);
+  const viewport = useRef<HTMLDivElement>(null);
+  const spacer = useRef<HTMLDivElement>(null);
   const terminal = useRef<Terminal | null>(null);
   const fit = useRef<() => void>(() => {});
   const applyTheme = useRef<(theme: ITheme) => void>(() => {});
@@ -233,6 +235,14 @@ export function TerminalPanel({
         };
         term.open(container.current);
         opening = false;
+        runtime.installTerminalPixelAlignment(term);
+        subscriptions.push(
+          runtime.installTerminalScroll(
+            term,
+            viewport.current!,
+            spacer.current!,
+          ),
+        );
         container.current.setAttribute("aria-label", "Shell input");
         term.textarea?.setAttribute("aria-label", "Shell paste input");
         applyTheme.current = runtime.installTerminalTheme(
@@ -243,17 +253,9 @@ export function TerminalPanel({
         // open() painted the native identity palette before the adapter existed.
         // Reused geometry needn't trigger a resize/full redraw to replace it.
         applyTheme.current(theme);
-        const addon = new runtime.FitAddon();
-        term.loadAddon(addon);
         fit.current = () => {
           if (!visible.current || !term) return;
-          const size = addon.proposeDimensions();
-          if (size) {
-            const cols = Math.max(1, Math.min(500, size.cols));
-            const rows = Math.max(1, Math.min(300, size.rows));
-            if (cols !== term.cols || rows !== term.rows)
-              term.resize(cols, rows);
-          }
+          runtime.fitTerminal(term);
         };
         fit.current();
         geometry.current = { cols: term.cols, rows: term.rows };
@@ -434,17 +436,24 @@ export function TerminalPanel({
                 ×
               </button>
             </header>
-            <div
-              id={`${id}-surface`}
-              className="terminal-surface"
-              ref={container}
-              data-phase={phase}
-              role="textbox"
-              aria-label="Shell input"
-              aria-multiline="true"
-              aria-readonly={phase !== "running"}
-              tabIndex={0}
-            />
+            <div className="terminal-viewport" ref={viewport}>
+              <div
+                id={`${id}-surface`}
+                className="terminal-surface"
+                ref={container}
+                data-phase={phase}
+                role="textbox"
+                aria-label="Shell input"
+                aria-multiline="true"
+                aria-readonly={phase !== "running"}
+                tabIndex={0}
+              />
+              <div
+                className="terminal-scrollback"
+                ref={spacer}
+                aria-hidden="true"
+              />
+            </div>
             {phase === "ended" && (
               <div className="terminal-notice terminal-failure" role="status">
                 <span>{message}</span>

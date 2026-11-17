@@ -36,6 +36,8 @@ export interface Revision {
   description: string;
   author?: string;
   changeIdPrefix?: string;
+  /** Destination direction, supplied only on eligible state.targets entries. */
+  isDescendant?: boolean;
 }
 export interface LogRow {
   graph: string;

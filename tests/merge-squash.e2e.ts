@@ -153,7 +153,7 @@ const selectedLine = () =>
   page.locator('[data-line="20"][data-line-type="change-addition"]');
 const selectedRows = page.locator("[data-line][data-fold-selected]");
 const reason =
-  "Choose a destination in the log; this revision has multiple parents.";
+  "Choose a destination in the log; this revision has no single eligible mutable parent.";
 async function screenshot(name: string) {
   await mkdir(".planka-artifacts", { recursive: true });
   await page.screenshot({

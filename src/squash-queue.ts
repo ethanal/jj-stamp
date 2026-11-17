@@ -1,4 +1,5 @@
 import {
+  canProjectSquash,
   changeSignature,
   combineSquashRefs,
   projectSquash,
@@ -39,6 +40,8 @@ interface Job {
   beforeSignature: string;
   sourceChangeId: string;
   targetChangeId: string;
+  isDescendant: boolean;
+  optimistic: boolean;
   count: number;
 }
 
@@ -46,6 +49,13 @@ function eligibleTarget(state: RepoState, changeId: string): boolean {
   return (
     !state.squashUnavailable &&
     state.targets.some((target) => target.changeId === changeId)
+  );
+}
+
+function targetIsDescendant(state: RepoState, changeId: string): boolean {
+  return (
+    state.targets.find((target) => target.changeId === changeId)
+      ?.isDescendant === true
   );
 }
 
@@ -136,6 +146,10 @@ export class SquashQueue {
       throw new Error(
         "Queued source revision no longer matches the selected revision.",
       );
+    if (pending && !pending.optimistic)
+      throw new Error(
+        "Wait for the pending file metadata squash before selecting more changes.",
+      );
     if (!target)
       throw new Error("No Parent revision is available for squashing.");
     if (!eligibleTarget(view, target))
@@ -145,13 +159,29 @@ export class SquashQueue {
       );
     // Validate and finish projection before changing any queue state.
     const saved = refs.map((ref) => ({ ...ref }));
+    specsForRefs(view, saved);
+    const isDescendant = targetIsDescendant(view, target);
+    if (pending && pending.isDescendant !== isDescendant)
+      throw new Error("The queued destination revision changed direction.");
+    const optimistic = canProjectSquash(view, saved, isDescendant);
+    if (!optimistic && pending)
+      throw new Error(
+        "Wait for pending squashes before squashing forward file metadata.",
+      );
     const beforeSignature = changeSignature(view);
-    const projected = projectSquash(view, saved);
+    const projected = optimistic
+      ? projectSquash(view, saved, isDescendant)
+      : view;
     const tail = this.jobs.at(-1);
     if (tail && tail !== this.inFlight) {
-      // Later selections use the projected parent's coordinates, not the
+      // Later selections use the projected changed side's coordinates, not the
       // waiting batch's original coordinates. Never modify a dispatched job.
-      const combined = combineSquashRefs(tail.before, tail.refs, saved);
+      const combined = combineSquashRefs(
+        tail.before,
+        tail.refs,
+        saved,
+        isDescendant,
+      );
       tail.refs = combined;
       tail.count = combined.length;
     } else {
@@ -161,6 +191,8 @@ export class SquashQueue {
         beforeSignature,
         sourceChangeId: view.source.changeId,
         targetChangeId: target,
+        isDescendant,
+        optimistic,
         count: saved.length,
       });
     }
@@ -169,7 +201,7 @@ export class SquashQueue {
       pending: this.jobs.length,
       error: "",
       errorDetails: [],
-      notice: "",
+      notice: optimistic ? "" : "Squashing file metadata…",
       epoch: this.snapshot.epoch + 1,
     });
     // No global dispatch lock: subsequent selections can enqueue while squash awaits.
@@ -255,12 +287,18 @@ export class SquashQueue {
           throw new Error(
             "Queued destination revision is no longer eligible for squashing.",
           );
+        if (
+          targetIsDescendant(confirmed, job.targetChangeId) !== job.isDescendant
+        )
+          throw new Error("Queued destination revision changed direction.");
         if (changeSignature(confirmed) !== job.beforeSignature)
           throw new Error(
             "Queued selection no longer matches the confirmed changes.",
           );
         const selections = specsForRefs(confirmed, job.refs);
-        const expected = projectSquash(confirmed, job.refs);
+        const expected = job.optimistic
+          ? projectSquash(confirmed, job.refs, job.isDescendant)
+          : null;
         this.inFlight = job;
         const result = await this.transport.squash({
           version: confirmed.version,
@@ -273,11 +311,16 @@ export class SquashQueue {
           result.state,
           job.targetChangeId,
         );
+        const targetDirectionChanged =
+          targetIsDescendant(result.state, job.targetChangeId) !==
+          job.isDescendant;
         if (
           result.warning ||
           sourceChanged ||
           targetUnavailable ||
-          changeSignature(result.state) !== changeSignature(expected)
+          targetDirectionChanged ||
+          (expected !== null &&
+            changeSignature(result.state) !== changeSignature(expected))
         ) {
           this.stopAtKnownState(
             result.state,
@@ -287,7 +330,9 @@ export class SquashQueue {
                 ? "The source revision changed after squashing. Queued squashes were canceled. Refresh or undo before continuing."
                 : targetUnavailable
                   ? "The destination revision is no longer eligible after squashing. Queued squashes were canceled. Refresh or undo before continuing."
-                  : "Squash result differed from the projected changes. Queued squashes were canceled. Refresh or undo before continuing.",
+                  : targetDirectionChanged
+                    ? "The destination revision changed direction after squashing. Queued squashes were canceled. Refresh or undo before continuing."
+                    : "Squash result differed from the projected changes. Queued squashes were canceled. Refresh or undo before continuing.",
           );
           return;
         }
@@ -296,9 +341,11 @@ export class SquashQueue {
         const idle = this.jobs.length === 0;
         // Keep the rendered files AND epoch stable across acknowledgements. The
         // user may be dragging a new range against these original projected IDs.
-        const view = idle
-          ? { ...result.state, files: this.snapshot.view!.files }
-          : this.snapshot.view;
+        const view = !job.optimistic
+          ? result.state
+          : idle
+            ? { ...result.state, files: this.snapshot.view!.files }
+            : this.snapshot.view;
         const summary = [
           [
             "line",
@@ -331,6 +378,7 @@ export class SquashQueue {
           view,
           pending: this.jobs.length,
           notice: idle ? `${summary} squashed.` : "",
+          ...(!job.optimistic ? { epoch: this.snapshot.epoch + 1 } : {}),
         });
       }
     } catch (error) {

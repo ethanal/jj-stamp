@@ -31,7 +31,12 @@ function metadataRevset(changeIds: string[]) {
   return changeIds
     .flatMap((id) => {
       const source = `change_id(${JSON.stringify(id)})`;
-      return [source, `mutable() & ::${source} ~ ${source}`, `${source}-`];
+      return [
+        source,
+        `mutable() & ::${source} ~ ${source}`,
+        `${source}-`,
+        `mutable() & (${source} & mutable()):: ~ ${source}`,
+      ];
     })
     .map((revset) => `(${revset})`)
     .join(" | ");
@@ -202,6 +207,36 @@ test("scoped membership preserves custom conflicts() aliases", async (t) => {
       }
     });
   }
+});
+
+test("immutable source reads do not enumerate its mutable descendant cone", async (t) => {
+  const repoPath = await fixture(t);
+  const source = await changeId(repoPath, "@-");
+  const descendant = await changeId(repoPath);
+  await jj(repoPath, [
+    "config",
+    "set",
+    "--repo",
+    'revset-aliases."immutable_heads()"',
+    `change_id("${source}")`,
+  ]);
+  const captured: string[] = [];
+  const service = new ReviewService({
+    repoPath,
+    revision: source,
+    jjRunner: async (cwd, args, limits) => {
+      const result = await jj(cwd, args, limits);
+      if (args[0] === "log" && args.some((arg) => arg.includes("conflicts()")))
+        captured.push(result.stdout);
+      return result;
+    },
+  });
+  const state = await service.getState();
+  assert.match(state.squashUnavailable!, /immutable/);
+  assert.deepEqual(state.targets, []);
+  assert.equal(captured.length, 2);
+  for (const output of captured)
+    assert.ok(!output.includes(descendant), "skip unauthorized descendants");
 });
 
 test("metadata and graph keep the configured broad distinguishing-prefix scope", async (t) => {

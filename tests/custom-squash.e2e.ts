@@ -48,20 +48,21 @@ await writeFile(path.join(repoPath, "parent.txt"), "actual immediate parent\n");
 await jj(repoPath, ["commit", "-m", "Actual immediate parent"]);
 const parent = await id("@-");
 const sourceLines = [...baseLines];
-sourceLines.splice(2, 0, "SELECTED moves to older destination");
+sourceLines.splice(2, 0, "SELECTED moves to chosen destination");
 sourceLines.splice(17, 0, "UNSELECTED remains in reviewed source");
 const sourceText = sourceLines.join("\n") + "\n";
 await writeFile(path.join(repoPath, "review.txt"), sourceText);
 await jj(repoPath, ["commit", "-m", "Reviewed source away from working copy"]);
 const source = await id("@-");
 await writeFile(path.join(repoPath, "working.txt"), "unrelated working copy\n");
-await jj(repoPath, ["describe", "-m", "Working copy elsewhere"]);
+await jj(repoPath, ["describe", "-m", "Descendant working copy"]);
 const workingCopy = await id("@");
 const service = new ReviewService({ repoPath, revision: source });
 const initial = await service.getState();
 assert.equal(initial.source.changeId, source);
 assert.equal(initial.parent?.changeId, parent);
 assert(initial.targets.some((target) => target.changeId === older));
+assert(initial.targets.some((target) => target.changeId === workingCopy));
 assert(!initial.targets.some((target) => target.changeId === immutable));
 const api = createApi(service);
 const app = express();
@@ -333,15 +334,20 @@ try {
   await assertSourceAndSelection(selectionCount);
   assert.deepEqual(await fixture.readConfig(), hiddenLogConfig);
 
-  // Source, immutable ancestors, and @ descendants cannot become destinations.
+  // Source and immutable ancestors cannot become destinations. A mutable
+  // descendant (including @) is an eligible forward-squash destination.
   await chooseInLog();
-  for (const invalid of [source, immutable, workingCopy]) {
+  for (const invalid of [source, immutable]) {
     await expect(row(invalid)).toBeDisabled();
     await row(invalid).dispatchEvent("click");
     await expect(graph).toBeVisible();
     await expect(squash).toBeDisabled();
     await assertSourceAndSelection(selectionCount);
   }
+  await expect(row(workingCopy)).toBeEnabled();
+  await row(workingCopy).hover();
+  await expect(destination).toContainText(workingCopy.slice(0, 8));
+  await assertSourceAndSelection(selectionCount);
   await row(older).click();
   await expect(graph).toBeHidden();
   await expect(trigger).toHaveAccessibleName(
@@ -482,19 +488,20 @@ try {
   releaseSquash = undefined;
   const response = await responsePromise;
   assert.equal(response.status(), 200, await response.text());
+  await page.unroute("**/api/squash-lines");
   await expect(page.locator(".queue-count")).toHaveCount(0);
   await expect(trigger).toBeEnabled();
   await expect(page.getByRole("alert")).toHaveCount(0);
   await expect(reviewedId()).toHaveAttribute("title", source);
   assert.equal(revisions.length, 0);
   const olderText = await fileText(older);
-  assert(olderText.includes("SELECTED moves to older destination"));
+  assert(olderText.includes("SELECTED moves to chosen destination"));
   assert(!olderText.includes("UNSELECTED remains in reviewed source"));
   assert.equal(await fileText(source), sourceText);
   const sourceDiff = (await jj(repoPath, ["diff", "-r", source, "--git"]))
     .stdout;
   assert(sourceDiff.includes("+UNSELECTED remains in reviewed source"));
-  assert(!sourceDiff.includes("+SELECTED moves to older destination"));
+  assert(!sourceDiff.includes("+SELECTED moves to chosen destination"));
   assert.equal(await fileText(immutable), baseText);
   assert.equal(await id("@"), workingCopy);
   await screenshot("squashed");
@@ -511,9 +518,55 @@ try {
   assert.equal(await fileText(source), sourceText);
   const restoredDiff = (await jj(repoPath, ["diff", "-r", source, "--git"]))
     .stdout;
-  assert(restoredDiff.includes("+SELECTED moves to older destination"));
+  assert(restoredDiff.includes("+SELECTED moves to chosen destination"));
   assert(restoredDiff.includes("+UNSELECTED remains in reviewed source"));
   assert.equal(revisions.length, 0);
+
+  // Move the same selected row forward into the descendant working copy.
+  // The source tree loses it; @ keeps its exact bytes and gains the delta.
+  await addition(3).click();
+  await chooseInLog();
+  await row(workingCopy).focus();
+  await screenshot("descendant-preview");
+  await page.keyboard.press("Enter");
+  await expect(destination).toContainText(workingCopy.slice(0, 8));
+  await expect(squash).toBeEnabled();
+  await screenshot("descendant-chosen");
+  const forwardResponse = page.waitForResponse((response) =>
+    response.url().endsWith("/api/squash-lines"),
+  );
+  await squash.click();
+  const forward = await forwardResponse;
+  assert.equal(forward.status(), 200, await forward.text());
+  await expect(page.locator(".queue-count")).toHaveCount(0);
+  await expect(trigger).toBeEnabled();
+  await expect(page.getByRole("alert")).toHaveCount(0);
+  assert.equal(squashes.at(-1)!.target, workingCopy);
+  await expect(reviewedId()).toHaveAttribute("title", source);
+  await expect(destination).toContainText(workingCopy.slice(0, 8));
+  assert.equal(
+    await fileText(source),
+    sourceText.replace("SELECTED moves to chosen destination\n", ""),
+  );
+  assert.equal(await fileText(workingCopy), sourceText);
+  const descendantDiff = (
+    await jj(repoPath, ["diff", "-r", workingCopy, "--git"])
+  ).stdout;
+  assert(descendantDiff.includes("+SELECTED moves to chosen destination"));
+  assert(!descendantDiff.includes("+UNSELECTED remains in reviewed source"));
+  assert.equal(await id("@"), workingCopy);
+  await screenshot("descendant-squashed");
+  const forwardUndo = page.waitForResponse((response) =>
+    response.url().endsWith("/api/undo"),
+  );
+  await page.getByRole("button", { name: /^Undo/ }).click();
+  const reverted = await forwardUndo;
+  assert.equal(reverted.status(), 200, await reverted.text());
+  await expect(addition(3)).toBeVisible();
+  assert.equal(await fileText(source), sourceText);
+  assert.equal(await fileText(workingCopy), sourceText);
+  assert.equal(revisions.length, 0);
+
   for (const width of [1200, 1000, 800, 390, 320]) {
     await page.setViewportSize({ width, height: 900 });
     await expect(trigger).toBeVisible();
@@ -595,6 +648,17 @@ try {
           `Destination group, trigger, and menu must fit ${width}px at font24: ${JSON.stringify(bounds)}`,
         );
     }
+    const label = await trigger
+      .locator(":scope > span")
+      .first()
+      .evaluate((element) => ({
+        width: element.clientWidth,
+        scrollWidth: element.scrollWidth,
+      }));
+    if (label.scrollWidth > label.width)
+      responsiveFailures.push(
+        `Destination label must remain readable at ${width}px/font24: ${JSON.stringify(label)}`,
+      );
     await page.keyboard.press("Escape");
   }
   await page.setViewportSize({ width: 1440, height: 900 });
