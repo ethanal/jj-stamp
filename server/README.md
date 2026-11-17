@@ -132,9 +132,17 @@ values. Browser storage is neither read nor migrated.
 - `POST /config` accepts a strict partial typed config, merges against a fresh
   validated file, and returns the full effective config. It retains the HTTP
   server's same-origin, JSON and `X-Fold-Request: 1` protections.
+- `POST /config/reset-invalid {confirm:true}` explicitly recovers an existing
+  invalid file under the same writer lock. It backs up the exact original bytes
+  in an exclusive, synced 0600 `config.json.<uuid>.invalid.bak` sibling before
+  atomically installing defaults. Returns `{config,backup}` with the backup's
+  basename. Missing/valid files return `409 CONFIG_NOT_INVALID`; oversized,
+  unreadable, symlinked and nonregular files cannot be reset. Completed backups
+  remain available even if the subsequent replacement fails. The usual POST
+  protections apply; neither saves nor resets are automatically retried.
 - `GET /config/events` is a separate bounded SSE stream. Named `config` events
   contain full effective settings, initially and after a disk change; named
-  `config-error` events contain `{error}` and retain the last valid browser
+  `config-error` events contain `{error,code}` and retain the last valid browser
   snapshot. Streams remain connected while tabs are hidden/unfocused. HEAD
   does not allocate an SSE subscriber. Connection failures reconnect normally.
 
