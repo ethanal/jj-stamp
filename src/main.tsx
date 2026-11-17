@@ -37,6 +37,7 @@ import {
   useAppearancePreferences,
   usePreference,
   useConfigStatus,
+  useDefaultShell,
 } from "./preferences";
 import {
   FilesSidebar,
@@ -57,6 +58,8 @@ import {
   type DestinationChoice,
 } from "./squash-destination";
 import { ShortcutsDialog } from "./ShortcutsDialog";
+import { RefreshIcon } from "./RefreshIcon";
+import { TerminalPanel } from "./TerminalPanel";
 import { useSidebarReveal } from "./useSidebarReveal";
 import { useScrollActiveFile } from "./useScrollActiveFile";
 import "./styles.css";
@@ -74,6 +77,9 @@ interface DestinationPicker {
 }
 
 function App() {
+  const defaultShell = useDefaultShell();
+  const [terminalSlot, setTerminalSlot] = useState<HTMLDivElement | null>(null);
+  const [terminalOpen, setTerminalOpen] = useState(false);
   const {
     logRevset,
     setLogRevset,
@@ -81,6 +87,8 @@ function App() {
     setFontSize,
     vimMode,
     setVimMode,
+    shell,
+    setShell,
     hoverSidebars,
     setHoverSidebars,
     fileView,
@@ -1323,13 +1331,24 @@ function App() {
             onSubmit={goToRevision}
           />
           <button
-            className="action-button"
+            type="button"
+            className="action-button refresh-trigger"
+            aria-label="Refresh"
             onClick={() => void refresh()}
             disabled={idleActionDisabled || pickingDestination}
             title="Refresh repository"
           >
-            Refresh
+            <RefreshIcon />
           </button>
+          <TerminalPanel
+            mount={terminalSlot}
+            open={terminalOpen}
+            onOpenChange={setTerminalOpen}
+            disabled={dragging || pickingDestination}
+            fontSize={fontSize}
+            colorScheme={colorScheme}
+            settingsSaving={configStatus.saving}
+          />
           <SettingsDialog
             logRevset={logRevset}
             onLogRevsetChange={applyLogRevset}
@@ -1341,6 +1360,10 @@ function App() {
             onHoverSidebarsChange={setHoverSidebars}
             vimMode={vimMode}
             onVimModeChange={setVimMode}
+            shell={shell}
+            defaultShell={defaultShell.shell}
+            defaultShellError={defaultShell.error}
+            onShellChange={setShell}
             persistenceError={configStatus.error}
             disabled={dragging || pickingDestination}
           />
@@ -1348,7 +1371,7 @@ function App() {
       </header>
       <ShortcutsDialog disabled={dragging} />
       <div
-        className={`workspace ${logExpanded ? "" : "log-collapsed"} ${showFiles ? "" : "files-collapsed"}`}
+        className={`workspace ${logExpanded ? "" : "log-collapsed"} ${showFiles ? "" : "files-collapsed"} ${terminalOpen ? "terminal-open" : ""}`}
         style={
           {
             "--files-preferred-width": `${filesWidth}px`,
@@ -1441,6 +1464,7 @@ function App() {
             loadFile={loadFile}
           />
         </DiffFontSizeContext.Provider>
+        <div className="terminal-slot" ref={setTerminalSlot} />
         <RevisionGraph
           focusRequest={logFocusRequest}
           vimMode={vimMode}

@@ -19,6 +19,11 @@ export const configSchema = z
     "file-view": z.enum(["single", "all"]),
     "hover-sidebars": z.boolean(),
     "vim-mode": z.boolean(),
+    shell: z
+      .string()
+      .trim()
+      .max(4096)
+      .refine((value) => !/[\0\r\n]/.test(value)),
     "files-width": z.number().int().min(120).max(Number.MAX_SAFE_INTEGER),
     "log-width": z.number().int().min(160).max(Number.MAX_SAFE_INTEGER),
     "files-peek-width": z.number().int().min(120).max(Number.MAX_SAFE_INTEGER),
@@ -44,6 +49,7 @@ export const defaultConfig: Config = {
   "file-view": "single",
   "hover-sidebars": false,
   "vim-mode": false,
+  shell: "",
   "files-width": 245,
   "log-width": 350,
   "files-peek-width": 245,

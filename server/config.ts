@@ -6,6 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { z } from "zod";
+import { shellExecutable } from "./shell.ts";
 import {
   configPatchSchema,
   configSchema,
@@ -563,6 +564,19 @@ export function createConfigApi(options: ConfigApiOptions = {}): ConfigRouter {
   router.use(express.json({ limit: "64kb" }));
   router.head("/events", (_req, res) => res.status(204).end());
   router.get("/events", (req, res) => store.connect(req, res));
+  // Host-local runtime metadata, not a preference: never merge into the
+  // persisted config or its event stream. Ignore request input entirely.
+  router.get("/default-shell", (_req, res) => {
+    try {
+      res.json({ shell: shellExecutable("") });
+    } catch {
+      res.status(500).json({
+        error:
+          "The backend default shell is invalid. Set a terminal shell explicitly.",
+        code: "INVALID_DEFAULT_SHELL",
+      });
+    }
+  });
   router.get("/", async (_req, res) => res.json(await store.read()));
   router.post("/", async (req, res) => res.json(await store.patch(req.body)));
   router.use(((error: unknown, _req, res, next) => {

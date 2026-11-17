@@ -93,6 +93,10 @@ export function SettingsDialog({
   onHoverSidebarsChange,
   vimMode,
   onVimModeChange,
+  shell,
+  defaultShell,
+  defaultShellError,
+  onShellChange,
   persistenceError,
   disabled,
 }: {
@@ -104,12 +108,23 @@ export function SettingsDialog({
   onColorSchemeChange: (scheme: ColorScheme) => void;
   vimMode: boolean;
   onVimModeChange: (enabled: boolean) => void;
+  shell: string;
+  defaultShell?: string;
+  defaultShellError?: string;
+  onShellChange: (shell: string) => void;
   hoverSidebars: boolean;
   onHoverSidebarsChange: (enabled: boolean) => void;
   persistenceError?: string;
   disabled: boolean;
 }) {
   const [revsetDraft, setRevsetDraft] = useState(logRevset);
+  const [shellDraft, setShellDraft] = useState(shell);
+  const savedShell = useRef(shell);
+  useEffect(() => {
+    const previous = savedShell.current;
+    savedShell.current = shell;
+    setShellDraft((draft) => (draft === previous ? shell : draft));
+  }, [shell]);
   const savedRevset = useRef(logRevset);
   useEffect(() => {
     const previous = savedRevset.current;
@@ -131,6 +146,7 @@ export function SettingsDialog({
         onClick={() => {
           setRevsetDraft(logRevset);
           setRevsetError("");
+          setShellDraft(shell);
           dialog.current?.showModal();
         }}
         disabled={disabled}
@@ -237,13 +253,8 @@ export function SettingsDialog({
             maxLength={4096}
             required
             disabled={disabled || savingRevset}
-            aria-describedby={`${id}-revset-help`}
             onChange={(event) => setRevsetDraft(event.target.value)}
           />
-          <p className="settings-help" id={`${id}-revset-help`}>
-            Filters the graph only, not the displayed change. Saved in the
-            shared config file.
-          </p>
           {revsetError && (
             <p className="revset-error" role="alert">
               {revsetError}
@@ -259,7 +270,50 @@ export function SettingsDialog({
                 revsetDraft.trim() === logRevset
               }
             >
-              {savingRevset ? "Validating…" : "Apply"}
+              {savingRevset ? "Saving…" : "Save"}
+            </button>
+          </div>
+        </form>
+        <form
+          className="settings-section shell-settings"
+          onSubmit={(event) => {
+            event.preventDefault();
+            if (disabled) return;
+            onShellChange(shellDraft.trim());
+            setShellDraft(shellDraft.trim());
+          }}
+        >
+          <h3>
+            <label htmlFor={`${id}-shell`}>Terminal shell</label>
+          </h3>
+          <input
+            id={`${id}-shell`}
+            type="text"
+            value={shellDraft}
+            placeholder={
+              defaultShell
+                ? `Default: ${defaultShell}`
+                : defaultShellError
+                  ? "Default shell unavailable"
+                  : "Loading default shell…"
+            }
+            maxLength={4096}
+            disabled={disabled}
+            autoComplete="off"
+            spellCheck={false}
+            onChange={(event) => setShellDraft(event.target.value)}
+          />
+          {defaultShellError && (
+            <p className="revset-error" role="status">
+              {defaultShellError}
+            </p>
+          )}
+          <div className="revset-actions">
+            <button
+              type="submit"
+              disabled={disabled || shellDraft.trim() === shell}
+            >
+              Save
             </button>
           </div>
         </form>

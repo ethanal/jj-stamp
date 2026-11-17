@@ -122,6 +122,78 @@ test("missing config defaults and reads never create directories or files", asyn
   assert.deepEqual(await store.read(), defaultConfig);
 });
 
+test("default shell is read-only backend metadata, separate from config writes and events", async (t) => {
+  const { root, local, configPath } = await serverFixture(t);
+  const previous = process.env.SHELL;
+  process.env.SHELL = "/backend/default-shell";
+  t.after(() => {
+    if (previous === undefined) delete process.env.SHELL;
+    else process.env.SHELL = previous;
+  });
+  const endpoint = new URL("api/config/default-shell", local.url);
+  // Query values cannot override server metadata or start a shell.
+  endpoint.search = "?shell=/request/shell&defaultShell=/another";
+  const metadata = await fetch(endpoint);
+  assert.equal(metadata.status, 200);
+  assert.equal(metadata.headers.get("cache-control"), "no-store");
+  assert.deepEqual(await metadata.json(), { shell: "/backend/default-shell" });
+  assert.deepEqual(await readdir(root), []);
+  const events = await stream(local.url, t);
+  assert.deepEqual(await events.next(), {
+    event: "config",
+    data: defaultConfig,
+  });
+  const response = await post(local.url, { shell: "/configured/shell" });
+  const saved = { ...defaultConfig, shell: "/configured/shell" };
+  assert.deepEqual(await response.json(), saved);
+  assert.deepEqual(await events.next(), { event: "config", data: saved });
+  assert.deepEqual(JSON.parse(await readFile(configPath, "utf8")), saved);
+  assert.deepEqual(
+    await (await fetch(new URL("api/config", local.url))).json(),
+    saved,
+  );
+  assert.deepEqual(await (await fetch(endpoint)).json(), {
+    shell: "/backend/default-shell",
+  });
+  for (const key of ["defaultShell", "default-shell"]) {
+    assert.equal(
+      (await post(local.url, { [key]: "/injected/shell" })).status,
+      400,
+    );
+  }
+  const mutation = await fetch(endpoint, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Fold-Request": "1" },
+    body: JSON.stringify({ shell: "/injected/shell" }),
+  });
+  assert.equal(mutation.status, 404);
+  assert.deepEqual(JSON.parse(await readFile(configPath, "utf8")), saved);
+});
+
+test("default shell metadata uses account fallback and exposes invalid SHELL without breaking config", async (t) => {
+  const { root, local } = await serverFixture(t);
+  const previous = process.env.SHELL;
+  delete process.env.SHELL;
+  t.after(() => {
+    if (previous === undefined) delete process.env.SHELL;
+    else process.env.SHELL = previous;
+  });
+  t.mock.method(os, "userInfo", () => ({ shell: "/backend/account-shell" }));
+  const endpoint = new URL("api/config/default-shell", local.url);
+  assert.deepEqual(await (await fetch(endpoint)).json(), {
+    shell: "/backend/account-shell",
+  });
+  process.env.SHELL = "invalid\nshell";
+  const invalid = await fetch(endpoint);
+  assert.equal(invalid.status, 500);
+  assert.equal((await invalid.json()).code, "INVALID_DEFAULT_SHELL");
+  assert.deepEqual(
+    await (await fetch(new URL("api/config", local.url))).json(),
+    defaultConfig,
+  );
+  assert.deepEqual(await readdir(root), []);
+});
+
 test("patches save full validated private JSON atomically and preserve unrelated keys", async (t) => {
   const { configPath, store } = await fixture(t);
   assert.deepEqual(await store.patch({}), defaultConfig);
@@ -738,7 +810,11 @@ test("config routes retain loopback host, origin, fetch-site and mutation protec
   const { local, configPath } = await serverFixture(t);
   await mkdir(path.dirname(configPath));
   await writeFile(configPath, "{broken");
-  for (const endpoint of ["api/config", "api/config/events"]) {
+  for (const endpoint of [
+    "api/config",
+    "api/config/events",
+    "api/config/default-shell",
+  ]) {
     for (const headers of [
       { Origin: "https://evil.example" },
       { Host: "evil.example" },

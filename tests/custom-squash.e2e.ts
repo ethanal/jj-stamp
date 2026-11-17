@@ -191,10 +191,11 @@ async function applyFilter(revset: string) {
   await page.getByRole("button", { name: "Settings", exact: true }).click();
   const settings = page.getByRole("dialog", { name: "Settings", exact: true });
   await settings.getByLabel("jj log revset", { exact: true }).fill(revset);
-  await settings.getByRole("button", { name: "Apply", exact: true }).click();
-  await expect(
-    settings.getByRole("button", { name: "Apply", exact: true }),
-  ).toBeDisabled();
+  const save = settings
+    .locator(".log-revset-settings")
+    .getByRole("button", { name: "Save", exact: true });
+  await save.click();
+  await expect(save).toBeDisabled();
   await page.keyboard.press("Escape");
   await expect(settings).toBeHidden();
 }
