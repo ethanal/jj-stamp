@@ -1594,7 +1594,7 @@ export function RevisionGraph({
                             } else onSelectRevision(row.revision!.changeId);
                           }}
                         >
-                          <ChangeId revision={row.revision} />
+                          <ChangeId revision={row.revision} highlightPrefix />
                         </button>
                         {row.bookmarks?.length ? (
                           <>

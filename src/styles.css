@@ -1384,6 +1384,17 @@ kbd {
 .log-change {
   color: var(--accent);
   border-radius: 2px;
+  font-weight: 400;
+}
+.log-change .change-id-prefix {
+  font-weight: 700;
+}
+.log-change .change-id-rest {
+  color: var(--muted);
+  font-weight: 400;
+}
+.log-row.is-current .change-id-rest {
+  color: color-mix(in srgb, var(--current-fg) 70%, var(--current-bg));
 }
 .log-change:hover:not(:disabled) {
   color: var(--strong);
@@ -1394,7 +1405,6 @@ kbd {
   color: var(--current-fg);
   background: var(--current-bg);
   opacity: 1;
-  font-weight: 500;
 }
 .log-change:disabled {
   opacity: 1;

@@ -203,6 +203,34 @@ test("change ID display handles old metadata and prefixes longer than eight char
   );
 });
 
+test("log change IDs highlight only a valid distinguishing prefix", () => {
+  for (const [prefix, highlighted, rest] of [
+    ["a", "a", "bcdefgh"],
+    ["abc", "abc", "defgh"],
+    ["abcdefgh", "abcdefgh", ""],
+    ["abcdefghij", "abcdefghij", ""],
+    [undefined, "", "abcdefgh"],
+    ["", "", "abcdefgh"],
+    ["mismatch", "", "abcdefgh"],
+  ]) {
+    assert.equal(
+      renderToStaticMarkup(
+        createElement(ChangeId, {
+          revision: { ...source, changeIdPrefix: prefix },
+          highlightPrefix: true,
+        }),
+      ),
+      (highlighted
+        ? `<span class="change-id-prefix">${highlighted}</span>`
+        : "") + `<span class="change-id-rest">${rest}</span>`,
+    );
+  }
+  assert.equal(
+    renderToStaticMarkup(createElement(ChangeId, { highlightPrefix: true })),
+    "—",
+  );
+});
+
 test("theme control exposes all supported palettes and current preference", () => {
   const html = renderToStaticMarkup(
     createElement(ColorSchemePicker, {
