@@ -6,18 +6,15 @@
   min-width: 0;
   max-width: 100%;
   min-height: 26px;
-  font-size: calc(var(--font-size) - 2px);
+  font-size: var(--font-size);
 }
-.squash-destination-label {
-  color: var(--muted);
-  white-space: nowrap;
-  font-size: calc(var(--font-size) - 3px);
-}
+
 .squash-destination-trigger {
   display: inline-flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
+  max-width: 100%;
   min-height: 26px;
   padding: 3px 8px;
   border: 1px solid var(--border);
@@ -25,7 +22,8 @@
   background: var(--panel);
   color: var(--fg);
   font: inherit;
-  white-space: nowrap;
+  white-space: normal;
+  text-align: left;
 }
 .squash-destination-trigger:hover:not(:disabled) {
   background: var(--hover);
@@ -43,9 +41,7 @@
   opacity: 0.4;
   cursor: not-allowed;
 }
-.squash-destination-dot {
-  color: var(--muted);
-}
+
 .squash-destination-trigger code {
   font: inherit;
   color: var(--modified);
@@ -76,6 +72,7 @@
 
 .squash-destination-menu [role^="menuitem"] {
   display: flex;
+  align-items: center;
   gap: 8px;
   width: 100%;
   padding: 8px;
@@ -86,7 +83,8 @@
   text-align: left;
   font: inherit;
 }
-.squash-destination-menu [role^="menuitem"] > span:last-child {
+.squash-destination-option-label {
+  flex: 1;
   min-width: 0;
 }
 .squash-destination-menu strong {
@@ -105,7 +103,14 @@
   opacity: 0.5;
   cursor: not-allowed;
 }
-.squash-destination-radio {
+.squash-destination-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 16px;
+  color: var(--modified);
+}
+.squash-destination-check {
   flex: 0 0 14px;
   color: var(--modified);
 }

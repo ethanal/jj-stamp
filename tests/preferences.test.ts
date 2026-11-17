@@ -231,6 +231,9 @@ test("settings uses a labeled, initially closed native dialog and a named close 
       onHoverSidebarsChange() {},
       vimMode: false,
       onVimModeChange() {},
+      shell: "",
+      defaultShell: "/backend/default-shell",
+      onShellChange() {},
     }),
   );
   assert.match(html, /aria-haspopup="dialog"/);
@@ -243,7 +246,13 @@ test("settings uses a labeled, initially closed native dialog and a named close 
   assert.match(html, /type="range" min="10" max="24" step="1"/);
   assert.match(html, /aria-valuetext="13 pixels \(default\)"/);
   assert.match(html, /value="13"/);
-  assert.match(html, /Saved in the shared config file\./);
+  assert.doesNotMatch(html, /Saved in the shared config file\./);
+  assert.doesNotMatch(html, /Filters the graph only/);
+  assert.doesNotMatch(html, /aria-describedby="[^"]*-(?:revset|shell)-help"/);
+  assert.match(html, /Terminal shell<\/label>/);
+  assert.match(html, /placeholder="Default: \/backend\/default-shell"/);
+  assert.equal(html.match(/>Save<\/button>/g)?.length, 2);
+  assert.doesNotMatch(html, /Reset to default|Back up|Reset invalid settings/);
   assert.doesNotMatch(html, /Saved in this browser/);
   assert.doesNotMatch(html, /Applies to the UI and diffs/);
   assert.equal(html.match(/type="checkbox"/g)?.length, 2);

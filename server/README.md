@@ -6,6 +6,76 @@ The CLI constructs `ReviewService({ repoPath, revision })` and passes it to `cre
 
 Unversioned UI files (especially `/` and `/index.html`) use `Cache-Control: no-store`, without ETag or Last-Modified validators. Nix normalizes file timestamps, and different entry pages can have identical sizes; stat-based validators could otherwise return a false 304 and leave the browser requesting obsolete hashed bundles after an upgrade. Content-hashed `/assets/` files retain conditional caching. Missing static files return uncached plain-text 404s, never an HTML fallback.
 
+## Interactive terminal
+
+`server/terminal.ts` handles WebSocket upgrades separately from Express at
+`/api/terminal?cols=80&rows=24`. Both initial dimensions are required: integer
+columns 1–500 and rows 1–300; repeated/unknown query parameters are rejected.
+Upgrade requests require the exact listening `127.0.0.1:port` Host and matching
+`http://127.0.0.1:port` Origin, even though ordinary HTTP GET requests may omit
+Origin. Cross-site upgrades, proxy-origin substitutions and unknown upgrade
+paths are rejected before allocating a terminal or reading repository metadata.
+
+Each accepted socket lazily starts one real PTY in the canonical workspace root,
+with both its working directory and `PWD` set to that root, even when the backend
+was launched from a subdirectory or given a different repository via `-R`.
+This does not snapshot jj or change the selected revision. The shared `shell`
+preference selects one literal executable (paths containing spaces are valid),
+with no command parsing, interpolation or arguments. Empty uses `$SHELL`, then
+the operating-system user's shell, then `/bin/sh`. The shell inherits the
+backend user's environment and permissions, with `TERM=xterm-256color`.
+Preferences are read once per new connection; changing them never replaces a
+running shell. Startup failures do not run a fallback executable or retry.
+
+Client text frames are strict JSON objects:
+
+- `{type:"input",data:string}` (at most 16 KiB UTF-8).
+- `{type:"resize",cols:number,rows:number}` (the same dimension bounds).
+
+Server text frames are `{type:"ready",shell:string,pid:number}`,
+`{type:"data",data:string}`, `{type:"exit",exitCode:number}`, or
+`{type:"error",message:string}`. Wait for `ready` before sending input; resize
+may arrive while startup is pending. Shell exit sends `exit` then closes the
+socket. Binary, malformed, oversized and unknown messages terminate the session;
+there are no exec/replay/reconnect commands. The server admits at most eight
+sessions, caps client frames at 64 KiB and output backlog at 1 MiB, and
+disconnects input floods (512 messages or 256 KiB per second).
+
+The native PTY input backlog is independently bounded at 256 KiB per session
+(UTF-8 bytes not yet accepted by the kernel, including the in-flight write),
+and 1024 pending write tasks to bound tiny-buffer object overhead as well.
+A program that stops reading its raw terminal input cannot grow an unbounded
+server-side queue even at an allowed WebSocket input rate. Exceeding this
+backlog sends `error`, closes the session and drops all queued command bytes;
+disconnect, shell exit, startup failure and server shutdown also drop pending
+input before terminating the shell. Accepted bytes already in the kernel or
+an issued native write cannot be recalled. Capacity is released only when
+actual native write callbacks report progress, not by timers or terminal output.
+Large pastes remain supported while the foreground program drains its input.
+
+`terminal-input.ts` isolates a private dependency compatibility contract because
+node-pty's public `IPty.write()` has no drain/backlog API. It audits the POSIX
+`CustomWriteStream._writeQueue` buffers/offsets in **node-pty 1.1.0** and fails
+closed on another runtime version, incompatible writer layout or Windows.
+Dependency upgrades must audit this adapter again. The package version check
+remains an external runtime import in the bundled CLI; it is not compiled into
+the bundle as an assumed version. Public node-pty flow-control interception is
+disabled so input control bytes keep their normal terminal meaning.
+
+Hiding the docked panel keeps its WebSocket and shell alive. A shell `exit`
+ends that session; the client starts a fresh shell and terminal over a new
+WebSocket, without replaying input. Repeated rapid unattended exits stop after
+three respawns. Errors and unexpected disconnects require an explicit retry.
+Closing/reloading the page or disconnecting ends its session; there is no
+cross-page session reattachment or durable terminal history. Shutdown closes
+upgrades and sockets and awaits shell exit, escalating HUP → TERM → KILL.
+Linux cleanup also snapshots the PTY session's process identities to terminate
+foreground/background job groups safely, rechecking session and process start
+time before each signal. Other POSIX systems use shell/process-group signaling.
+Intentionally detached processes outside the terminal session are not managed.
+Terminal commands execute directly as the backend user and can modify workspace
+files/history independently of the review API's mutation and recovery guards.
+
 ## Selected-change squashing
 
 Only Node.js and `jj` are required. Pinned Git diffs are parsed locally and assigned deterministic hunk IDs (short hashes of exact path/header/rows, with collision suffixes). No third-party hunk listing, patch generation, GNU `patch`, or fuzzy matching is involved.
@@ -129,34 +199,53 @@ External jj processes and file edits cannot be locked by this in-process queue. 
 selection, history bookkeeping and filesystem-refresh streams. The default path
 is `$XDG_CONFIG_HOME/jj-stamp/config.json` (absolute XDG base only), otherwise
 `~/.config/jj-stamp/config.json`. Embedders/tests can pass `configPath` to
-`startLocalServer` or `createApi` to isolate it. The JSON keys, strict validation
-and defaults are shared with the frontend in `src/config.ts`; partial files use
-defaults for omitted keys. See the root README for an example and supported
-values. Browser storage is neither read nor migrated.
+`startLocalServer` or `createApi` to isolate it. The supported JSON keys, typed
+effective-config/API validation and defaults are shared with the frontend in
+`src/config.ts`. Disk reads require valid UTF-8 JSON with an object root, at most
+64KiB, but tolerate unknown keys and unsupported known-field values. Omitted or
+unsupported fields use their defaults independently; valid siblings still apply
+without an error. Unknown keys and unsupported raw values are preserved on disk
+unless an explicit patch replaces those keys. See the root README for an example
+and supported values. Browser storage is neither read nor migrated.
 
-- `GET /config` returns the full effective config with `Cache-Control: no-store`.
-- `POST /config` accepts a strict partial typed config, merges against a fresh
-  validated file, and returns the full effective config. It retains the HTTP
-  server's same-origin, JSON and `X-Fold-Request: 1` protections.
+- `GET /config` returns only the full typed effective config (no unknown keys)
+  with `Cache-Control: no-store`.
+- `GET /config/default-shell` returns `{shell}` from the same native-default
+  selection used by the PTY (`$SHELL`, account shell, then `/bin/sh`), with
+  `Cache-Control: no-store`. This is read-only runtime metadata, never a stored
+  preference or SSE config key. An invalid default returns
+  `500 INVALID_DEFAULT_SHELL` rather than silently selecting another shell.
+- `POST /config` accepts a strict partial typed config: unknown keys and
+  unsupported values are rejected. It merges only requested keys into the fresh
+  raw disk object, preserves all unrelated values, and returns only the full
+  typed effective config. It retains the HTTP server's same-origin, JSON and
+  `X-Fold-Request: 1` protections. Failed saves are not automatically retried.
+  Unpatched raw values, including numeric literals and deep objects, are kept
+  without recursive serialization. A save that would exceed 64KiB returns
+  `409 CONFIG_TOO_LARGE` without replacing the current file.
 - `GET /config/events` is a separate bounded SSE stream. Named `config` events
-  contain full effective settings, initially and after a disk change; named
-  `config-error` events contain `{error}` and retain the last valid browser
-  snapshot. Streams remain connected while tabs are hidden/unfocused. HEAD
-  does not allocate an SSE subscriber. Connection failures reconnect normally.
+  contain only full typed effective settings (no unknown keys), initially and
+  after a disk change; named `config-error` events contain `{error,code}` and
+  retain the last valid browser snapshot. Streams remain connected while tabs
+  are hidden/unfocused. HEAD does not allocate an SSE subscriber. Connection
+  failures reconnect normally.
 
 Each server checks only this bounded, regular config file every 250ms while
 subscribed; it does not scan repositories or spawn tools. Atomic editor saves,
-in-place edits, missing files, deletion and recreation are observed. Invalid
-JSON/values and read failures are never overwritten automatically; GET/POST
-return an error until repaired, and streams resume on repair. Missing files use
-defaults without creating a file/directory. Explicit patches create the config
-directory and use an exclusive cross-process `config.json.lock`, a private
-same-directory temporary file and atomic rename. The read/merge/write is locked,
-so distinct concurrent patches survive. External editors cannot be locked by
-this protocol. A bounded lock timeout reports stale locks; an uncatchable crash
-may require manually removing the lock after stopping all servers. Streams,
-queues and backpressure are bounded; shutdown ends streams and drains accepted
-config writes as well as repository work.
+in-place edits, missing files, deletion and recreation are observed. Malformed
+JSON, invalid UTF-8, non-object roots, oversized files and read failures are
+never overwritten; GET/POST return an error until the file is manually repaired
+or removed, and streams resume afterward. There is no settings reset endpoint or
+automatic backup creation. Unknown keys and unsupported values in valid objects
+do not produce errors. Missing files use defaults without creating a
+file/directory. Explicit patches create the config directory and use
+an exclusive cross-process `config.json.lock`, a private same-directory temporary
+file and atomic rename. The read/merge/write is locked, so distinct concurrent
+patches survive. External editors cannot be locked by this protocol. A bounded
+lock timeout reports stale locks; an uncatchable crash may require manually
+removing the lock after stopping all servers. Streams, queues and backpressure
+are bounded; shutdown ends streams and drains accepted config writes as well as
+repository work.
 
 ## In-memory operation state
 

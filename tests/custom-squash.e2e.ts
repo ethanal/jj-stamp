@@ -124,6 +124,21 @@ async function openMenu() {
   await expect(parentOption()).toHaveAccessibleName(
     `Parent · ${parent.slice(0, 8)}`,
   );
+  await expect(parentOption().locator("svg")).toHaveAttribute(
+    "aria-hidden",
+    "true",
+  );
+  assert.equal(
+    await parentOption().locator("svg").innerHTML(),
+    await page
+      .getByRole("button", { name: "Squash file review.txt", exact: true })
+      .locator("svg")
+      .innerHTML(),
+    "Parent uses the same down-arrow-into-circle icon as file squash",
+  );
+  await expect(parentOption().locator(".squash-destination-check")).toHaveText(
+    (await parentOption().getAttribute("aria-checked")) === "true" ? "✓" : "",
+  );
   await expect(chooseAction()).toHaveAccessibleName("Choose revision in log…");
   const copy = await menu.evaluate((element) => {
     const clone = element.cloneNode(true) as HTMLElement;
@@ -177,23 +192,34 @@ async function applyFilter(revset: string) {
   await page.getByRole("button", { name: "Settings", exact: true }).click();
   const settings = page.getByRole("dialog", { name: "Settings", exact: true });
   await settings.getByLabel("jj log revset", { exact: true }).fill(revset);
-  await settings.getByRole("button", { name: "Apply", exact: true }).click();
-  await expect(
-    settings.getByRole("button", { name: "Apply", exact: true }),
-  ).toBeDisabled();
+  const save = settings
+    .locator(".log-revset-settings")
+    .getByRole("button", { name: "Save", exact: true });
+  await save.click();
+  await expect(save).toBeDisabled();
   await page.keyboard.press("Escape");
   await expect(settings).toBeHidden();
 }
 let releaseSquash: (() => void) | undefined;
 try {
-  await page.goto(url);
-  await expect(addition(3)).toBeVisible();
+  // Allow cold Vite startup; readiness is asserted by the visible diff below.
+  await page.goto(url, {
+    waitUntil: "domcontentloaded",
+    timeout: 60_000,
+  });
+  await expect(addition(3)).toBeVisible({ timeout: 30_000 });
   await expect(reviewedId()).toHaveAttribute("title", source);
   await expect(row(workingCopy)).toBeVisible();
   await expect(row(parent)).toHaveCount(0);
   await expect(destination).toBeVisible();
-  await expect(destination).toContainText("Parent");
-  await expect(destination).toContainText(parent.slice(0, 8));
+  await expect(destination.locator(".squash-destination-label")).toHaveCount(0);
+  await expect(destination).not.toContainText("Squash into →");
+  await expect(trigger).toHaveText("Squash into parent⌄");
+  await expect(trigger).toHaveAccessibleName("Squash into parent");
+  await expect(trigger).toHaveAttribute(
+    "title",
+    `Parent: ${parent}\nActual immediate parent`,
+  );
   await addition(3).click();
   const selectionCount = await selected().count();
   assert(selectionCount > 0);
@@ -212,6 +238,7 @@ try {
   await expect(menu).toBeVisible();
   await expect(parentOption()).toHaveAttribute("aria-checked", "true");
   await expect(customOption()).toHaveCount(0);
+  await screenshot("parent-menu");
   await page.keyboard.press("ArrowDown");
   await expect(chooseAction()).toBeFocused();
   await page.keyboard.press("ArrowUp");
@@ -227,7 +254,7 @@ try {
   await chooseInLog();
   await expect(row(older)).toBeVisible();
   await row(older).hover();
-  await expect(destination).toContainText(older.slice(0, 8));
+  await expect(trigger).toHaveText(`Squash into ${older.slice(0, 8)}⌄`);
   assert.deepEqual(
     await fixture.readConfig(),
     hiddenLogConfig,
@@ -257,7 +284,7 @@ try {
   await page.keyboard.press("Escape");
   await expect(graph).toBeHidden();
   await expect(trigger).toBeFocused();
-  await expect(destination).toContainText("Parent");
+  await expect(trigger).toHaveAccessibleName("Squash into parent");
   await assertSourceAndSelection(selectionCount);
   assert.deepEqual(await fixture.readConfig(), hiddenLogConfig);
 
@@ -277,8 +304,10 @@ try {
   await assertSourceAndSelection(selectionCount);
   await row(older).click();
   await expect(graph).toBeHidden();
-  await expect(destination).toContainText("Custom");
-  await expect(destination).toContainText(older.slice(0, 8));
+  await expect(trigger).toHaveAccessibleName(
+    `Squash into ${older.slice(0, 8)}`,
+  );
+  await expect(trigger).toHaveText(`Squash into ${older.slice(0, 8)}⌄`);
   await expect(trigger).toBeFocused();
   await expect(squash).toBeEnabled();
   await assertSourceAndSelection(selectionCount);
@@ -301,8 +330,11 @@ try {
   await expect(parentOption()).toHaveAttribute("aria-checked", "false");
   await screenshot("custom-menu");
   await parentOption().click();
-  await expect(destination).toContainText("Parent");
-  await expect(destination).toContainText(parent.slice(0, 8));
+  await expect(trigger).toHaveAccessibleName("Squash into parent");
+  await expect(trigger).toHaveAttribute(
+    "title",
+    `Parent: ${parent}\nActual immediate parent`,
+  );
   await expect(destination).not.toContainText(older.slice(0, 8));
   await openMenu();
   await expect(parentOption()).toHaveAttribute("aria-checked", "true");
@@ -312,8 +344,10 @@ try {
   await assertPickerHelp();
   await row(older).click();
   await expect(graph).toBeHidden();
-  await expect(destination).toContainText("Custom");
-  await expect(destination).toContainText(older.slice(0, 8));
+  await expect(trigger).toHaveAccessibleName(
+    `Squash into ${older.slice(0, 8)}`,
+  );
+  await expect(trigger).toHaveText(`Squash into ${older.slice(0, 8)}⌄`);
   await assertSourceAndSelection(selectionCount);
 
   // Canceling a replacement restores Custom, not Parent, and an explicitly
@@ -331,17 +365,21 @@ try {
   await row(older).focus();
   await page.keyboard.press("ArrowUp");
   await expect(row(parent)).toBeFocused();
-  await expect(destination).toContainText(parent.slice(0, 8));
+  await expect(trigger).toHaveAccessibleName(
+    `Squash into ${parent.slice(0, 8)}`,
+  );
   await expect(page.getByRole("status")).toContainText(
     `Preview destination: ${parent.slice(0, 8)}`,
   );
   await page.keyboard.press("ArrowDown");
   await expect(row(older)).toBeFocused();
-  await expect(destination).toContainText(older.slice(0, 8));
+  await expect(trigger).toHaveText(`Squash into ${older.slice(0, 8)}⌄`);
   await assertSourceAndSelection(selectionCount);
   await page.keyboard.press("Escape");
   await expect(graph).toBeVisible();
-  await expect(destination).toContainText("Custom");
+  await expect(trigger).toHaveAccessibleName(
+    `Squash into ${older.slice(0, 8)}`,
+  );
   await expect(trigger).toBeFocused();
   await assertSourceAndSelection(selectionCount);
   await chooseInLog();
@@ -351,8 +389,10 @@ try {
     .getByRole("button", { name: "Cancel", exact: true })
     .click();
   await expect(graph).toBeVisible();
-  await expect(destination).toContainText("Custom");
-  await expect(destination).toContainText(older.slice(0, 8));
+  await expect(trigger).toHaveAccessibleName(
+    `Squash into ${older.slice(0, 8)}`,
+  );
+  await expect(trigger).toHaveText(`Squash into ${older.slice(0, 8)}⌄`);
   await expect(trigger).toBeFocused();
   await assertSourceAndSelection(selectionCount);
   await chooseInLog();
@@ -368,7 +408,7 @@ try {
   // A filtered-out target stays authorized by state.targets, not graph rows.
   await applyFilter(`${source} | @`);
   await expect(row(older)).toHaveCount(0);
-  await expect(destination).toContainText(older.slice(0, 8));
+  await expect(trigger).toHaveText(`Squash into ${older.slice(0, 8)}⌄`);
   await expect(squash).toBeEnabled();
   await expect(selected()).toHaveCount(selectionCount);
   await page.getByRole("button", { name: "Collapse log sidebar" }).click();
@@ -562,6 +602,17 @@ try {
           `Destination group, trigger, and menu must fit ${width}px at font24: ${JSON.stringify(bounds)}`,
         );
     }
+    const label = await trigger
+      .locator(":scope > span")
+      .first()
+      .evaluate((element) => ({
+        width: element.clientWidth,
+        scrollWidth: element.scrollWidth,
+      }));
+    if (label.scrollWidth > label.width)
+      responsiveFailures.push(
+        `Destination label must remain readable at ${width}px/font24: ${JSON.stringify(label)}`,
+      );
     await page.keyboard.press("Escape");
   }
   await page.setViewportSize({ width: 1440, height: 900 });

@@ -239,6 +239,15 @@ try {
   await page.goto(url);
   await expect(added).toBeVisible();
   await expect(refresh).toBeEnabled();
+  await expect(refresh.locator("svg")).toHaveCSS("width", "14px");
+  await expect(refresh.locator("svg")).toHaveCSS("height", "14px");
+  await expect(refresh).toHaveCSS("width", "30px");
+  await expect(refresh).toHaveCSS("height", "28px");
+  await expect(refresh).toHaveAttribute("title", "Refresh repository");
+  const readsBeforeRefresh = stateReads;
+  await refresh.click();
+  await expect.poll(() => stateReads).toBeGreaterThan(readsBeforeRefresh);
+  await expect(refresh).toBeEnabled();
   await expect(page.locator(".topbar .commit-totals")).toHaveText("+1−1");
   const findButton = page.getByRole("button", { name: "Find in diff" });
   await expect(findButton).toHaveText("");
@@ -254,13 +263,21 @@ try {
     page.getByRole("button", { name: "shortcuts", exact: true }),
   ).toHaveCount(0);
   await expect(dialog).not.toBeVisible();
-  await expect(actions).toHaveText([
+  const actionNames = [
     "Refresh",
+    "Terminal",
     "Settings",
     "Squash",
     "Undo",
     "Clear",
-  ]);
+  ];
+  for (const [index, name] of actionNames.entries())
+    await expect(actions.nth(index)).toHaveAccessibleName(name);
+  for (const name of ["Refresh", "Terminal"]) {
+    const button = page.getByRole("button", { name, exact: true });
+    await expect(button).toHaveText("");
+    await expect(button.locator('svg[aria-hidden="true"]')).toBeVisible();
+  }
   await expect(
     page.locator(".topbar kbd, .statusbar kbd, .text-selection-hint"),
   ).toHaveCount(0);
@@ -286,13 +303,11 @@ try {
     }
     await expect(modal).toBeVisible();
     const box = await modal.boundingBox();
-    const background = await refresh.boundingBox();
-    assert(box && background);
+    assert(box);
     const inside = { x: box.x + 5, y: box.y + 5 };
-    const outside = {
-      x: background.x + background.width / 2,
-      y: background.y + background.height / 2,
-    };
+    // Toolbar actions can move as new controls are added. A viewport corner is
+    // reliably outside both centered dialogs, independent of button positions.
+    const outside = { x: 4, y: 4 };
     assert(
       outside.x < box.x ||
         outside.x >= box.x + box.width ||

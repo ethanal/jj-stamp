@@ -3,6 +3,7 @@ import { createServer } from "node:http";
 import path from "node:path";
 import { createApi } from "./api.ts";
 import type { ReviewService } from "./service.ts";
+import { createTerminalServer } from "./terminal.ts";
 
 export const DEFAULT_PORT = 8000;
 
@@ -90,6 +91,7 @@ export async function startLocalServer({
     next();
   });
   const api = createApi(service, { configPath });
+  const terminals = createTerminalServer(server, service, configPath);
   app.use("/api", api);
   app.use("/api", (_req, res) => {
     res.status(404).json({ error: "API route not found.", code: "NOT_FOUND" });
@@ -152,14 +154,19 @@ export async function startLocalServer({
     close(): Promise<void> {
       if (!shutdown) {
         closing = true;
-        shutdown = new Promise<void>((resolve, reject) => {
+        const terminalShutdown = terminals.close();
+        const httpShutdown = new Promise<void>((resolve, reject) => {
           server.close((error) => (error ? reject(error) : resolve()));
           // End long-lived streams so they cannot hold the response drain open.
           api.closeEvents();
           closeUnusedConnections();
-        }).then(async () => {
-          await Promise.all([api.drainConfig(), service.drain()]);
         });
+        shutdown = Promise.all([
+          terminalShutdown,
+          httpShutdown.then(async () => {
+            await Promise.all([api.drainConfig(), service.drain()]);
+          }),
+        ]).then(() => undefined);
       }
       return shutdown;
     },

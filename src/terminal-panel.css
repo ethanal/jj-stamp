@@ -1,0 +1,110 @@
+.terminal-slot {
+  grid-column: 2;
+  grid-row: 2;
+  min-width: 0;
+  min-height: 0;
+}
+.terminal-panel {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--fg);
+  background: var(--bg);
+  border-top: 1px solid var(--border);
+}
+.terminal-panel[hidden] {
+  display: none;
+}
+.terminal-resize {
+  position: absolute;
+  inset: 0 0 auto;
+  height: 5px;
+  z-index: 2;
+  cursor: row-resize;
+  touch-action: none;
+}
+.terminal-resize:hover,
+.terminal-resize.is-resizing {
+  background: var(--focus);
+}
+.terminal-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 30px;
+  padding: 0 8px 0 12px;
+  flex-shrink: 0;
+  background: var(--panel);
+}
+.terminal-heading h2 {
+  display: flex;
+  align-items: center;
+  font-size: calc(var(--font-size) - 2px);
+  font-weight: 500;
+  margin: 0;
+  color: var(--muted);
+}
+.terminal-close {
+  border: 0;
+  background: transparent;
+  font-size: 1.4rem;
+  line-height: 1;
+  color: var(--muted);
+  padding: 4px 6px;
+}
+.terminal-surface {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  margin: 8px 12px;
+  overflow: hidden;
+}
+/* Ghostty paints the only visible caret in its canvas. Its contenteditable
+   input and hidden textarea must not add a second browser caret in the header. */
+.terminal-surface,
+.terminal-surface textarea {
+  caret-color: transparent;
+}
+.terminal-trigger {
+  padding-inline: 6px;
+}
+.terminal-notice {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-shrink: 0;
+  color: var(--muted);
+  margin: 0;
+  padding: 8px 12px;
+  border-top: 1px solid var(--border);
+}
+.terminal-notice > span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.terminal-notice > button {
+  flex-shrink: 0;
+}
+.terminal-failure {
+  color: var(--error-fg);
+  background: var(--error-bg);
+}
+
+.preferences-dialog input[type="text"] {
+  width: 100%;
+  box-sizing: border-box;
+  font: inherit;
+  color: var(--fg);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 8px;
+}
+@media (max-width: 850px) {
+  .terminal-slot {
+    grid-column: 1 / -1;
+  }
+}
