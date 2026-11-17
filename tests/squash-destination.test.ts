@@ -50,12 +50,37 @@ test("custom destination follows its full change ID across rewrites", () => {
   assert.equal(result.custom, rewritten);
 });
 
+test("a descendant remains selectable without an eligible default parent", () => {
+  const descendant = revision("descendant");
+  const forward = { ...state, parent: null, targets: [descendant] };
+  assert.equal(squashDestination(forward, null).target, null);
+  assert.match(
+    squashDestination(forward, null).parentReason,
+    /no single eligible mutable parent/,
+  );
+  const result = squashDestination(forward, {
+    sourceId: state.source.changeId,
+    mode: "custom",
+    custom: descendant,
+  });
+  assert.equal(result.target, descendant);
+  assert.equal(result.error, "");
+  const rewritten = revision(descendant.changeId, "rewritten-descendant");
+  assert.equal(
+    squashDestination(
+      { ...forward, targets: [rewritten] },
+      { sourceId: state.source.changeId, mode: "custom", custom: descendant },
+    ).target,
+    rewritten,
+  );
+});
+
 test("a missing custom destination is retained for explanation, never replaced", () => {
   const result = squashDestination({ ...state, targets: [parent] }, choice);
   assert.equal(result.mode, "custom");
   assert.equal(result.target, null);
   assert.equal(result.custom, older);
-  assert.match(result.error, /no longer.*ancestor/);
+  assert.match(result.error, /no longer.*destination/);
 });
 
 test("Parent discards Custom; another source starts at Parent", () => {
@@ -88,7 +113,7 @@ test("a merge has no default destination even with eligible direct parents", () 
   assert.equal(result.target, null);
   assert.equal(
     result.parentReason,
-    "Choose a destination in the log; this revision has multiple parents.",
+    "Choose a destination in the log; this revision has no single eligible mutable parent.",
   );
   assert.equal(result.error, result.parentReason);
   for (const target of merge.targets) {

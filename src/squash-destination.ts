@@ -21,7 +21,7 @@ export function squashDestination(
     state?.squashUnavailable ||
     (!state?.parent
       ? state?.targets.length
-        ? "Choose a destination in the log; this revision has multiple parents."
+        ? "Choose a destination in the log; this revision has no single eligible mutable parent."
         : "No mutable immediate parent is available."
       : "");
   const customReason =
@@ -29,7 +29,7 @@ export function squashDestination(
     (!selected
       ? "Choose a revision in the log first."
       : !state?.targets.some((target) => target.changeId === selected.changeId)
-        ? "The chosen revision is no longer an eligible mutable ancestor. Choose another destination or select Parent."
+        ? "The chosen revision is no longer an eligible mutable destination. Choose another destination or select Parent."
         : "");
   // Retain missing custom metadata for explanation, but never authorize a
   // fallback to Parent or a visible graph row with a similar short ID.

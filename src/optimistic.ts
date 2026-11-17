@@ -253,6 +253,7 @@ export function combineSquashRefs(
   state: RepoState,
   selected: RowRef[],
   next: RowRef[],
+  isDescendant = false,
 ): RowRef[] {
   specsForRefs(state, selected);
   const moved = checkedKeys(selected);
@@ -271,21 +272,23 @@ export function combineSquashRefs(
         combined.push(original);
       }
     }
-    // Squashing only changes the parent side. Carry its offset across hunks,
-    // but never across files; additions retain their source coordinates.
+    // Ancestor squashes change OLD, descendant squashes change NEW. Carry
+    // offsets across hunks, never across files or onto the unchanged side.
     let delta = 0;
     for (const hunk of file.hunks)
       for (const row of hunk.rows) {
         if (row.raw[0] !== "+" && row.raw[0] !== "-") continue;
         const original = rowRef(file, row);
         if (moved.has(key(original))) {
-          delta += original.kind === "+" ? 1 : -1;
+          delta += (original.kind === "+" ? 1 : -1) * (isDescendant ? -1 : 1);
           continue;
         }
         const projected = key({
           ...original,
           ...(affected.has(file.path) ? { metadata: undefined } : {}),
-          line: original.line + (original.kind === "-" ? delta : 0),
+          line:
+            original.line +
+            (original.kind === (isDescendant ? "+" : "-") ? delta : 0),
         });
         if (!wanted.has(projected)) continue;
         if (matched.has(projected))
@@ -357,10 +360,12 @@ function projectFile(
   file: DiffFile,
   selected: Set<string>,
   reservedIds: Set<string>,
+  isDescendant: boolean,
 ): DiffFile | null {
   let delta = 0;
   let movedAdditions = 0;
-  let oldEnded = false;
+  let movedDeletions = 0;
+  let changedSideEnded = false;
   const hunks: Hunk[] = [];
   for (const hunk of file.hunks) {
     const match = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@(.*)$/.exec(
@@ -369,8 +374,10 @@ function projectFile(
     if (!match) throw new Error("Cannot project a malformed hunk header.");
     const oldCount = Number(match[2] ?? 1),
       newCount = Number(match[4] ?? 1);
-    const oldFirst = Number(match[1]) + (oldCount === 0 ? 1 : 0) + delta;
-    const newFirst = Number(match[3]) + (newCount === 0 ? 1 : 0);
+    const oldFirst =
+      Number(match[1]) + (oldCount === 0 ? 1 : 0) + (isDescendant ? 0 : delta);
+    const newFirst =
+      Number(match[3]) + (newCount === 0 ? 1 : 0) + (isDescendant ? delta : 0);
     let oldLine = oldFirst,
       newLine = newFirst;
     const rows: Row[] = [];
@@ -379,29 +386,30 @@ function projectFile(
       if (kind !== " " && kind !== "+" && kind !== "-")
         throw new Error("Cannot project unsupported patch rows.");
       const move = kind !== " " && selected.has(key(rowRef(file, row)));
-      if (move && kind === "-") {
+      if (move && kind === (isDescendant ? "+" : "-")) {
         delta--;
         continue;
       }
       let raw = row.raw;
-      if (move && kind === "+") {
+      if (move) {
         raw = " " + raw.slice(1);
         delta++;
-        movedAdditions++;
+        if (kind === "+") movedAdditions++;
+        else movedDeletions++;
       }
       const next: Row = {
         index: rows.length + 1,
         raw,
         ...(row.noNewline ? { noNewline: true } : {}),
       };
-      if (raw[0] !== "+") {
-        if (oldEnded)
+      if (raw[0] !== (isDescendant ? "-" : "+")) {
+        if (changedSideEnded)
           throw new Error(
             "This selection would put content after a line without a final newline. Select the related EOF changes together.",
           );
-        oldEnded = !!row.noNewline;
-        next.oldLine = oldLine++;
+        changedSideEnded = !!row.noNewline;
       }
+      if (raw[0] !== "+") next.oldLine = oldLine++;
       if (raw[0] !== "-") next.newLine = newLine++;
       rows.push(next);
     }
@@ -410,11 +418,15 @@ function projectFile(
     );
   }
   if (!hunks.length) return null;
-  const isNew = /^--- \/dev\/null$/m.test(file.patch) && movedAdditions === 0;
-  const isDeleted = /^\+\+\+ \/dev\/null$/m.test(file.patch);
+  const isNew =
+    /^--- \/dev\/null$/m.test(file.patch) &&
+    (isDescendant || movedAdditions === 0);
+  const isDeleted =
+    /^\+\+\+ \/dev\/null$/m.test(file.patch) &&
+    (!isDescendant || movedDeletions === 0);
   const indexHeader = /^index (\S+)(?: (100644|100755))?$/m.exec(file.patch);
   const mode =
-    file.newMode ??
+    (isDescendant ? file.oldMode : file.newMode) ??
     indexHeader?.[2] ??
     /^(?:new|deleted) file mode (100644|100755)$/m.exec(file.patch)?.[1] ??
     "100644";
@@ -422,7 +434,7 @@ function projectFile(
     `diff --git a/${file.path} b/${file.path}`,
     ...(isNew ? [`new file mode ${mode}`] : []),
     ...(isDeleted ? [`deleted file mode ${mode}`] : []),
-    // Parent content changed; original blob hashes are no longer valid. An
+    // Content changed; original blob hashes are no longer valid. An
     // all-zero index preserves non-default/transition modes for rendering only.
     ...(!isNew && !isDeleted && (mode === "100755" || file.newMode)
       ? [`index 0000000..0000000 ${mode}`]
@@ -455,8 +467,8 @@ function projectFile(
         ]),
       ].join("\n") + "\n",
   };
-  // First selection carries the rename/copy base and mode into the parent.
-  // Remaining edits are ordinary modifications at the destination path.
+  // First selection carries file metadata out of the source delta. Forward
+  // copy/rename subtraction needs native path/merge information (see below).
   delete projected.oldPath;
   delete projected.copyFrom;
   delete projected.oldMode;
@@ -464,9 +476,38 @@ function projectFile(
   return projected;
 }
 
-/** Move selected changes into the parent without modifying the working/new side. */
-export function projectSquash(state: RepoState, refs: RowRef[]): RepoState {
+/**
+ * Native forward subtraction of a rename/copy can restore another path or
+ * conflict with residual text. A single-file patch cannot predict that safely.
+ * Such jobs must be serialized without speculation, not guessed or rejected.
+ */
+export function canProjectSquash(
+  state: RepoState,
+  refs: RowRef[],
+  isDescendant = false,
+): boolean {
+  const paths = new Set(refs.map((ref) => ref.path));
+  return (
+    !isDescendant ||
+    !state.files.some(
+      (file) =>
+        paths.has(file.path) &&
+        (file.oldPath !== undefined || file.copyFrom !== undefined),
+    )
+  );
+}
+
+/** Remove selected source changes: alter OLD for ancestors, NEW for descendants. */
+export function projectSquash(
+  state: RepoState,
+  refs: RowRef[],
+  isDescendant = false,
+): RepoState {
   specsForRefs(state, refs);
+  if (!canProjectSquash(state, refs, isDescendant))
+    throw new Error(
+      "Forward rename/copy changes require an authoritative result.",
+    );
   const selected = checkedKeys(refs);
   const affected = new Set(refs.map((ref) => ref.path));
   // Synthetic split IDs must not collide with any real or earlier projected ID,
@@ -476,7 +517,7 @@ export function projectSquash(state: RepoState, refs: RowRef[]): RepoState {
   );
   const files = state.files.flatMap((file) => {
     if (!affected.has(file.path)) return [file];
-    const projected = projectFile(file, selected, reservedIds);
+    const projected = projectFile(file, selected, reservedIds, isDescendant);
     return projected ? [projected] : [];
   });
   return { ...state, files };

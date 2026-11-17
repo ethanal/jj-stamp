@@ -1454,3 +1454,242 @@ for (const metadata of [
     assert.equal(reads.length, 0);
   });
 }
+
+const DESCENDANT = "dddddddddddddddddddddddddddddddd";
+
+function withDescendant(state: RepoState): RepoState {
+  state.targets.push({
+    changeId: DESCENDANT,
+    commitId: "descendant-c0",
+    description: "Descendant",
+    isDescendant: true,
+  });
+  return state;
+}
+
+/** Independent native-result fixture: do not derive ACKs using our projection. */
+function textResult(
+  state: RepoState,
+  body: string,
+  version: string,
+): RepoState {
+  const patch = `diff --git a/a b/a\n--- a/a\n+++ b/a\n${body}\n`;
+  const parsed = parseFile(patch, "a");
+  return {
+    ...structuredClone(state),
+    version,
+    operation: `op-${version}`,
+    canUndo: true,
+    files: [
+      {
+        path: "a",
+        patch,
+        additions: parsed.hunks
+          .flatMap((hunk) => hunk.rows)
+          .filter((row) => row.raw[0] === "+").length,
+        deletions: parsed.hunks
+          .flatMap((hunk) => hunk.rows)
+          .filter((row) => row.raw[0] === "-").length,
+        hunks: parsed.hunks.map((hunk) => ({
+          ...hunk,
+          id: `native-${version}`,
+        })),
+      },
+    ],
+  };
+}
+
+test("descendant jobs project and compact NEW offsets using the selected target role, with independent ACKs", async () => {
+  const { queue, posts, reads, state } = setup();
+  withDescendant(state);
+  queue.replace(state);
+  queue.enqueue(refs(state, 4), DESCENDANT); // Remove +new1, NEW -1.
+  const firstView = queue.getSnapshot().view!;
+  assert.deepEqual(refs(firstView, 2, 3, 4), [
+    { path: "a", kind: "-", line: 2, text: "old1" },
+    { path: "a", kind: "-", line: 3, text: "old2" },
+    { path: "a", kind: "+", line: 2, text: "new2" },
+  ]);
+  queue.enqueue(refs(firstView, 2), DESCENDANT); // Restore old1, NEW +1.
+  const next = refs(queue.getSnapshot().view!, 4);
+  assert.deepEqual(next, [{ path: "a", kind: "+", line: 3, text: "new2" }]);
+  queue.enqueue(next, DESCENDANT);
+  assert.equal(posts.length, 1);
+  assert.equal(queue.getSnapshot().pending, 2);
+  const firstAck = textResult(
+    state,
+    "@@ -1,4 +1,3 @@\n before\n-old1\n-old2\n+new2\n after",
+    "v1",
+  );
+  posts[0].result.resolve({ state: firstAck });
+  await tick();
+  assert.equal(queue.getSnapshot().halted, false);
+  assert.equal(posts.length, 2);
+  assert.deepEqual(
+    posts.map((post) => post.input),
+    [
+      {
+        target: DESCENDANT,
+        version: "v0",
+        selections: [{ id: "original", lines: [4] }],
+      },
+      {
+        target: DESCENDANT,
+        version: "v1",
+        selections: [{ id: "native-v1", lines: [2, 4] }],
+      },
+    ],
+  );
+  const finalAck = textResult(
+    state,
+    "@@ -1,4 +1,3 @@\n before\n old1\n-old2\n after",
+    "v2",
+  );
+  posts[1].result.resolve({ state: finalAck });
+  await tick();
+  assert.equal(queue.getSnapshot().halted, false);
+  assert.equal(queue.getSnapshot().pending, 0);
+  assert.equal(queue.getSnapshot().confirmed, finalAck);
+  assert.equal(
+    changeSignature(queue.getSnapshot().view!),
+    changeSignature(finalAck),
+  );
+  assert.equal(reads.length, 0);
+});
+
+test("ancestor targets stay backward even when descendant targets are available", async () => {
+  const { queue, posts, reads, state } = setup();
+  withDescendant(state);
+  queue.replace(state);
+  queue.enqueue(refs(state, 2), OLDER);
+  assert.equal(refs(queue.getSnapshot().view!, 2)[0].line, 2);
+  const actual = textResult(
+    state,
+    "@@ -1,3 +1,4 @@\n before\n-old2\n+new1\n+new2\n after",
+    "v1",
+  );
+  posts[0].result.resolve({ state: actual });
+  await tick();
+  assert.equal(queue.getSnapshot().halted, false);
+  assert.equal(posts[0].input.target, OLDER);
+  assert.equal(reads.length, 0);
+});
+
+for (const phase of ["acknowledgement", "dispatch"] as const) {
+  test(`a descendant target changing role at ${phase} cannot dispatch queued changes with the wrong direction`, async () => {
+    const { queue, posts, reads, state } = setup();
+    withDescendant(state);
+    queue.replace(state);
+    queue.enqueue(refs(state, 4), DESCENDANT);
+    queue.enqueue(refs(queue.getSnapshot().view!, 2), DESCENDANT);
+    const actual = textResult(
+      state,
+      "@@ -1,4 +1,3 @@\n before\n-old1\n-old2\n+new2\n after",
+      "v1",
+    );
+    if (phase === "acknowledgement")
+      delete actual.targets.find((target) => target.changeId === DESCENDANT)!
+        .isDescendant;
+    else
+      queue.subscribe(() => {
+        if (queue.getSnapshot().confirmed === actual)
+          delete actual.targets.find(
+            (target) => target.changeId === DESCENDANT,
+          )!.isDescendant;
+      });
+    posts[0].result.resolve({ state: actual });
+    await tick();
+    assert.equal(posts.length, 1);
+    assert.equal(queue.getSnapshot().halted, true);
+    assert.match(queue.getSnapshot().error, /changed direction/);
+    if (phase === "dispatch") {
+      assert.equal(reads.length, 1);
+      reads[0].resolve(actual);
+      await tick();
+    } else {
+      assert.equal(reads.length, 0);
+      assert.equal(queue.getSnapshot().confirmed, actual);
+    }
+  });
+}
+
+for (const kind of ["rename", "copy"] as const) {
+  for (const warning of [false, true]) {
+    test(`forward ${kind} serializes without guessing and adopts native ${warning ? "warning" : "success"} state once`, async () => {
+      const { queue, posts, reads, state } = setup();
+      withDescendant(state);
+      if (kind === "rename") state.files[0].oldPath = "old/a";
+      else state.files[0].copyFrom = "old/a";
+      state.files[0].patch = state.files[0].patch
+        .replace("a/a b/a", `a/old/a b/a\n${kind} from old/a\n${kind} to a`)
+        .replace("--- a/a", "--- a/old/a");
+      const unrelated = metadataOnly("mode");
+      state.files.push(unrelated);
+      queue.replace(state);
+      queue.enqueue(refs(state, 2), DESCENDANT);
+      const before = queue.getSnapshot();
+      assert.equal(before.view, state);
+      assert.match(before.notice, /metadata/);
+      assert.equal(posts.length, 1);
+      assert.deepEqual(posts[0].input, {
+        version: "v0",
+        target: DESCENDANT,
+        selections: [{ id: "original", lines: [2] }],
+      });
+      for (const selected of [
+        refs(state, 4),
+        refsFromFile(state, unrelated.path),
+      ]) {
+        assert.throws(
+          () => queue.enqueue(selected, DESCENDANT),
+          /Wait for the pending file metadata squash/,
+        );
+        assert.equal(
+          queue.getSnapshot(),
+          before,
+          "rejected enqueue must be atomic",
+        );
+      }
+      // The real path inventory may differ after native rename/copy subtraction.
+      const actual = textResult(
+        state,
+        "@@ -1,4 +1,3 @@\n before\n-old1\n-old2\n+new2\n after",
+        "v1",
+      );
+      actual.files[0].path = "restored-original";
+      posts[0].result.resolve({
+        state: actual,
+        ...(warning ? { warning: "Native forward conservation warning" } : {}),
+      });
+      await tick();
+      assert.equal(posts.length, 1);
+      assert.equal(reads.length, 0);
+      assert.equal(queue.getSnapshot().confirmed, actual);
+      assert.equal(queue.getSnapshot().view, actual);
+      assert.equal(queue.getSnapshot().pending, 0);
+      assert.equal(queue.getSnapshot().halted, warning);
+      assert.ok(queue.getSnapshot().epoch > before.epoch);
+      if (warning)
+        assert.match(queue.getSnapshot().error, /conservation warning/);
+      else assert.equal(queue.getSnapshot().error, "");
+    });
+  }
+}
+
+test("forward mode-only changes project immediately and accept metadata-free native confirmation", async () => {
+  const { queue, posts, reads, state } = setup();
+  withDescendant(state);
+  const entry = metadataOnly("mode");
+  state.files = [entry];
+  queue.replace(state);
+  queue.enqueue(refsFromFile(state, entry.path), DESCENDANT);
+  assert.deepEqual(queue.getSnapshot().view!.files, []);
+  const actual = { ...structuredClone(state), files: [], version: "v1" };
+  posts[0].result.resolve({ state: actual });
+  await tick();
+  assert.equal(queue.getSnapshot().halted, false);
+  assert.equal(queue.getSnapshot().pending, 0);
+  assert.equal(changeSignature(queue.getSnapshot().confirmed!), "[]");
+  assert.equal(posts.length, 1);
+  assert.equal(reads.length, 0);
+});

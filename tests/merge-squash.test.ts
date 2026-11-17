@@ -354,7 +354,78 @@ for (const api of ["direct", "legacy"] as const) {
   }
 }
 
-test("merge validation rejects missing, invalid, nonancestor, immutable and stale destinations without mutation or fallback", async (t) => {
+for (const api of ["direct", "legacy"] as const) {
+  test(`${api} merge source squashes forward into a descendant using the merged-parent baseline`, async (t) => {
+    const data = await fixture(t);
+    const service = new ReviewService({
+      repoPath: data.root,
+      revision: change(data.source),
+    });
+    const state = await service.getState();
+    const target = state.targets.find(
+      (target) => target.changeId === data.workspace,
+    )!;
+    assert.ok(target);
+    assert.equal(state.parent, null);
+    const workspace = await workspaceAt(data.root);
+    const targetTree = await treeAt(data.root, change(data.workspace));
+    const file = state.files.find((file) => file.path === "shared.txt")!;
+    const hunk = file.hunks[0];
+    // Move the complete insertion, leaving the separate tail edit behind.
+    const input = {
+      version: state.version,
+      target: target.changeId,
+      selections: [
+        {
+          id: hunk.id,
+          lines: hunk.rows
+            .filter((row) => row.raw.startsWith("+"))
+            .map((row) => row.index),
+        },
+      ],
+    };
+    const result =
+      api === "direct"
+        ? await service.squashLines(input)
+        : await service.squash((await service.preview(input)).token);
+    assert.equal(result.warning, undefined);
+    assert.equal(result.state.source.changeId, data.source);
+    assert.equal(result.state.parent, null);
+    assert.equal(
+      await fileAt(data.root, change(data.source)),
+      data.mergedBase.replace("line 60\n", "unselected tail\n"),
+    );
+    assert.equal(await fileAt(data.root, pinned(data.left)), data.leftBytes);
+    assert.equal(await fileAt(data.root, pinned(data.right)), data.rightBytes);
+    assert.deepEqual(
+      await treeAt(data.root, change(data.workspace)),
+      targetTree,
+    );
+    assert.deepEqual(await workspaceAt(data.root), workspace);
+    assert.match(result.state.files[0].patch, /\+unselected tail/);
+    assert.doesNotMatch(result.state.files[0].patch, /\+selected addition/);
+    assert.deepEqual(
+      await service.getFile({
+        version: result.state.version,
+        path: "shared.txt",
+      }),
+      {
+        oldFile: { name: "shared.txt", contents: data.mergedBase },
+        newFile: {
+          name: "shared.txt",
+          contents: data.mergedBase.replace("line 60\n", "unselected tail\n"),
+        },
+      },
+    );
+    const undone = await service.undo(result.state.version);
+    assert.deepEqual(undone.state.source, state.source);
+    assert.deepEqual(undone.state.targets, state.targets);
+    assert.deepEqual(undone.state.files, state.files);
+    assert.deepEqual(await workspaceAt(data.root), workspace);
+  });
+}
+
+test("merge validation rejects missing, invalid, unrelated, immutable and stale destinations without mutation or fallback", async (t) => {
   const data = await fixture(t);
   const calls: string[][] = [];
   const service = new ReviewService({
@@ -373,9 +444,12 @@ test("merge validation rejects missing, invalid, nonancestor, immutable and stal
     /explicit|choose|destination/i,
   );
   assert.deepEqual(await service.getState(), state);
+  assert.ok(
+    state.targets.some((target) => target.changeId === data.workspace),
+    "the mutable workspace descendant is now an eligible destination",
+  );
   for (const target of [
     data.source,
-    data.workspace,
     data.outsider,
     "k".repeat(64),
     state.targets[0].changeId.slice(0, 8),
