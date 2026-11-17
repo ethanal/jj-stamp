@@ -39,6 +39,27 @@ there are no exec/replay/reconnect commands. The server admits at most eight
 sessions, caps client frames at 64 KiB and output backlog at 1 MiB, and
 disconnects input floods (512 messages or 256 KiB per second).
 
+The native PTY input backlog is independently bounded at 256 KiB per session
+(UTF-8 bytes not yet accepted by the kernel, including the in-flight write),
+and 1024 pending write tasks to bound tiny-buffer object overhead as well.
+A program that stops reading its raw terminal input cannot grow an unbounded
+server-side queue even at an allowed WebSocket input rate. Exceeding this
+backlog sends `error`, closes the session and drops all queued command bytes;
+disconnect, shell exit, startup failure and server shutdown also drop pending
+input before terminating the shell. Accepted bytes already in the kernel or
+an issued native write cannot be recalled. Capacity is released only when
+actual native write callbacks report progress, not by timers or terminal output.
+Large pastes remain supported while the foreground program drains its input.
+
+`terminal-input.ts` isolates a private dependency compatibility contract because
+node-pty's public `IPty.write()` has no drain/backlog API. It audits the POSIX
+`CustomWriteStream._writeQueue` buffers/offsets in **node-pty 1.1.0** and fails
+closed on another runtime version, incompatible writer layout or Windows.
+Dependency upgrades must audit this adapter again. The package version check
+remains an external runtime import in the bundled CLI; it is not compiled into
+the bundle as an assumed version. Public node-pty flow-control interception is
+disabled so input control bytes keep their normal terminal meaning.
+
 Hiding the overlay keeps its WebSocket and shell alive. Closing/reloading the
 page, disconnecting, or explicitly restarting ends that session; there is no
 cross-page session reattachment or durable terminal history. Shutdown closes

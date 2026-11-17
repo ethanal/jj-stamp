@@ -1,11 +1,15 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
+import { createRequire } from "node:module";
 import {
   recolorTerminalLine,
+  terminalColorRoles,
+  terminalNativeTheme,
   terminalPaletteMap,
   terminalTheme,
 } from "../src/terminal-theme.ts";
-import type { GhosttyCell } from "ghostty-web";
+import { Ghostty, type GhosttyCell, type ITheme } from "ghostty-web";
 import { configPatchSchema, defaultConfig } from "../src/config.ts";
 
 test("terminal colors follow UI semantic palette, including selection and ANSI", () => {
@@ -50,6 +54,99 @@ test("live palette adaptation preserves native cells and unrelated truecolors", 
   const truecolor = { ...original, fg_r: 99, fg_g: 88, fg_b: 77 };
   assert.deepEqual(recolorTerminalLine([truecolor], palette)![0].fg_r, 99);
   assert.equal(recolorTerminalLine(null, palette), null);
+});
+
+test("internal palette gives ANSI and defaults distinct, stable identities", () => {
+  const original = Object.fromEntries(
+    terminalColorRoles.map((key) => [key, "#2aa198"]),
+  );
+  const native = terminalNativeTheme(original);
+  assert.equal(
+    new Set(terminalColorRoles.map((role) => native[role])).size,
+    terminalColorRoles.length,
+  );
+  assert.deepEqual(native, terminalNativeTheme({ foreground: "#ffffff" }));
+  assert.ok(Object.values(original).every((color) => color === "#2aa198"));
+});
+
+test("real WASM preserves all ANSI roles across initially colliding palettes", async () => {
+  const rgb = (color: string) => parseInt(color.slice(1), 16);
+  const colorOf = (cell: GhosttyCell, side: "fg" | "bg") =>
+    (cell[`${side}_r`] << 16) | (cell[`${side}_g`] << 8) | cell[`${side}_b`];
+  const initial: ITheme = Object.fromEntries(
+    terminalColorRoles.map((role) => [role, "#2aa198"]),
+  );
+  const target: ITheme = Object.fromEntries(
+    terminalColorRoles.map((role, index) => [
+      role,
+      `#20${(index + 1).toString(16).padStart(4, "0")}`,
+    ]),
+  );
+  const native = terminalNativeTheme(initial);
+  const wasm = await readFile(
+    createRequire(import.meta.url).resolve("ghostty-web/ghostty-vt.wasm"),
+  );
+  const ghostty = await Ghostty.load(
+    `data:application/wasm;base64,${wasm.toString("base64")}`,
+  );
+  const terminal = ghostty.createTerminal(80, 5, {
+    fgColor: rgb(native.foreground!),
+    bgColor: rgb(native.background!),
+    palette: terminalColorRoles.slice(0, 16).map((role) => rgb(native[role]!)),
+  });
+  try {
+    const colors = Array.from({ length: 16 }, (_, i) =>
+      i < 8 ? 30 + i : 90 + i - 8,
+    );
+    const sample =
+      colors
+        .map((code, i) => `\x1b[${code}m${String.fromCharCode(65 + i)}`)
+        .join("") + "\x1b[0mQ";
+    terminal.write(sample);
+    const before = terminal.getLine(0)!.map((cell) => ({ ...cell }));
+    const recolored = recolorTerminalLine(
+      before,
+      terminalPaletteMap(native, target),
+    )!;
+    for (let i = 0; i < 17; i++) {
+      const role = terminalColorRoles[i];
+      assert.equal(colorOf(before[i], "fg"), rgb(native[role]!), role);
+      assert.equal(colorOf(recolored[i], "fg"), rgb(target[role]!), role);
+      assert.equal(colorOf(recolored[i], "bg"), rgb(target.background!));
+    }
+    // Native identity survives theme changes, including newly written output.
+    terminal.write(`\r\n${sample}`);
+    const fresh = recolorTerminalLine(
+      terminal.getLine(1),
+      terminalPaletteMap(native, target),
+    )!;
+    assert.deepEqual(fresh.slice(0, 17), recolored.slice(0, 17));
+    const back = recolorTerminalLine(
+      before,
+      terminalPaletteMap(native, initial),
+    )!;
+    assert.ok(
+      back.slice(0, 17).every((cell) => colorOf(cell, "fg") === 0x2aa198),
+    );
+    // Background roles must not collapse either; fixed indexed colors and
+    // explicit truecolors outside the reserved identities stay unchanged.
+    terminal.write(
+      "\r\n\x1b[44mB\x1b[46mC\x1b[41mR\x1b[101mH\x1b[0m" +
+        "\x1b[38;5;16mX\x1b[38;2;42;161;152mY",
+    );
+    const background = recolorTerminalLine(
+      terminal.getLine(2),
+      terminalPaletteMap(native, target),
+    )!;
+    for (const [index, role] of (
+      ["blue", "cyan", "red", "brightRed"] as const
+    ).entries())
+      assert.equal(colorOf(background[index], "bg"), rgb(target[role]!));
+    assert.equal(colorOf(background[4], "fg"), 0);
+    assert.equal(colorOf(background[5], "fg"), 0x2aa198);
+  } finally {
+    terminal.free();
+  }
 });
 
 test("shell defaults to native and accepts one literal executable, not multiline input", () => {

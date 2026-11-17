@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useId, useRef, useState } from "react";
 import type { ITheme, Terminal } from "ghostty-web";
 import type { ColorScheme } from "./preference-values";
-import { terminalTheme } from "./terminal-theme";
+import { terminalNativeTheme, terminalTheme } from "./terminal-theme";
 import { TerminalInputQueue } from "./terminal-input";
 import { useDialogBackdropDismiss } from "./useDialogBackdropDismiss";
 import "./terminal-overlay.css";
@@ -129,11 +129,12 @@ export function TerminalOverlay({
         ]);
         if (disposed || !container.current) return;
         const theme = terminalTheme(getComputedStyle(document.documentElement));
+        const nativeTheme = terminalNativeTheme(theme);
         term = new runtime.Terminal({
           ghostty,
           fontFamily: '"Source Code Pro", monospace',
           fontSize: appearance.current.fontSize,
-          theme,
+          theme: nativeTheme,
           cursorBlink: true,
           scrollback: 5000,
           disableStdin: true,
@@ -142,7 +143,11 @@ export function TerminalOverlay({
         term.open(container.current);
         container.current.setAttribute("aria-label", "Shell input");
         term.textarea?.setAttribute("aria-label", "Shell paste input");
-        applyTheme.current = runtime.installTerminalTheme(term, theme);
+        applyTheme.current = runtime.installTerminalTheme(
+          term,
+          nativeTheme,
+          theme,
+        );
         const addon = new runtime.FitAddon();
         term.loadAddon(addon);
         fit.current = () => {

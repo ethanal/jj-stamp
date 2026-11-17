@@ -9,6 +9,11 @@ import * as pty from "node-pty";
 import { WebSocket, WebSocketServer } from "ws";
 import { ConfigStore } from "./config.ts";
 import type { ReviewService } from "./service.ts";
+import {
+  BoundedPtyInput,
+  PtyInputBacklogError,
+  PtyInputCompatibilityError,
+} from "./terminal-input.ts";
 
 const MAX_SESSIONS = 8;
 const MAX_PAYLOAD = 64 * 1024;
@@ -180,6 +185,7 @@ export function createTerminalServer(
 
   function connect(ws: WebSocket, cols: number, rows: number) {
     let terminal: pty.IPty | undefined;
+    let input: BoundedPtyInput | undefined;
     let stopped = false;
     let didExit = false;
     let finishExit!: () => void;
@@ -220,6 +226,9 @@ export function createTerminalServer(
     }
     function stop(): Promise<void> {
       stopped = true;
+      // Stop native input retries/drop pending command bytes before waiting on
+      // asynchronous startup or shell termination. Never replay them.
+      input?.dispose();
       cleanup ??= (async () => {
         await initialized;
         try {
@@ -280,8 +289,8 @@ export function createTerminalServer(
           typeof message.data === "string" &&
           Buffer.byteLength(message.data) <= MAX_INPUT
         ) {
-          if (!terminal) throw new Error();
-          terminal.write(message.data);
+          if (!input) throw new Error();
+          input.write(message.data);
         } else if (
           message.type === "resize" &&
           Object.keys(message).length === 3 &&
@@ -291,8 +300,11 @@ export function createTerminalServer(
           rows = message.rows as number;
           terminal?.resize(cols, rows);
         } else throw new Error();
-      } catch {
-        fail("Invalid terminal message.");
+      } catch (error) {
+        if (error instanceof PtyInputBacklogError) fail(error.message);
+        else if (error instanceof PtyInputCompatibilityError)
+          fail(error.message, 1011);
+        else fail("Invalid terminal message.");
       }
     });
 
@@ -312,6 +324,7 @@ export function createTerminalServer(
           cols,
           rows,
           name: "xterm-256color",
+          handleFlowControl: false,
           env: { ...process.env, TERM: "xterm-256color" },
         });
         exitListener = terminal.onExit(({ exitCode }) => {
@@ -322,14 +335,17 @@ export function createTerminalServer(
             close(1000, "Shell exited.");
           }
         });
+        input = new BoundedPtyInput(terminal);
         dataListener = terminal.onData((data) => {
           if (!stopped) send({ type: "data", data });
         });
         send({ type: "ready", shell, pid: terminal.pid });
-      } catch {
+      } catch (error) {
         if (!stopped)
           fail(
-            "Could not start terminal. Check the configured shell and repository.",
+            error instanceof PtyInputCompatibilityError
+              ? error.message
+              : "Could not start terminal. Check the configured shell and repository.",
             1011,
           );
       }

@@ -167,7 +167,7 @@ npm run build
 npm start -- --repository /path/to/workspace --no-open
 ```
 
-Without Nix, provide Node.js 24+ and `jj` on `PATH`. No hunk tool, Rust toolchain, or external `patch` is needed. Building the native PTY addon from source requires Python 3 and a C/C++ build toolchain (Linux builds from source; macOS may use the package's prebuild). Unpack/install the complete **host-platform-specific** `dist/` directory: the bundled CLI must keep its sibling `diff-editor.cjs`, browser assets and `node_modules/node-pty` native runtime. `JJ_STAMP_JJ`, when set, selects the same absolute jj executable for reads, mutations and diagnostics.
+Without Nix, provide Node.js 24+ and `jj` on `PATH`. No hunk tool, Rust toolchain, or external `patch` is needed. Building the native PTY addon from source requires Python 3 and a C/C++ build toolchain (Linux builds from source; macOS may use the package's prebuild). For standalone deployment, unpack/install the complete **host-platform-specific** `dist/` directory: the bundled CLI must keep its sibling `diff-editor.cjs`, browser assets and `node_modules/node-pty` native runtime. In contrast, `npm pack` excludes this staged native runtime: installing the npm tarball installs the declared `node-pty` dependency for the destination platform instead. Nix packages retain their target-built native runtime. `JJ_STAMP_JJ`, when set, selects the same absolute jj executable for reads, mutations and diagnostics.
 
 Native selection supports regular, non-executable, lossless UTF-8 text with or without final newlines (including CRLF), including text edits in validated renames. Final-newline changes belong to their preceding code row; EOF markers are not separate selectable lines. Partial selections that would put more content after an unterminated line are rejected: select the related EOF changes together. Existing conservative restrictions on binary files, copies, mode changes, merges, and ambiguous paths/formats remain. Colliding or overlapping selected paths fail closed. File snapshots are verified as bytes before applying a selection; there is no context search, offset adjustment, or fuzz.
 `npm run build` typechecks and produces **`dist/cli.cjs`**, **`dist/diff-editor.cjs`**, **`dist/client/`**, and the staged **`dist/node_modules/node-pty/`** runtime. No checkout-level `node_modules` is needed at runtime. If your npm version requires install-script approval, allow `node-pty` and `esbuild` when installing dependencies. `npm run dev -- -R /path/to/workspace` rebuilds and runs it; restart after source edits.
@@ -177,19 +177,25 @@ npm run check                  # formatting and strict type checking
 npm test                       # unit and real-jj backend tests
 npx playwright install chromium
 npm run test:browser            # browser interactions against fixtures
-npm run test:cli                # rebuild and test the bundled executable
+npm run test:cli                # rebuild; test CLI and real npm tarball packaging
 npm run test:browser:terminal   # builds production assets; real Ghostty + PTY
 nix flake check                 # installed Nix packages and runtime tools
 ```
 
 Terminal input is bounded and paced; a paste exceeding the 1 MiB pending queue
-limit is rejected atomically with a notice. Hiding the terminal does not cancel
-accepted input or commands. Up to eight sessions can run per server. Linux
+limit is rejected atomically with a notice. Native PTY input is separately capped
+at 256 KiB or 1024 pending writes; exceeding that backlog closes the session and
+drops pending input rather than accumulating memory behind a nonreading program.
+Hiding the terminal does not cancel accepted input or commands. Up to eight
+sessions can run per server. Linux
 shutdown also terminates processes remaining in the PTY session; intentionally
 detached processes are not managed. Other POSIX systems rely on shell/process-group
 hangup behavior. The Ghostty renderer exposes resolved RGB rather than live color
-indices, so changing palettes also recolors application truecolors that exactly
-match the original terminal palette. Other application truecolors are preserved.
+indices. Distinct internal RGB identities preserve ANSI/default colors even when
+the initial UI theme gives multiple roles the same color. Application truecolors
+exactly matching those reserved identities (`#010001`–`#010012`) are also
+recolored; other truecolors and the fixed 256-color cube/grays are preserved.
+Current UI colors are a renderer mapping, not native palette metadata.
 
 `npm run test:all` runs the formatting/type checks and all three npm test suites. Use `npm run format` to apply formatting, or `npm run typecheck` to check types independently. Type checking also rejects unused locals and parameters; it runs as part of every build.
 

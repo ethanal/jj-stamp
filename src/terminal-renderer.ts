@@ -7,10 +7,15 @@ import { recolorTerminalLine, terminalPaletteMap } from "./terminal-theme";
  * inputs, without rewriting parser state, replaying output or restarting PTYs.
  * Both active/alternate screens and scrollback use the current UI palette.
  */
-export function installTerminalTheme(term: Terminal, initial: ITheme) {
+export function installTerminalTheme(
+  term: Terminal,
+  initial: ITheme,
+  current: ITheme = initial,
+) {
   const renderer = term.renderer!;
   const render = renderer.render.bind(renderer);
-  let palette = terminalPaletteMap(initial, initial);
+  let palette = terminalPaletteMap(initial, current);
+  renderer.setTheme(current);
   const adapters = new WeakMap<object, object>();
   function adapted<T extends object>(target: T): T {
     let adapter = adapters.get(target);

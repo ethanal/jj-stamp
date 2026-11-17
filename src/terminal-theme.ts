@@ -31,28 +31,45 @@ export function terminalTheme(
   };
 }
 
+export const terminalColorRoles = [
+  "black",
+  "red",
+  "green",
+  "yellow",
+  "blue",
+  "magenta",
+  "cyan",
+  "white",
+  "brightBlack",
+  "brightRed",
+  "brightGreen",
+  "brightYellow",
+  "brightBlue",
+  "brightMagenta",
+  "brightCyan",
+  "brightWhite",
+  "foreground",
+  "background",
+] as const;
+
+/**
+ * Ghostty 0.4 resolves ANSI/default colors to RGB and discards their identities.
+ * Give every native role a distinct internal RGB, then translate at render time.
+ * In particular, equal UI colors must not collapse blue/cyan or red/bright-red
+ * before a later theme needs to distinguish them. These values also avoid the
+ * fixed 256-color cube/grays, so ordinary indexed colors are not recolored.
+ */
+export function terminalNativeTheme(theme: ITheme): ITheme {
+  const native = { ...theme };
+  terminalColorRoles.forEach((role, index) => {
+    native[role] = `#0100${(index + 1).toString(16).padStart(2, "0")}`;
+  });
+  return native;
+}
+
 export function terminalPaletteMap(initial: ITheme, current: ITheme) {
   const palette = new Map<number, number>();
-  for (const key of [
-    "black",
-    "red",
-    "green",
-    "yellow",
-    "blue",
-    "magenta",
-    "cyan",
-    "white",
-    "brightBlack",
-    "brightRed",
-    "brightGreen",
-    "brightYellow",
-    "brightBlue",
-    "brightMagenta",
-    "brightCyan",
-    "brightWhite",
-    "foreground",
-    "background",
-  ] as const) {
+  for (const key of terminalColorRoles) {
     if (initial[key] && current[key])
       palette.set(
         parseInt(initial[key].slice(1), 16),

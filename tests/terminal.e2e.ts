@@ -371,8 +371,90 @@ await expect(
 ).toBeVisible();
 await capture("terminal-mobile.png");
 await page.keyboard.press("Escape");
+
+// Regression: equal colors in the first theme must retain distinct native ANSI
+// identities. Inverse foreground spaces and background spaces give exact canvas
+// pixels without font antialiasing, covering both existing and freshly written
+// output (the old RGB-only map failed Solarized blue/cyan and red/bright-red).
+await page.setViewportSize({ width: 1440, height: 960 });
+const drawAnsi =
+  "printf '\\033[2J\\033[H" +
+  "\\033[34;7m   \\033[0m\\033[36;7m   \\033[0m" +
+  "\\033[31;7m   \\033[0m\\033[91;7m   \\033[0m" +
+  "\\033[44m   \\033[46m   \\033[41m   \\033[101m   \\033[0m" +
+  "\\nANSI: blue / cyan / red / bright red" +
+  "\\nFirst four: inverse foreground. Next four: background." +
+  "\\nANSI_PALETTE_DONE\\n'";
+async function assertAnsiCanvas() {
+  const expected = await page
+    .locator("html")
+    .evaluate((root) =>
+      ["accent", "diff-selection-border", "red", "removed"].map((role) =>
+        getComputedStyle(root).getPropertyValue(`--${role}`).trim().slice(1),
+      ),
+    );
+  const cols = Number(
+    sent.filter((value) => value.type === "resize").at(-1)!.cols,
+  );
+  await expect
+    .poll(() =>
+      page.locator(".terminal-surface canvas").evaluate((canvas, cols) => {
+        const context = (canvas as HTMLCanvasElement).getContext("2d")!;
+        return Array.from({ length: 8 }, (_, i) => {
+          const pixel = context.getImageData(
+            Math.floor(
+              ((i * 3 + 1.5) * (canvas as HTMLCanvasElement).width) / cols,
+            ),
+            1,
+            1,
+            1,
+          ).data;
+          return [...pixel.slice(0, 3)]
+            .map((n) => n.toString(16).padStart(2, "0"))
+            .join("");
+        });
+      }, cols),
+    )
+    .toEqual([...expected, ...expected]);
+}
+for (const initialTheme of ["solarized-dark", "catppuccin-mocha"]) {
+  await patchConfig({ "color-scheme": initialTheme });
+  await expect(page.locator("html")).toHaveAttribute(
+    "data-color-scheme",
+    initialTheme,
+  );
+  await page.keyboard.press("t");
+  const nextConnection: number = connections + 1;
+  const nextReady =
+    received.filter((frame) => frame.type === "ready").length + 1;
+  page.once("dialog", (dialog) => dialog.accept());
+  await overlay
+    .getByRole("button", { name: "Restart shell", exact: true })
+    .click();
+  await expect.poll(() => connections).toBe(nextConnection);
+  await expect
+    .poll(() => received.filter((frame) => frame.type === "ready").length)
+    .toBe(nextReady);
+  await expect(phase).toHaveAttribute("data-phase", "running");
+  await command(drawAnsi, "\r\nANSI_PALETTE_DONE\r\n");
+  await assertAnsiCanvas();
+  for (const scheme of ["dark", "light", "solarized-light", initialTheme]) {
+    await patchConfig({ "color-scheme": scheme });
+    await expect(page.locator("html")).toHaveAttribute(
+      "data-color-scheme",
+      scheme,
+    );
+    await assertAnsiCanvas();
+    await command(drawAnsi, "\r\nANSI_PALETTE_DONE\r\n");
+    await assertAnsiCanvas();
+    if (initialTheme === "solarized-dark" && scheme === "dark")
+      await capture("terminal-ansi-collision-fix.png");
+    assert.equal(connections, nextConnection);
+  }
+  await page.keyboard.press("Escape");
+}
 assert.deepEqual(errors, []);
 assert.ok(received.some((frame) => frame.type === "ready"));
 console.log(
-  "Terminal browser checks passed: lazy PTY, typing isolation, Escape persistence, resize, 14 themes, shell customization/restart, exit/error recovery, mobile bounds.",
+  "Terminal browser checks passed: lazy PTY, typing isolation, Escape persistence, resize, 14 themes, distinct ANSI foreground/background colors across live theme changes, shell customization/restart, exit/error recovery, mobile bounds.",
 );

@@ -462,3 +462,95 @@ test("slow output consumers are disconnected with bounded backlog and their PTY 
   socket.resume();
   await c.closed;
 });
+
+async function rawChild(
+  c: ReturnType<typeof client>,
+  source: string,
+): Promise<number> {
+  c.input(`${JSON.stringify(process.execPath)} -e ${JSON.stringify(source)}\r`);
+  const output = await c.output(/RAW_READY:(\d+)/);
+  return Number(output[1]);
+}
+
+const nonreadingChild = [
+  "process.stdin.setRawMode(true)",
+  "process.stdin.pause()",
+  'console.log("RAW_READY:"+process.pid)',
+  "setInterval(()=>{},1000)",
+].join(";");
+
+test("nonreading raw-mode foreground input fails at the native backlog bound below the input rate limit", async (t) => {
+  const local = await fixture(t);
+  const c = client(t, local.url);
+  const ready = await c.frame("ready");
+  const child = await rawChild(c, nonreadingChild);
+  let sent = 0;
+  // ~205 KiB/sec including JSON is below the 256 KiB/sec limit. The native
+  // kernel PTY input fills, then real node-pty EAGAIN tasks accumulate. The
+  // backlog guard, NOT message/rate validation, must close this session.
+  while (
+    sent < 40 &&
+    c.ws.readyState === WebSocket.OPEN &&
+    !c.frames.some((frame) => frame.type === "error")
+  ) {
+    c.input("x".repeat(16 * 1024));
+    sent++;
+    await delay(80);
+  }
+  assert.match(
+    (await c.frame("error")).message!,
+    /input backlog exceeded 256 KiB/,
+  );
+  assert.equal(await c.closed, 1008);
+  assert.ok(
+    sent >= 16 && sent <= 40,
+    `unexpected overflow after ${sent} frames`,
+  );
+  await gone(ready.pid!);
+  await gone(child);
+});
+
+test("a reading raw-mode foreground program receives a large paste beyond the lifetime backlog limit", async (t) => {
+  const local = await fixture(t);
+  const c = client(t, local.url);
+  await c.frame("ready");
+  const total = 512 * 1024;
+  const source = [
+    "process.stdin.setRawMode(true)",
+    "let received=0",
+    `process.stdin.on("data",data=>{received+=data.length;if(received===${total}){console.log("RAW_READ:"+received);process.stdin.setRawMode(false);process.exit(0)}})`,
+    'console.log("RAW_READY:"+process.pid)',
+  ].join(";");
+  const child = await rawChild(c, source);
+  for (let sent = 0; sent < total; sent += 16 * 1024) {
+    c.input("x".repeat(16 * 1024));
+    await delay(80);
+  }
+  await c.output(/RAW_READ:524288/);
+  await gone(child);
+  assert.equal(
+    c.frames.some((frame) => frame.type === "error"),
+    false,
+  );
+  c.input("printf 'PASTE_%s\\n' COMPLETE\r");
+  await c.output(/PASTE_COMPLETE/);
+});
+
+test("shutdown drops a blocked native input backlog and reaps the raw-mode foreground child", async (t) => {
+  const local = await fixture(t);
+  const c = client(t, local.url);
+  const ready = await c.frame("ready");
+  const child = await rawChild(c, nonreadingChild);
+  for (let sent = 0; sent < 8; sent++) {
+    c.input("queued-input-must-not-replay".repeat(512));
+    await delay(80);
+  }
+  assert.equal(
+    c.frames.some((frame) => frame.type === "error"),
+    false,
+  );
+  await local.close();
+  await c.closed;
+  assert.equal(await alive(ready.pid!), false);
+  await gone(child);
+});

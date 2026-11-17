@@ -33,7 +33,7 @@ buildNpmPackage {
       ])
       && lib.cleanSourceFilter path type;
   };
-  npmDepsHash = "sha256-Nty20XW7Sg+mhv4COwyBFaClV8JTAp5uiKBwe79biG8=";
+  npmDepsHash = "sha256-2FOcQtzWgaEfml5iM19lVszCtEjD9SuNZ/5fLOmXyhg=";
 
   nativeBuildInputs = [
     makeWrapper
