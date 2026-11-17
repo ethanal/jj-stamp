@@ -255,3 +255,40 @@ test("reset response restores defaults even before the stream delivers recovery"
   assert.deepEqual(f.requests, []);
   f.unsubscribe();
 });
+
+test("reset response cannot hide a newer invalid-file stream error", async () => {
+  const f = fixture();
+  f.receive({ "font-size": 20 });
+  f.fail("Original invalid file.", "CONFIG_INVALID");
+  const reset = f.store.resetInvalid();
+  f.receive({});
+  f.fail("New external invalid edit.", "CONFIG_INVALID");
+  f.resets[0].resolve({
+    config: defaultConfig,
+    backup: "config.json.test.invalid.bak",
+  });
+  await reset;
+  assert.equal(f.store.getSnapshot().error, "New external invalid edit.");
+  assert.equal(f.store.getSnapshot().canReset, true);
+  assert.deepEqual(f.store.getSnapshot().config, defaultConfig);
+  f.unsubscribe();
+});
+
+test("late invalid-save rejection cannot resurrect an error after a healthy stream snapshot", async () => {
+  const f = fixture();
+  f.receive({ "font-size": 16 });
+  f.fail("Invalid config file.", "CONFIG_INVALID");
+  const started = f.nextRequest();
+  f.store.set("font-size", 22);
+  await started;
+  f.receive({ "font-size": 17 });
+  f.responses[0].reject(
+    new RequestError("Invalid config.", 409, "CONFIG_INVALID"),
+  );
+  await assert.rejects(f.responses[0].promise);
+  assert.equal(f.store.getSnapshot().config["font-size"], 17);
+  assert.equal(f.store.getSnapshot().error, "");
+  assert.equal(f.store.getSnapshot().canReset, false);
+  assert.equal(f.requests.length, 1);
+  f.unsubscribe();
+});

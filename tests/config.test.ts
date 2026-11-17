@@ -778,24 +778,25 @@ test("config routes retain loopback host, origin, fetch-site and mutation protec
       assert.equal(status, 403, `${endpoint}: ${JSON.stringify(headers)}`);
     }
   }
+  const unsafeHeaders: Record<string, string>[] = [
+    { "Content-Type": "application/json" },
+    { "Content-Type": "text/plain", "X-Fold-Request": "1" },
+    {
+      "Content-Type": "application/json",
+      "X-Fold-Request": "1",
+      Origin: "https://evil.example",
+    },
+    {
+      "Content-Type": "application/json",
+      "X-Fold-Request": "1",
+      "Sec-Fetch-Site": "cross-site",
+    },
+  ];
   for (const endpoint of ["api/config", "api/config/reset-invalid"]) {
-    for (const headers of [
-      { "Content-Type": "application/json" },
-      { "Content-Type": "text/plain", "X-Fold-Request": "1" },
-      {
-        "Content-Type": "application/json",
-        "X-Fold-Request": "1",
-        Origin: "https://evil.example",
-      },
-      {
-        "Content-Type": "application/json",
-        "X-Fold-Request": "1",
-        "Sec-Fetch-Site": "cross-site",
-      },
-    ]) {
+    for (const headers of unsafeHeaders) {
       const result = await fetch(new URL(endpoint, local.url), {
         method: "POST",
-        headers: headers as Record<string, string>,
+        headers,
         body: '{"confirm":true}',
       });
       assert.equal(result.status, 403);

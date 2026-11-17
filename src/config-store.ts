@@ -64,6 +64,7 @@ export class ConfigStore {
   private syncErrorCode?: string;
   private saveErrorCode?: string;
   private generation = 0;
+  private syncGeneration = 0;
   private snapshot = initialSnapshot;
 
   constructor(
@@ -79,6 +80,7 @@ export class ConfigStore {
     if (!this.disconnect) {
       this.disconnect = this.transport.listen(
         (config) => {
+          this.syncGeneration++;
           this.generation++;
           this.confirmed = config;
           this.syncError = "";
@@ -93,6 +95,7 @@ export class ConfigStore {
           this.publish();
         },
         (message, code) => {
+          this.syncGeneration++;
           this.syncError = message;
           this.syncErrorCode = code;
           this.publish();
@@ -158,9 +161,15 @@ export class ConfigStore {
     } catch (error) {
       // A failed write is not replayed. Revert just its optimistic overlay and
       // leave any newer, explicit edits queued independently.
-      this.saveError = `Settings save could not be confirmed: ${errorMessage(error)}`;
-      this.saveErrorCode =
-        error instanceof RequestError ? error.code : undefined;
+      const code = error instanceof RequestError ? error.code : undefined;
+      const alreadyRepaired =
+        code === "CONFIG_INVALID" &&
+        this.generation !== generation &&
+        !this.syncError;
+      this.saveError = alreadyRepaired
+        ? ""
+        : `Settings save could not be confirmed: ${errorMessage(error)}`;
+      this.saveErrorCode = alreadyRepaired ? undefined : code;
     } finally {
       this.inFlight = {};
       this.syncing = false;
@@ -174,14 +183,19 @@ export class ConfigStore {
       throw new Error("Wait for settings saves to finish before resetting.");
     this.syncing = true;
     const generation = this.generation;
+    const syncGeneration = this.syncGeneration;
     this.publish();
     try {
       const { config, backup } = await this.transport.resetInvalid();
       if (this.generation === generation) this.confirmed = config;
       this.saveError = "";
       this.saveErrorCode = undefined;
-      this.syncError = "";
-      this.syncErrorCode = undefined;
+      // Another process/editor can invalidate the file again before this HTTP
+      // response arrives. Keep any newer stream status, including failures.
+      if (this.syncGeneration === syncGeneration) {
+        this.syncError = "";
+        this.syncErrorCode = undefined;
+      }
       return backup;
     } catch (error) {
       this.saveError = `Settings reset could not be confirmed: ${errorMessage(error)}`;
