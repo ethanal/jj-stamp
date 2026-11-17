@@ -53,6 +53,7 @@ import {
 } from "./ReviewToolbar";
 import { GoToRevision } from "./GoToRevision";
 import { ShortcutsDialog } from "./ShortcutsDialog";
+import { RefreshIcon } from "./RefreshIcon";
 import { TerminalPanel } from "./TerminalPanel";
 import { useSidebarReveal } from "./useSidebarReveal";
 import { useScrollActiveFile } from "./useScrollActiveFile";
@@ -1095,12 +1096,14 @@ function App() {
             onSubmit={goToRevision}
           />
           <button
-            className="action-button"
+            type="button"
+            className="action-button refresh-trigger"
+            aria-label="Refresh"
             onClick={() => void refresh()}
             disabled={idleActionDisabled}
             title="Refresh repository"
           >
-            Refresh
+            <RefreshIcon />
           </button>
           <TerminalPanel
             mount={terminalSlot}

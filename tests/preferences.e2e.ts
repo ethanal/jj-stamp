@@ -909,6 +909,16 @@ try {
   await page.setViewportSize({ width: 600, height: 800 });
   await expect(files).toBeVisible();
   await expect(log).not.toBeVisible();
+  const mobileWorkspace = await page.locator(".workspace").boundingBox();
+  const mobileLog = await logPanel.boundingBox();
+  const mobileFiles = await filesPanel.boundingBox();
+  assert(mobileWorkspace && mobileLog && mobileFiles);
+  assert.equal(mobileLog.x, mobileWorkspace.x);
+  assert.equal(mobileLog.width, mobileWorkspace.width);
+  assert(
+    mobileFiles.y + mobileFiles.height <= mobileLog.y,
+    "the narrow files panel ends above the full-width bottom log",
+  );
   await assertConnectedGraph();
   await expect(page.getByLabel("Reviewed revision")).toBeVisible();
   assert.equal(
@@ -951,6 +961,10 @@ try {
         box.y >= 0 &&
         box.y + box.height <= 800,
     );
+    if (panel === logPanel) {
+      assert.equal(box.x, mobileWorkspace.x);
+      assert.equal(box.width, mobileWorkspace.width);
+    }
     // A wide files preview may cover the viewer's center; leave it through
     // the uncovered top-right corner rather than its resize handle.
     assert(mobileViewer);

@@ -254,14 +254,21 @@ try {
     page.getByRole("button", { name: "shortcuts", exact: true }),
   ).toHaveCount(0);
   await expect(dialog).not.toBeVisible();
-  await expect(actions).toHaveText([
+  const actionNames = [
     "Refresh",
     "Terminal",
     "Settings",
     "Squash",
     "Undo",
     "Clear",
-  ]);
+  ];
+  for (const [index, name] of actionNames.entries())
+    await expect(actions.nth(index)).toHaveAccessibleName(name);
+  for (const name of ["Refresh", "Terminal"]) {
+    const button = page.getByRole("button", { name, exact: true });
+    await expect(button).toHaveText("");
+    await expect(button.locator('svg[aria-hidden="true"]')).toBeVisible();
+  }
   await expect(
     page.locator(".topbar kbd, .statusbar kbd, .text-selection-hint"),
   ).toHaveCount(0);

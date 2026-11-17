@@ -626,6 +626,9 @@ kbd {
 .toolbar-actions {
   margin-left: auto;
 }
+.refresh-trigger {
+  padding-inline: 6px;
+}
 .commit-totals {
   display: flex;
   align-items: center;
@@ -1506,20 +1509,19 @@ kbd {
     --log-height: 36px;
   }
   .sidebar {
-    grid-row: 1 / -1;
+    grid-row: 1;
+  }
+  .sidebar.is-peeking {
+    /* Keep the shadow over the diff, never below onto the terminal or log. */
+    clip-path: inset(0 -24px 0 0);
   }
   .log-panel {
-    grid-column: 2;
+    grid-column: 1 / -1;
     grid-row: 3;
     border-left: 0;
     border-top: 1px solid var(--border);
   }
-  .workspace.terminal-open .sidebar {
-    grid-row: 1;
-  }
-  .workspace.terminal-open .log-panel {
-    grid-column: 1 / -1;
-  }
+
   .log-panel.is-peeking {
     --peek-offset-x: 0px;
     --peek-offset-y: calc(100% - 36px);
