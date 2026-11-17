@@ -198,8 +198,9 @@ export function TerminalPanel({
     void (async () => {
       try {
         const runtime = await import("./terminal-runtime");
-        const [ghostty] = await Promise.all([
+        const [ghostty, queries] = await Promise.all([
           runtime.loadGhostty(),
+          runtime.loadTerminalQueries(),
           document.fonts.ready,
         ]);
         if (disposed || !container.current) return;
@@ -295,6 +296,10 @@ export function TerminalPanel({
                 break;
               case "data":
                 term.write(value.data);
+                if (ready)
+                  queries.write(value.data, (response) =>
+                    inputQueue.enqueue(response),
+                  );
                 break;
               case "exit":
                 if (!Number.isInteger(value.exitCode))

@@ -179,6 +179,8 @@ npx playwright install chromium
 npm run test:browser            # browser interactions against fixtures
 npm run test:cli                # rebuild; test CLI and real npm tarball packaging
 npm run test:browser:terminal   # builds production assets; real Ghostty + PTY
+# Optional fish 4.1+ startup regression, after building:
+FISH_BINARY=/absolute/path/to/fish npx tsx tests/terminal-fish.e2e.ts
 nix flake check                 # installed Nix packages and runtime tools
 ```
 
@@ -196,6 +198,13 @@ the initial UI theme gives multiple roles the same color. Application truecolors
 exactly matching those reserved identities (`#010001`–`#010012`) are also
 recolored; other truecolors and the fixed 256-color cube/grays are preserved.
 Current UI colors are a renderer mapping, not native palette metadata.
+
+The published Ghostty WASM omits device-attribute replies required by fish's
+startup feature detection. A session-local compatibility parser supplies only
+the missing DA1/DA2 replies through the same bounded input queue; native
+cursor/status replies are unchanged. Capability detection uses a separate,
+disposable WASM instance and disables each fallback if Ghostty supports it
+natively. Fish's queries and startup files are not suppressed or modified.
 
 `npm run test:all` runs the formatting/type checks and all three npm test suites. Use `npm run format` to apply formatting, or `npm run typecheck` to check types independently. Type checking also rejects unused locals and parameters; it runs as part of every build.
 

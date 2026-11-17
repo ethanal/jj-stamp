@@ -30,6 +30,28 @@ const launchPath = path.join(directory, "linked-subdirectory");
 await symlink(path.join(repoPath, "src"), launchPath);
 const configPath = path.join(directory, "config.json");
 await writeFile(configPath, JSON.stringify({ shell: "/bin/sh" }));
+const queryProbe = path.join(directory, "terminal query probe.mjs");
+await writeFile(
+  queryProbe,
+  String.raw`
+process.stdin.setRawMode(true);
+process.stdin.resume();
+let input = "";
+const timeout = setTimeout(() => finish(false), 1800);
+function finish(ok) {
+  clearTimeout(timeout);
+  process.stdin.pause();
+  process.stdin.setRawMode(false);
+  process.stdout.write("\n" + (ok ? "QUERY_ROUNDTRIP_OK" : "QUERY_TIMEOUT:" + JSON.stringify(input)) + "\n", () => process.exit(ok ? 0 : 1));
+}
+process.stdin.on("data", (data) => {
+  input += data.toString("utf8");
+  if (/\x1b\[\?[0-9;]+c/.test(input) && /\x1b\[>[0-9;]+c/.test(input) && /\x1b\[[0-9]+;[0-9]+R/.test(input))
+    finish(true);
+});
+process.stdout.write("\x1b[0c\x1b[>0c\x1b[6n");
+`,
+);
 const local = await startLocalServer({
   service: new ReviewService({ repoPath: launchPath }),
   configPath,
@@ -478,6 +500,13 @@ await command(
   'printf \'\\nREPO_ROOT:%s:%s:END\\n\' "$(pwd -P)" "$PWD"',
   `\r\nREPO_ROOT:${repoPath}:${repoPath}:END\r\n`,
 );
+// The standard suite needs no fish installation: a real raw-mode foreground
+// program must receive DA1, DA2 and native cursor replies before fish's deadline.
+const shellQuote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
+await command(
+  `${shellQuote(process.execPath)} ${shellQuote(queryProbe)}`,
+  "\r\nQUERY_ROUNDTRIP_OK\r\n",
+);
 await command(
   "export STAMP_PERSIST=kept; printf '\\nREADY_%s\\n' \"$STAMP_PERSIST\"",
   "READY_kept",
@@ -844,5 +873,5 @@ for (const initialTheme of ["solarized-dark", "catppuccin-mocha"]) {
 assert.deepEqual(errors, []);
 assert.ok(received.some((frame) => frame.type === "ready"));
 console.log(
-  "Terminal panel browser checks passed: bare native shell, docked/nonmodal desktop/mobile layout, pointer/keyboard/native PTY resize, lazy sessions, typing isolation, Escape persistence, large paste, 14 themes, ANSI identity and memory isolation, customization, clean-exit respawn, bounded rapid exits, explicit error/disconnect Retry.",
+  "Terminal panel browser checks passed: bare native shell, docked/nonmodal desktop/mobile layout, pointer/keyboard/native PTY resize, lazy sessions, typing isolation, native DA1/DA2/cursor roundtrip, Escape persistence, large paste, 14 themes, ANSI identity and memory isolation, customization, clean-exit respawn, bounded rapid exits, explicit error/disconnect Retry.",
 );
