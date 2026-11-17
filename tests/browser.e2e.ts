@@ -1302,7 +1302,7 @@ try {
   );
   await expect(page.getByLabel("Squash destination change ID")).toHaveText("—");
   const mergeDestination = page.getByRole("button", { name: /^Squash into/ });
-  await expect(mergeDestination).toHaveText("Choose revision…⌄");
+  await expect(mergeDestination).toHaveText("Choose revision…");
   await expect(
     page.getByRole("button", { name: "Squash", exact: true }),
   ).toBeDisabled();

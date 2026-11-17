@@ -187,7 +187,7 @@ try {
     timeout: 60_000,
   });
   await expect(selectedLine()).toBeVisible({ timeout: 30_000 });
-  await expect(trigger).toHaveText("Choose revision…⌄");
+  await expect(trigger).toHaveText("Choose revision…");
   await expect(trigger).toHaveAttribute("title", reason);
   await expect(squash).toBeDisabled();
   await selectedLine().click();
