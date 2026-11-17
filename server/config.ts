@@ -8,6 +8,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { z } from "zod";
 import {
   configPatchSchema,
+  configSchema,
   defaultConfig,
   type Config,
 } from "../src/config.ts";
@@ -110,7 +111,13 @@ async function readBytes(file: string): Promise<Buffer | undefined> {
   }
 }
 
-function parseBytes(bytes: Buffer): Config {
+interface ConfigDocument {
+  config: Config;
+  values: Record<string, unknown>;
+  text?: string;
+}
+
+function parseBytes(bytes: Buffer): ConfigDocument {
   let text: string;
   try {
     text = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(
@@ -125,32 +132,105 @@ function parseBytes(bytes: Buffer): Config {
   } catch {
     throw invalid("Shared preferences contain invalid JSON syntax.");
   }
-  const result = configPatchSchema.safeParse(value);
-  if (result.success) return { ...defaultConfig, ...result.data };
-  // Zod diagnostics may contain arbitrary keys or values from the file.
-  // Report only known schema names, never the parser's raw message/input.
-  const fields = Object.keys(defaultConfig).filter((name) =>
-    result.error.issues.some((issue) => issue.path[0] === name),
-  );
-  const reasons: string[] = [];
-  if (fields.length)
-    reasons.push(
-      `Unsupported values for supported preference fields: ${fields.join(", ")}. Check their documented types, ranges and choices.`,
-    );
-  if (result.error.issues.some((issue) => issue.code === "unrecognized_keys"))
-    reasons.push(
-      "Shared preferences contain unknown keys. Remove unsupported preference names.",
-    );
-  if (!reasons.length)
-    reasons.push(
-      "Shared preferences must be a JSON object of supported preference fields.",
-    );
-  throw invalid(reasons.join(" "));
+  if (typeof value !== "object" || value === null || Array.isArray(value))
+    throw invalid("Shared preferences must be a JSON object.");
+  const values = value as Record<string, unknown>;
+  const config = { ...defaultConfig };
+  // A newer release or another tool may understand keys/values we do not.
+  // Validate fields independently so one unsupported value cannot block the
+  // remaining settings, and never send unknown data to browser consumers.
+  for (const key of Object.keys(defaultConfig) as (keyof Config)[]) {
+    if (!Object.hasOwn(values, key)) continue;
+    const result = configSchema.shape[key].safeParse(values[key]);
+    if (result.success) Object.assign(config, { [key]: result.data });
+  }
+  return { config, values, text };
 }
 
-async function load(file: string): Promise<Config> {
+async function load(file: string): Promise<ConfigDocument> {
   const bytes = await readBytes(file);
-  return bytes === undefined ? { ...defaultConfig } : parseBytes(bytes);
+  return bytes === undefined
+    ? { config: { ...defaultConfig }, values: {} }
+    : parseBytes(bytes);
+}
+
+function serializePatch(
+  current: ConfigDocument,
+  patch: Partial<Config>,
+): string {
+  const entries =
+    current.text === undefined
+      ? new Map(
+          Object.entries(defaultConfig).map(([key, value]) => [
+            key,
+            JSON.stringify(value),
+          ]),
+        )
+      : rawEntries(current.text);
+  for (const [key, value] of Object.entries(patch))
+    entries.set(key, JSON.stringify(value));
+  const fields = [...entries].map(
+    ([key, value]) => `${JSON.stringify(key)}: ${value}`,
+  );
+  const formatted = `{\n  ${fields.join(",\n  ")}\n}\n`;
+  // Keep unknown values as raw slices, without a recursive reviver/stringifier.
+  // This preserves large numeric literals and deeply nested future settings,
+  // and cannot expand their formatting quadratically before checking the cap.
+  return Buffer.byteLength(formatted) <= MAX_CONFIG_BYTES
+    ? formatted
+    : `{${[...entries].map(([key, value]) => `${JSON.stringify(key)}:${value}`).join(",")}}\n`;
+}
+
+/** Extract values only after JSON.parse has validated a complete root object. */
+function rawEntries(text: string): Map<string, string> {
+  const entries = new Map<string, string>();
+  // Keys and string values share this escape-aware scanner. No string decoding
+  // is needed except for keys, to match JSON.parse's last-duplicate-key rules.
+  function stringEnd(start: number): number {
+    let end = start + 1;
+    while (end < text.length) {
+      if (text[end] === "\\") end += 2;
+      else if (text[end++] === '"') break;
+    }
+    return end;
+  }
+  function whitespace(start: number): number {
+    while (
+      text[start] === " " ||
+      text[start] === "\t" ||
+      text[start] === "\r" ||
+      text[start] === "\n"
+    )
+      start++;
+    return start;
+  }
+  let index = whitespace(text.indexOf("{") + 1);
+  while (text[index] !== "}") {
+    const end = stringEnd(index);
+    const key: string = JSON.parse(text.slice(index, end));
+    index = whitespace(end);
+    // The colon is guaranteed by the preceding full-object JSON validation.
+    const start = whitespace(index + 1);
+    index = start;
+    let depth = 0;
+    while (index < text.length) {
+      const char = text[index];
+      if (char === '"') {
+        index = stringEnd(index);
+        continue;
+      }
+      if (char === "{" || char === "[") depth++;
+      else if (char === "}" || char === "]") {
+        if (depth === 0) break;
+        depth--;
+      } else if (char === "," && depth === 0) break;
+      index++;
+    }
+    entries.set(key, text.slice(start, index).trimEnd());
+    if (text[index] !== ",") break;
+    index = whitespace(index + 1);
+  }
+  return entries;
 }
 
 /** Never truncate an existing file; remove only our own incomplete creation. */
@@ -229,16 +309,17 @@ export class ConfigStore {
     return task;
   }
 
-  private async observe(): Promise<Config> {
+  private async observe(): Promise<ConfigDocument> {
     try {
-      const config = await load(this.file);
+      const document = await load(this.file);
+      const config = document.config;
       const changed =
         this.failure !== undefined ||
         JSON.stringify(config) !== JSON.stringify(this.snapshot);
       this.snapshot = config;
       this.failure = undefined;
       if (changed) this.broadcast(frame("config", config));
-      return { ...config };
+      return { ...document, config: { ...config } };
     } catch (error) {
       const safe = ioError(error);
       if (
@@ -255,18 +336,32 @@ export class ConfigStore {
   }
 
   read(): Promise<Config> {
-    return this.enqueue(() => this.observe());
+    return this.enqueue(async () => (await this.observe()).config);
   }
 
   patch(value: unknown): Promise<Config> {
-    const patch = configPatchSchema.parse(value);
+    // Direct embedders can supply optional undefined fields even though JSON
+    // clients cannot. Treat those as omitted, never serialize them as values.
+    const patch = Object.fromEntries(
+      Object.entries(configPatchSchema.parse(value)).filter(
+        ([, value]) => value !== undefined,
+      ),
+    ) as Partial<Config>;
     return this.enqueue(async () => {
-      if (Object.keys(patch).length === 0) return this.observe();
+      if (Object.keys(patch).length === 0) return (await this.observe()).config;
       return this.withLock(async () => {
         const current = await this.observe();
-        const next = { ...current, ...patch };
-        if (JSON.stringify(current) === JSON.stringify(next)) return current;
-        return this.replace(next);
+        if (
+          Object.entries(patch).every(
+            ([key, value]) =>
+              (Object.hasOwn(current.values, key)
+                ? current.values[key]
+                : defaultConfig[key as keyof Config]) === value,
+          )
+        )
+          return current.config;
+        const next = { ...current.config, ...patch };
+        return this.replace(next, serializePatch(current, patch));
       }, true);
     });
   }
@@ -344,9 +439,18 @@ export class ConfigStore {
     }
   }
 
-  private async replace(config: Config): Promise<Config> {
+  private async replace(
+    config: Config,
+    text = `${JSON.stringify(config, null, 2)}\n`,
+  ): Promise<Config> {
+    if (Buffer.byteLength(text) > MAX_CONFIG_BYTES)
+      throw new ConfigError(
+        "Saving these preferences would exceed the 64 KiB limit. Reduce config.json before saving preferences.",
+        "CONFIG_TOO_LARGE",
+        409,
+      );
     const temporary = `${this.file}.${randomUUID()}.tmp`;
-    await writePrivate(temporary, `${JSON.stringify(config, null, 2)}\n`);
+    await writePrivate(temporary, text);
     try {
       await rename(temporary, this.file);
     } finally {

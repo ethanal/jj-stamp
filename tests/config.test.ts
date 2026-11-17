@@ -128,6 +128,11 @@ test("missing config defaults and reads never create directories or files", asyn
   const { root, store } = await fixture(t);
   assert.deepEqual(await store.read(), defaultConfig);
   assert.deepEqual(await readdir(root), []);
+  assert.deepEqual(
+    await store.patch({ "font-size": undefined }),
+    defaultConfig,
+  );
+  assert.deepEqual(await readdir(root), []);
   const copy = await store.read();
   copy["font-size"] = 20;
   assert.deepEqual(await store.read(), defaultConfig);
@@ -194,12 +199,12 @@ test("strict API validation rejects unknown keys, malformed JSON and unsupported
   assert.deepEqual(await changed.json(), { ...defaultConfig, "font-size": 17 });
 });
 
-test("partial disk files use defaults, but invalid files are never silently replaced", async (t) => {
+test("partial disk files use defaults, but malformed and non-object files are never silently replaced", async (t) => {
   const { store, configPath } = await fixture(t);
   await mkdir(path.dirname(configPath));
   await writeFile(configPath, '{"font-size":19}');
   assert.deepEqual(await store.read(), { ...defaultConfig, "font-size": 19 });
-  for (const invalid of ["{broken", '{"font-size":null}', '{"unknown":1}']) {
+  for (const invalid of ["{broken", "null", "[]", "true", '"settings"', "42"]) {
     await writeFile(configPath, invalid);
     await assert.rejects(store.read(), { code: "CONFIG_INVALID" });
     await assert.rejects(store.patch({ "vim-mode": true }), {
@@ -210,17 +215,12 @@ test("partial disk files use defaults, but invalid files are never silently repl
   }
 });
 
-test("invalid diagnostics distinguish syntax, UTF-8, known field validation and unknown keys without leaking input", async (t) => {
+test("invalid diagnostics distinguish syntax, UTF-8 and non-object files without leaking input", async (t) => {
   const { local, configPath } = await serverFixture(t);
   await mkdir(path.dirname(configPath));
   for (const [bytes, reason] of [
     [Buffer.from('{"secret-path-/private":'), /JSON syntax/],
     [Buffer.from([0x7b, 0xff, 0x7d]), /UTF-8/],
-    [Buffer.from('{"font-size":"secret-value-/private"}'), /font-size/],
-    [
-      Buffer.from('{"secret-key-/private":"secret-value-/private"}'),
-      /unknown keys/,
-    ],
     [Buffer.from("[]"), /JSON object/],
   ] as const) {
     await writeFile(configPath, bytes);
@@ -238,10 +238,183 @@ test("invalid diagnostics distinguish syntax, UTF-8, known field validation and 
   }
 });
 
+test("unknown disk keys and unsupported values use per-field defaults without blocking reads, saves or streams", async (t) => {
+  const { local, configPath } = await serverFixture(t);
+  const events = await stream(local.url, t);
+  assert.deepEqual((await events.next()).data, defaultConfig);
+  const document = {
+    "color-scheme": "future-theme",
+    "font-size": 99,
+    "vim-mode": "enabled",
+    "hover-sidebars": null,
+    "files-width": { future: 245 },
+    "log-width": [350],
+    "files-peek-width": -1,
+    "log-peek-width": 0,
+    "split-diff-ratio": 99,
+    "file-view": "future-view",
+    "files-expanded": null,
+    "log-expanded": 1,
+    "diff-style": "future-style",
+    "log-revset": "",
+    future: { enabled: true, values: [null, "new", 42, false] },
+  };
+  await mkdir(path.dirname(configPath));
+  await writeFile(
+    configPath,
+    JSON.stringify({ ...document, "font-size": 18, "log-revset": " all() " }),
+  );
+  const expected = { ...defaultConfig, "font-size": 18, "log-revset": "all()" };
+  const response = await fetch(new URL("api/config", local.url));
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), expected);
+  assert.deepEqual(await events.next(), { event: "config", data: expected });
+  const saved = await post(local.url, { "vim-mode": true });
+  assert.equal(saved.status, 200);
+  assert.deepEqual(await saved.json(), { ...expected, "vim-mode": true });
+  assert.deepEqual(await events.next(), {
+    event: "config",
+    data: { ...expected, "vim-mode": true },
+  });
+  assert.deepEqual(JSON.parse(await readFile(configPath, "utf8")), {
+    ...document,
+    "font-size": 18,
+    "log-revset": " all() ",
+    "vim-mode": true,
+  });
+  // Every unsupported known value falls back independently, including a bad
+  // font size, rather than leaking into the typed wire response.
+  await writeFile(configPath, JSON.stringify(document));
+  assert.deepEqual(
+    await (await fetch(new URL("api/config", local.url))).json(),
+    defaultConfig,
+  );
+  assert.deepEqual(await events.next(), {
+    event: "config",
+    data: defaultConfig,
+  });
+  assert.deepEqual(await readdir(path.dirname(configPath)), ["config.json"]);
+});
+
+test("unrelated saves preserve future keys, unsupported values and numeric literals losslessly", async (t) => {
+  const { store, configPath } = await fixture(t);
+  await mkdir(path.dirname(configPath));
+  const original =
+    '{"font-size":99,"color-scheme":"future-theme","future":{"integer":9007199254740993,"huge":1e400,"decimal":2.3000,"negativeZero":-0},"__proto__":{"polluted":true},"constructor":{"custom":true}}';
+  await writeFile(configPath, original);
+  assert.deepEqual(await store.read(), defaultConfig);
+  assert.equal(await readFile(configPath, "utf8"), original);
+  assert.deepEqual(await store.patch({ "vim-mode": true }), {
+    ...defaultConfig,
+    "vim-mode": true,
+  });
+  const text = await readFile(configPath, "utf8");
+  assert.match(text, /"integer":\s*9007199254740993/);
+  assert.match(text, /"huge":\s*1e400/);
+  assert.match(text, /"decimal":\s*2\.3000/);
+  assert.match(text, /"negativeZero":\s*-0/);
+  const disk = JSON.parse(text);
+  assert.equal(disk["font-size"], 99);
+  assert.equal(disk["color-scheme"], "future-theme");
+  assert.deepEqual(disk["__proto__"], { polluted: true });
+  assert.deepEqual(disk.constructor, { custom: true });
+  assert.equal(Object.hasOwn(Object.prototype, "polluted"), false);
+  assert.deepEqual(await store.read(), { ...defaultConfig, "vim-mode": true });
+  assert.deepEqual(await readdir(path.dirname(configPath)), ["config.json"]);
+});
+
+test("no-op patches preserve a future config, but explicit edits replace unsupported stored values even at the default", async (t) => {
+  const { store, configPath } = await fixture(t);
+  await mkdir(path.dirname(configPath));
+  const original = ' { "font-size": 99, "future": [true, {"new": "value"}] }\n';
+  await writeFile(configPath, original);
+  assert.deepEqual(await store.patch({}), defaultConfig);
+  assert.deepEqual(await store.patch({ "vim-mode": false }), defaultConfig);
+  assert.equal(await readFile(configPath, "utf8"), original);
+  assert.deepEqual(
+    await store.patch({ "font-size": defaultConfig["font-size"] }),
+    defaultConfig,
+  );
+  const saved = JSON.parse(await readFile(configPath, "utf8"));
+  assert.equal(saved["font-size"], defaultConfig["font-size"]);
+  assert.deepEqual(saved.future, [true, { new: "value" }]);
+});
+
+test("future data stays bounded on save: compact JSON when needed, otherwise reject without replacement", async (t) => {
+  const { store, configPath } = await fixture(t);
+  await mkdir(path.dirname(configPath));
+  const future = "x".repeat(
+    64 * 1024 - JSON.stringify({ future: "", "vim-mode": true }).length - 1,
+  );
+  await writeFile(configPath, JSON.stringify({ future }));
+  await store.patch({ "vim-mode": true });
+  const compact = await readFile(configPath, "utf8");
+  assert.equal(Buffer.byteLength(compact), 64 * 1024);
+  assert.equal(compact, `${JSON.stringify({ future, "vim-mode": true })}\n`);
+  assert.deepEqual(JSON.parse(compact), { future, "vim-mode": true });
+  assert.deepEqual(await store.read(), { ...defaultConfig, "vim-mode": true });
+  const original = JSON.stringify({
+    future: "x".repeat(64 * 1024 - JSON.stringify({ future: "" }).length),
+  });
+  assert.equal(Buffer.byteLength(original), 64 * 1024);
+  await writeFile(configPath, original);
+  await assert.rejects(store.patch({ "vim-mode": true }), {
+    code: "CONFIG_TOO_LARGE",
+  });
+  assert.equal(await readFile(configPath, "utf8"), original);
+  assert.deepEqual(await store.read(), defaultConfig);
+  assert.deepEqual(await readdir(path.dirname(configPath)), ["config.json"]);
+});
+
+test("deeply nested unknown values survive unrelated saves without recursive serialization", async (t) => {
+  const { store, configPath } = await fixture(t);
+  await mkdir(path.dirname(configPath));
+  const future = `${"[".repeat(10_000)}9007199254740993${"]".repeat(10_000)}`;
+  await writeFile(
+    configPath,
+    `{"future":${future},"color-scheme":"future-theme"}`,
+  );
+  assert.deepEqual(await store.read(), defaultConfig);
+  assert.deepEqual(await store.patch({ "font-size": 18 }), {
+    ...defaultConfig,
+    "font-size": 18,
+  });
+  const saved = await readFile(configPath, "utf8");
+  assert.ok(saved.includes(future));
+  assert.equal(JSON.parse(saved)["color-scheme"], "future-theme");
+  assert.ok(Buffer.byteLength(saved) < 64 * 1024);
+  assert.deepEqual(await store.read(), { ...defaultConfig, "font-size": 18 });
+});
+
+test("raw preservation handles escaped keys, delimiters in strings, duplicate keys and nested containers", async (t) => {
+  const { store, configPath } = await fixture(t);
+  await mkdir(path.dirname(configPath));
+  const original = String.raw` {
+    "future": 1,
+    "future": {"text":"},\"\\[,:", "list":[{},[],["}", ",", "\""]]},
+    "f\u0075ture": {"last":"keep this duplicate's value"},
+    "quoted\"key": {"braces": "} ] , : { [", "slash": "\\"},
+    "font-size": 16,
+    "font\u002dsize": 99,
+    "vim-mode": false
+  } `;
+  await writeFile(configPath, original);
+  assert.deepEqual(await store.patch({ "font-size": 18 }), {
+    ...defaultConfig,
+    "font-size": 18,
+  });
+  assert.deepEqual(JSON.parse(await readFile(configPath, "utf8")), {
+    ...JSON.parse(original),
+    "font-size": 18,
+  });
+  // The equivalent escaped key was replaced, not left to override the patch.
+  assert.deepEqual(await store.read(), { ...defaultConfig, "font-size": 18 });
+});
+
 test("explicit reset backs up exact invalid bytes privately, atomically installs defaults and broadcasts recovery", async (t) => {
   const { local, configPath } = await serverFixture(t);
   await mkdir(path.dirname(configPath));
-  const original = Buffer.from(' \r\n{"font-size":"unsupported"}\r\n');
+  const original = Buffer.from(' \r\n{"font-size":\r\n');
   await writeFile(configPath, original, { mode: 0o644 });
   const oldReader = await open(configPath, "r");
   t.after(() => oldReader.close());
@@ -298,7 +471,7 @@ test("syntax and invalid UTF-8 recovery preserve all original bytes and never re
   for (const original of [
     Buffer.from("{broken\r\n"),
     Buffer.from([0xff, 0xfe, 0x00, 0x7b]),
-    Buffer.from('{"unknown":"private-value"}'),
+    Buffer.from('["unknown", "private-value"]'),
     Buffer.from(`${" ".repeat(64 * 1024 - 1)}{`),
   ]) {
     await writeFile(configPath, original);
@@ -331,6 +504,7 @@ test("reset refuses missing and currently valid files without changing disk", as
     "{}",
     '{"font-size":19}',
     JSON.stringify(defaultConfig),
+    '{"future":{"enabled":true},"color-scheme":"future-theme","font-size":null}',
   ]) {
     await writeFile(configPath, valid);
     result = await reset(local.url);

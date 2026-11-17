@@ -123,42 +123,57 @@ External jj processes and file edits cannot be locked by this in-process queue. 
 selection, history bookkeeping and filesystem-refresh streams. The default path
 is `$XDG_CONFIG_HOME/jj-stamp/config.json` (absolute XDG base only), otherwise
 `~/.config/jj-stamp/config.json`. Embedders/tests can pass `configPath` to
-`startLocalServer` or `createApi` to isolate it. The JSON keys, strict validation
-and defaults are shared with the frontend in `src/config.ts`; partial files use
-defaults for omitted keys. See the root README for an example and supported
-values. Browser storage is neither read nor migrated.
+`startLocalServer` or `createApi` to isolate it. The supported JSON keys, typed
+effective-config/API validation and defaults are shared with the frontend in
+`src/config.ts`. Disk reads require valid UTF-8 JSON with an object root, at most
+64KiB, but tolerate unknown keys and unsupported known-field values. Omitted or
+unsupported fields use their defaults independently; valid siblings still apply
+without an error. Unknown keys and unsupported raw values are preserved on disk
+unless an explicit patch replaces those keys. See the root README for an example
+and supported values. Browser storage is neither read nor migrated.
 
-- `GET /config` returns the full effective config with `Cache-Control: no-store`.
-- `POST /config` accepts a strict partial typed config, merges against a fresh
-  validated file, and returns the full effective config. It retains the HTTP
-  server's same-origin, JSON and `X-Fold-Request: 1` protections.
+- `GET /config` returns only the full typed effective config (no unknown keys)
+  with `Cache-Control: no-store`.
+- `POST /config` accepts a strict partial typed config: unknown keys and
+  unsupported values are rejected. It merges only requested keys into the fresh
+  raw disk object, preserves all unrelated values, and returns only the full
+  typed effective config. It retains the HTTP server's same-origin, JSON and
+  `X-Fold-Request: 1` protections.
+  Unpatched raw values, including numeric literals and deep objects, are kept
+  without recursive serialization. A save that would exceed 64KiB returns
+  `409 CONFIG_TOO_LARGE` without replacing the current file.
 - `POST /config/reset-invalid {confirm:true}` explicitly recovers an existing
-  invalid file under the same writer lock. It backs up the exact original bytes
-  in an exclusive, synced 0600 `config.json.<uuid>.invalid.bak` sibling before
-  atomically installing defaults. Returns `{config,backup}` with the backup's
-  basename. Missing/valid files return `409 CONFIG_NOT_INVALID`; oversized,
-  unreadable, symlinked and nonregular files cannot be reset. Completed backups
-  remain available even if the subsequent replacement fails. The usual POST
-  protections apply; neither saves nor resets are automatically retried.
+  malformed JSON, invalid UTF-8 or non-object file under the same writer lock.
+  It backs up the exact original bytes in an exclusive, synced 0600
+  `config.json.<uuid>.invalid.bak` sibling before atomically installing defaults.
+  Returns `{config,backup}` with the backup's basename. Missing files and valid
+  objects (including those with unknown keys or unsupported values) return
+  `409 CONFIG_NOT_INVALID`; oversized, unreadable, symlinked and nonregular files
+  cannot be reset. Completed backups remain available even if the subsequent
+  replacement fails. The usual POST protections apply; neither saves nor resets
+  are automatically retried.
 - `GET /config/events` is a separate bounded SSE stream. Named `config` events
-  contain full effective settings, initially and after a disk change; named
-  `config-error` events contain `{error,code}` and retain the last valid browser
-  snapshot. Streams remain connected while tabs are hidden/unfocused. HEAD
-  does not allocate an SSE subscriber. Connection failures reconnect normally.
+  contain only full typed effective settings (no unknown keys), initially and
+  after a disk change; named `config-error` events contain `{error,code}` and
+  retain the last valid browser snapshot. Streams remain connected while tabs
+  are hidden/unfocused. HEAD does not allocate an SSE subscriber. Connection
+  failures reconnect normally.
 
 Each server checks only this bounded, regular config file every 250ms while
 subscribed; it does not scan repositories or spawn tools. Atomic editor saves,
-in-place edits, missing files, deletion and recreation are observed. Invalid
-JSON/values and read failures are never overwritten automatically; GET/POST
-return an error until repaired, and streams resume on repair. Missing files use
-defaults without creating a file/directory. Explicit patches create the config
-directory and use an exclusive cross-process `config.json.lock`, a private
-same-directory temporary file and atomic rename. The read/merge/write is locked,
-so distinct concurrent patches survive. External editors cannot be locked by
-this protocol. A bounded lock timeout reports stale locks; an uncatchable crash
-may require manually removing the lock after stopping all servers. Streams,
-queues and backpressure are bounded; shutdown ends streams and drains accepted
-config writes as well as repository work.
+in-place edits, missing files, deletion and recreation are observed. Malformed
+JSON, invalid UTF-8, non-object roots, oversized files and read failures are
+never overwritten automatically; GET/POST return an error until repaired, and
+streams resume on repair. Unknown keys and unsupported values in valid objects
+do not produce errors or enable reset. Missing files use defaults without
+creating a file/directory. Explicit patches create the config directory and use
+an exclusive cross-process `config.json.lock`, a private same-directory temporary
+file and atomic rename. The read/merge/write is locked, so distinct concurrent
+patches survive. External editors cannot be locked by this protocol. A bounded
+lock timeout reports stale locks; an uncatchable crash may require manually
+removing the lock after stopping all servers. Streams, queues and backpressure
+are bounded; shutdown ends streams and drains accepted config writes as well as
+repository work.
 
 ## In-memory operation state
 

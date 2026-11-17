@@ -14,6 +14,7 @@ import {
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { expect } from "@playwright/test";
+import { configSchema, defaultConfig } from "../src/config.ts";
 import { createBrowserFixture } from "./browser-fixture.ts";
 
 function repository() {
@@ -61,6 +62,9 @@ const third = await first.browser.newPage({
 });
 third.on("pageerror", (error) => first.errors.push(error.message));
 const pages = [first.page, second.page, third];
+// Two independent cold Vite caches can take more than 30s to serve the initial
+// module graph on a busy VM. Keep normal interaction assertions at 5s.
+for (const page of pages) page.setDefaultNavigationTimeout(120_000);
 
 // Old per-origin storage must neither seed nor overwrite the shared file.
 await first.page.addInitScript(() => {
@@ -198,16 +202,94 @@ for (const page of pages) {
   await expect(page.getByRole("dialog").getByRole("status")).toHaveCount(0);
 }
 
-// Invalid values identify the offending supported field. Recovery is explicit,
-// preserves the original bytes, and resets every connected window.
-const invalidValues = '{ "font-size": 99, "color-scheme": "light" }\n';
-await writeFile(configPath, invalidValues);
+// Future keys and unsupported enum/type/range values are tolerated on external
+// edits and initial page loads. Valid siblings apply; only unsupported fields
+// fall back to their defaults, without offering destructive recovery.
+const futureConfig = {
+  "future-preferences": {
+    version: 2,
+    nested: ["keep me", { enabled: true }, null],
+  },
+  "color-scheme": "future-neon",
+  "font-size": 99,
+  "diff-style": "future-layout",
+  "vim-mode": "enabled",
+  "file-view": { mode: "future" },
+  "hover-sidebars": true,
+  "files-expanded": false,
+  "log-revset": "all()",
+};
+await writeFile(configPath, JSON.stringify(futureConfig));
+await scheme("dark");
+await first.page.reload();
+await first.page.getByRole("button", { name: "Settings", exact: true }).click();
+await scheme("dark");
+for (const page of pages) {
+  await expect(page.getByLabel("Font size", { exact: true })).toHaveValue("13");
+  await expect(
+    page.getByRole("checkbox", { name: /Vim mode/ }),
+  ).not.toBeChecked();
+  await expect(
+    page.getByRole("checkbox", { name: /Reveal sidebars on hover/ }),
+  ).toBeChecked();
+  await expect(page.locator(".workspace")).toHaveClass(/files-collapsed/);
+  await expect(page.getByRole("dialog").getByRole("status")).toHaveCount(0);
+  await expect(
+    page.getByRole("button", { name: "Reset invalid settings…" }),
+  ).toHaveCount(0);
+}
+for (const url of [first.url, second.url]) {
+  const response = await fetch(`${url}/api/config`);
+  assert.equal(response.status, 200);
+  assert.deepEqual(configSchema.parse(await response.json()), {
+    ...defaultConfig,
+    "hover-sidebars": true,
+    "files-expanded": false,
+    "log-revset": "all()",
+  });
+}
+
+// Saving an unrelated preference must preserve the raw future content, not
+// replace it with the typed/defaulted effective config returned to browsers.
+await first.page
+  .getByRole("checkbox", { name: /Reveal sidebars on hover/ })
+  .uncheck();
+await expect
+  .poll(async () => JSON.parse(await readFile(configPath, "utf8")))
+  .toEqual({ ...futureConfig, "hover-sidebars": false });
+for (const page of pages) {
+  await expect(
+    page.getByRole("checkbox", { name: /Reveal sidebars on hover/ }),
+  ).not.toBeChecked();
+  await expect(page.getByRole("dialog")).toBeVisible();
+  await expect(page.getByRole("dialog").getByRole("status")).toHaveCount(0);
+  await expect(
+    page.getByRole("button", { name: "Reset invalid settings…" }),
+  ).toHaveCount(0);
+}
+await screenshot("unknown-config-values-supported.png");
+
+// Explicitly replacing one unsupported field leaves every other raw key alone.
+await first.page.getByLabel("Color scheme").selectOption("light");
+await scheme("light");
+await expect
+  .poll(async () => JSON.parse(await readFile(configPath, "utf8")))
+  .toEqual({
+    ...futureConfig,
+    "hover-sidebars": false,
+    "color-scheme": "light",
+  });
+
+// Only malformed documents need recovery. It is explicit, preserves the exact
+// original bytes, and resets every connected window.
+const malformedConfig = '{ "font-size": 15, "color-scheme": "light", }\n';
+await writeFile(configPath, malformedConfig);
 const recoveryButton = first.page.getByRole("button", {
   name: "Reset invalid settings…",
 });
 await expect(recoveryButton).toBeVisible();
 await expect(first.page.getByRole("dialog").getByRole("status")).toContainText(
-  "font-size",
+  "invalid JSON",
 );
 async function screenshot(name: string) {
   if (!process.env.JJ_STAMP_SCREENSHOTS) return;
@@ -215,16 +297,16 @@ async function screenshot(name: string) {
   await mkdir(directory, { recursive: true });
   await first.page.screenshot({ path: path.join(directory, name) });
 }
-await screenshot("invalid-settings-recovery.png");
+await screenshot("malformed-settings-recovery.png");
 await recoveryButton.click();
 await first.page.getByRole("button", { name: "Cancel", exact: true }).click();
-assert.equal(await readFile(configPath, "utf8"), invalidValues);
+assert.equal(await readFile(configPath, "utf8"), malformedConfig);
 assert.deepEqual(await readdir(root), ["config.json"]);
 await recoveryButton.click();
 await expect(
   first.page.getByText(/Reset shared settings to defaults/),
 ).toBeVisible();
-await screenshot("invalid-settings-confirmation.png");
+await screenshot("malformed-settings-confirmation.png");
 await first.page
   .getByRole("button", {
     name: "Back up and reset settings",
@@ -241,12 +323,12 @@ const backups = (await readdir(root)).filter((name) =>
 assert.equal(backups.length, 1);
 assert.equal(
   await readFile(path.join(root, backups[0]), "utf8"),
-  invalidValues,
+  malformedConfig,
 );
 for (const page of [second.page, third]) {
   await expect(page.getByRole("dialog").getByRole("status")).toHaveCount(0);
 }
-await screenshot("invalid-settings-reset-complete.png");
+await screenshot("malformed-settings-reset-complete.png");
 await first.page.getByLabel("Color scheme").selectOption("light");
 await scheme("light");
 await expect
@@ -279,5 +361,5 @@ await expect(first.page.locator("html")).toHaveAttribute(
 assert.deepEqual(first.errors, []);
 assert.deepEqual(second.errors, []);
 console.log(
-  "Config sync browser checks passed: two servers, three windows, background sync, merged edits, atomic disk saves, invalid edits, failed-save repair, confirmed reset with backup, subsequent save, deletion/recreation, reload, ignored browser cache.",
+  "Config sync browser checks passed: two servers, three windows, background sync, merged edits, atomic disk saves, tolerant future values on external edit/reload, raw unknown preservation, explicit field replacement, malformed edits, failed-save repair, confirmed reset with backup, subsequent save, deletion/recreation, reload, ignored browser cache.",
 );

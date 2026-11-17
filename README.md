@@ -98,7 +98,8 @@ changing the selected revision. The server checks this one small file every
 250ms while settings streams are connected; this does not poll repositories or
 run jj commands.
 
-The file is a JSON object with typed values. Omitted keys use defaults; for example:
+The file must be valid UTF-8 JSON, with an object at the root, at most 64KiB.
+Omitted keys use defaults; for example:
 
 ```json
 {
@@ -120,18 +121,27 @@ The file is a JSON object with typed values. Omitted keys use defaults; for exam
 ```
 
 Use a listed color-scheme key, integer font sizes from 10–24, sidebar widths of
-at least 120px (Files) / 160px (Log), and a split ratio from 20–80. Unknown keys,
-wrong types, invalid JSON and files larger than 64KiB are rejected. A malformed
-edit leaves each connected window on its last valid settings and shows an error;
-repair the file to resume sync. Removing the file resets preferences to defaults.
-Settings identifies invalid supported fields and distinguishes malformed JSON
-from unsupported values. If you cannot repair an invalid file, choose **Reset
-invalid settings…** in Settings, then **Back up and reset settings**. This resets
-shared preferences in every window, but first saves the original bytes to a
-private `config.json.<unique-id>.invalid.bak` file in the same directory. Canceling
-does not change the file. Valid, unreadable, nonregular, and oversized files
-cannot be reset this way. After a repair or reset, failed edits are not replayed;
-make any desired changes again.
+at least 120px (Files) / 160px (Log), and a split ratio from 20–80. Unknown keys
+are allowed for compatibility with newer versions. A known field with an
+unsupported value (including an unknown enum option, wrong type or out-of-range
+number) uses its default without an error; valid sibling fields still apply.
+Unknown keys and unsupported values stay in the file when unrelated preferences
+are saved. Only explicitly changed keys are replaced. The HTTP settings API
+remains strict: patches must contain only supported keys and typed values, and
+responses and settings events contain only the typed, effective settings.
+
+Malformed JSON, invalid UTF-8, a non-object root, and oversized files are
+rejected. Such edits leave each connected window on its last valid settings and
+show an error; repair the file to resume sync. Removing the file resets
+preferences to defaults. If you cannot repair malformed JSON, invalid UTF-8 or
+a non-object root, choose **Reset invalid settings…** in Settings, then **Back up
+and reset settings**. This resets shared preferences in every window, but first
+saves the original bytes to a private `config.json.<unique-id>.invalid.bak` file
+in the same directory. Canceling does not change the file. Valid objects (even
+with unknown keys or unsupported values), unreadable, nonregular, and oversized
+files cannot be reset this way.
+After a repair or reset, failed edits are not replayed; make any desired changes
+again.
 A manually edited log revset must be valid for the repositories using it; unlike
 the Settings dialog, a text editor cannot validate it against jj before saving.
 Unsaved log-filter drafts in open dialogs are preserved when other windows edit
@@ -147,6 +157,10 @@ server crash during a save may leave `config.json.lock`; if saves report a lock
 timeout, stop all jj-stamp servers before removing that leftover file. Existing
 browser-storage preferences are ignored, not imported; reselect them once in
 Settings if needed.
+
+Saves preserve numeric literals in unknown values without rounding them. If a
+save would grow the preserved config beyond 64KiB, it fails without replacing
+the file; reduce the file size before trying again.
 
 ## Safety and recovery
 
