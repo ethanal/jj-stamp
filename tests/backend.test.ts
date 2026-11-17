@@ -318,7 +318,8 @@ test("missing newlines and regular mode changes are supported; binary and malfor
   const goodPatch = state.files[0].patch;
   assert.equal(
     parseFile(
-      "old mode 100644\nnew mode 100755\n" + goodPatch,
+      "old mode 100644\nnew mode 100755\n" +
+        goodPatch.replace(/^(index \S+) 100(?:644|755)$/m, "$1"),
       state.files[0].path,
     ).newMode,
     "100755",
