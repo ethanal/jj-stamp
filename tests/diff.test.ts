@@ -34,6 +34,28 @@ test("native diff parser preserves exact rows, coordinates and whitespace", () =
   assert.equal(ranges([1, 2, 4, 6, 7, 8]), "1-2,4,6-8");
 });
 
+test("executable regular-file metadata is supported, but binary and nonregular files are not", () => {
+  for (const mode of ["100644", "100755"]) {
+    const modified = patch.replace(
+      "--- a/a.ts",
+      `index abc..def ${mode}\n--- a/a.ts`,
+    );
+    assert.deepEqual(parseFile(modified, "a.ts"), parseFile(patch, "a.ts"));
+    for (const kind of ["new", "deleted"]) {
+      const added = `diff --git a/a.ts b/a.ts\n${kind} file mode ${mode}\nindex abc..def\n--- ${kind === "new" ? "/dev/null" : "a/a.ts"}\n+++ ${kind === "deleted" ? "/dev/null" : "b/a.ts"}\n@@ -${kind === "new" ? "0,0" : "1"} +${kind === "deleted" ? "0,0" : "1"} @@\n${kind === "new" ? "+" : "-"}text\n`;
+      assert.equal(parseFile(added, "a.ts").hunks.length, 1);
+    }
+  }
+  for (const metadata of [
+    "index abc..def 120000",
+    "new file mode 120000",
+    "deleted file mode 160000",
+    "old mode 100644\nnew mode 100755",
+    "new file mode 100755\nBinary files /dev/null and b/a.ts differ",
+  ])
+    assert.throws(() => parseFile(`${metadata}\n${patch}`, "a.ts"));
+});
+
 test("native diff parser refuses malformed counts, unsafe coordinates and mismatched paths", () => {
   for (const broken of [
     patch.replace("-1,4", "-1,3"),

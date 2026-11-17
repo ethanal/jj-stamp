@@ -140,6 +140,49 @@ test("creates missing parents, removes files, and preserves absent and empty-fil
   assert.equal(await readFile(path.join(f.right, "new"), "utf8"), "new");
 });
 
+for (const mode of [0o755, 0o555]) {
+  test(`preserves executable scripts with ${mode.toString(8)} scratch permissions`, async (t) => {
+    const f = await fixture(t, [
+      edit("modified.sh"),
+      { ...edit("added.sh"), base: null },
+      { ...edit("deleted.sh"), source: null },
+    ]);
+    for (const file of f.plan.files) {
+      if (file.base !== null) await chmod(path.join(f.left, file.path), mode);
+      if (file.source !== null)
+        await chmod(path.join(f.right, file.path), mode);
+    }
+    await f.apply();
+    for (const file of f.plan.files) {
+      assert.equal(
+        await readFile(path.join(f.right, file.path), "utf8"),
+        "selected\n",
+      );
+      assert.equal(
+        (await stat(path.join(f.right, file.path))).mode & 0o777,
+        0o755,
+      );
+      if (file.base !== null)
+        assert.equal(
+          (await stat(path.join(f.left, file.path))).mode & 0o777,
+          mode,
+        );
+    }
+  });
+}
+
+test("rejects executable-bit changes before writing any file", async (t) => {
+  for (const side of ["left", "right"] as const) {
+    const f = await fixture(t, [edit("first"), edit("changed-mode")]);
+    await chmod(path.join(f[side], "changed-mode"), 0o755);
+    await assert.rejects(f.apply(), /mode changes are not supported/);
+    assert.equal(
+      await readFile(path.join(f.right, "first"), "utf8"),
+      "source\n",
+    );
+  }
+});
+
 const renameEdits = (): DiffEditorPlan["files"] => [
   {
     path: "old/file.txt",
@@ -267,7 +310,7 @@ for (const side of ["left", "right"] as const) {
     "nested",
     "file",
     "hardlink",
-    "executable",
+    "special-mode",
     "fifo",
   ]) {
     test(`${side} rejects ${kind} without touching outside files`, async (t) => {
@@ -291,7 +334,7 @@ for (const side of ["left", "right"] as const) {
         await symlink(f.repository, path.join(f[side], "dir"));
       } else {
         const target = path.join(f[side], "dir/a");
-        if (kind === "executable") await chmod(target, 0o755);
+        if (kind === "special-mode") await chmod(target, 0o4755);
         else {
           await rm(target);
           if (kind === "file") await symlink(outside, target);

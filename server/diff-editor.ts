@@ -153,14 +153,14 @@ function canonicalScratchRoot(
 async function readRegular(
   filename: string,
   manifest = false,
-): Promise<Buffer> {
+): Promise<{ bytes: Buffer; mode: number }> {
   const before = await lstat(filename);
-  // jj can make non-executable inputs read-only. Never chmod an input inode.
+  // jj can make inputs read-only. Never chmod an input inode.
   const mode = before.mode & 0o7777;
   if (
     !before.isFile() ||
     before.nlink !== 1 ||
-    (manifest ? mode !== 0o600 : mode !== 0o644 && mode !== 0o444)
+    (manifest ? mode !== 0o600 : ![0o644, 0o444, 0o755, 0o555].includes(mode))
   ) {
     fail(`unsafe regular file or mode: ${filename}`);
   }
@@ -178,7 +178,11 @@ async function readRegular(
       after.mode !== before.mode
     )
       fail(`file changed while opening: ${filename}`);
-    return await handle.readFile();
+    return {
+      bytes: await handle.readFile(),
+      // Preserve the executable bit, not jj's temporary read-only permissions.
+      mode: mode & 0o111 ? 0o755 : 0o644,
+    };
   } finally {
     await handle.close();
   }
@@ -188,7 +192,8 @@ async function verifySide(
   root: string,
   plan: DiffEditorPlan,
   side: "base" | "source",
-): Promise<void> {
+): Promise<Map<string, number>> {
+  const modes = new Map<string, number>();
   const expected = new Map(
     plan.files
       .filter((file) => file[side] !== null)
@@ -215,8 +220,10 @@ async function verifySide(
       } else {
         const bytes = expected.get(entry);
         if (bytes === undefined) fail(`unexpected ${side} file: ${entry}`);
-        if (!(await readRegular(absolute)).equals(Buffer.from(bytes, "base64")))
+        const input = await readRegular(absolute);
+        if (!input.bytes.equals(Buffer.from(bytes, "base64")))
           fail(`${side} bytes mismatch: ${entry}`);
+        modes.set(entry, input.mode);
         expected.delete(entry);
       }
     }
@@ -224,6 +231,7 @@ async function verifySide(
   await walk("");
   if (expected.size)
     fail(`missing ${side} file: ${expected.keys().next().value}`);
+  return modes;
 }
 
 /** Validate both entire restricted inventories before changing any right-side file.
@@ -238,7 +246,7 @@ export async function applyDiffEditor(
     fail("manifest path must be absolute and canonical");
   await directory(path.dirname(planPath));
   const plan = validateDiffEditorPlan(
-    JSON.parse((await readRegular(planPath, true)).toString("utf8")),
+    JSON.parse((await readRegular(planPath, true)).bytes.toString("utf8")),
   );
   await directory(plan.repository);
   const tempPrefix = path.resolve(os.tmpdir());
@@ -255,8 +263,12 @@ export async function applyDiffEditor(
     if (overlaps(a, b) || overlaps(b, a))
       fail("scratch roots must be distinct and cannot overlap the repository");
   }
-  await verifySide(left, plan, "base");
-  await verifySide(right, plan, "source");
+  const baseModes = await verifySide(left, plan, "base");
+  const sourceModes = await verifySide(right, plan, "source");
+  for (const [name, mode] of baseModes) {
+    if (sourceModes.has(name) && sourceModes.get(name) !== mode)
+      fail(`mode changes are not supported: ${name}`);
+  }
 
   const created: string[] = [];
   try {
@@ -277,11 +289,14 @@ export async function applyDiffEditor(
       }
       await directory(parent);
       const destination = path.join(right, file.path);
+      // An absent source (partial deletion) must inherit the base file's mode.
+      const mode =
+        sourceModes.get(file.path) ?? baseModes.get(file.path) ?? 0o644;
       if (file.source !== null) {
+        const input = await readRegular(destination);
         if (
-          !(await readRegular(destination)).equals(
-            Buffer.from(file.source, "base64"),
-          )
+          !input.bytes.equals(Buffer.from(file.source, "base64")) ||
+          input.mode !== mode
         )
           fail(`source changed before write: ${file.path}`);
       } else {
@@ -308,7 +323,7 @@ export async function applyDiffEditor(
         );
         try {
           await handle.writeFile(Buffer.from(file.result, "base64"));
-          await handle.chmod(0o644);
+          await handle.chmod(mode);
         } finally {
           await handle.close();
         }
