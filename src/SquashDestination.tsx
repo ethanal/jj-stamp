@@ -8,6 +8,7 @@ import {
   type RefObject,
 } from "react";
 import { createPortal } from "react-dom";
+import { SquashIcon } from "./SquashIcon";
 import type { Revision } from "./types";
 import "./squash-destination.css";
 
@@ -285,11 +286,14 @@ export function SquashDestination({
               title={parentUnavailable || parent?.description}
               onClick={() => choose(onParent, !!parentUnavailable)}
             >
-              <span className="squash-destination-radio" aria-hidden="true">
-                {mode === "parent" ? "◉" : "○"}
+              <span className="squash-destination-icon" aria-hidden="true">
+                <SquashIcon />
               </span>
-              <span>
+              <span className="squash-destination-option-label">
                 <strong>Parent · {parent?.changeId.slice(0, 8) ?? "—"}</strong>
+              </span>
+              <span className="squash-destination-check" aria-hidden="true">
+                {mode === "parent" ? "✓" : ""}
               </span>
             </button>
             <button
@@ -304,10 +308,10 @@ export function SquashDestination({
               }
               onClick={() => choose(onPick, !canPick)}
             >
-              <span className="squash-destination-radio" aria-hidden="true">
+              <span className="squash-destination-icon" aria-hidden="true">
                 ↗
               </span>
-              <span>
+              <span className="squash-destination-option-label">
                 <strong>Choose revision in log…</strong>
               </span>
             </button>

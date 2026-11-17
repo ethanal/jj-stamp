@@ -70,6 +70,7 @@
 
 .squash-destination-menu [role^="menuitem"] {
   display: flex;
+  align-items: center;
   gap: 8px;
   width: 100%;
   padding: 8px;
@@ -80,7 +81,8 @@
   text-align: left;
   font: inherit;
 }
-.squash-destination-menu [role^="menuitem"] > span:last-child {
+.squash-destination-option-label {
+  flex: 1;
   min-width: 0;
 }
 .squash-destination-menu strong {
@@ -99,7 +101,14 @@
   opacity: 0.5;
   cursor: not-allowed;
 }
-.squash-destination-radio {
+.squash-destination-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 16px;
+  color: var(--modified);
+}
+.squash-destination-check {
   flex: 0 0 14px;
   color: var(--modified);
 }

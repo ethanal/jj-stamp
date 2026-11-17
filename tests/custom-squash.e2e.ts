@@ -123,6 +123,21 @@ async function openMenu() {
   await expect(parentOption()).toHaveAccessibleName(
     `Parent · ${parent.slice(0, 8)}`,
   );
+  await expect(parentOption().locator("svg")).toHaveAttribute(
+    "aria-hidden",
+    "true",
+  );
+  assert.equal(
+    await parentOption().locator("svg").innerHTML(),
+    await page
+      .getByRole("button", { name: "Squash file review.txt", exact: true })
+      .locator("svg")
+      .innerHTML(),
+    "Parent uses the same down-arrow-into-circle icon as file squash",
+  );
+  await expect(parentOption().locator(".squash-destination-check")).toHaveText(
+    (await parentOption().getAttribute("aria-checked")) === "true" ? "✓" : "",
+  );
   await expect(chooseAction()).toHaveAccessibleName("Choose revision in log…");
   const copy = await menu.evaluate((element) => {
     const clone = element.cloneNode(true) as HTMLElement;
@@ -185,7 +200,11 @@ async function applyFilter(revset: string) {
 }
 let releaseSquash: (() => void) | undefined;
 try {
-  await page.goto(url);
+  // Allow cold Vite startup; readiness is asserted by the visible diff below.
+  await page.goto(url, {
+    waitUntil: "domcontentloaded",
+    timeout: 60_000,
+  });
   await expect(addition(3)).toBeVisible({ timeout: 30_000 });
   await expect(reviewedId()).toHaveAttribute("title", source);
   await expect(row(workingCopy)).toBeVisible();
@@ -217,6 +236,7 @@ try {
   await expect(menu).toBeVisible();
   await expect(parentOption()).toHaveAttribute("aria-checked", "true");
   await expect(customOption()).toHaveCount(0);
+  await screenshot("parent-menu");
   await page.keyboard.press("ArrowDown");
   await expect(chooseAction()).toBeFocused();
   await page.keyboard.press("ArrowUp");
