@@ -325,7 +325,7 @@ export function createTerminalServer(
           rows,
           name: "xterm-256color",
           handleFlowControl: false,
-          env: { ...process.env, TERM: "xterm-256color" },
+          env: { ...process.env, TERM: "xterm-256color", PWD: cwd },
         });
         exitListener = terminal.onExit(({ exitCode }) => {
           didExit = true;

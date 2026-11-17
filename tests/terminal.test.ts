@@ -229,6 +229,32 @@ test("terminal input reaches foreground programs, including Ctrl-C", async (t) =
   await c.output(/AFTER_INTERRUPT/);
 });
 
+test("shell startup inherits the canonical repository root as both cwd and PWD", async (t) => {
+  const local = await fixture(t);
+  const shell = path.join(local.root, "startup root probe");
+  // Inspect the raw startup environment before a shell can repair PWD itself.
+  await writeFile(
+    shell,
+    `#!${process.execPath}\nprocess.stdout.write("STARTUP_ROOT:" + JSON.stringify({ cwd: process.cwd(), pwd: process.env.PWD }) + "\\n");\n`,
+  );
+  await chmod(shell, 0o700);
+  await writeFile(local.configPath, JSON.stringify({ shell }));
+  const previous = process.env.PWD;
+  process.env.PWD = local.root;
+  t.after(() => {
+    if (previous === undefined) delete process.env.PWD;
+    else process.env.PWD = previous;
+  });
+  const c = client(t, local.url);
+  await c.frame("ready");
+  const output = await c.output(/STARTUP_ROOT:(\{[^\r\n]*\})/);
+  assert.deepEqual(JSON.parse(output[1]), {
+    cwd: local.repo,
+    pwd: local.repo,
+  });
+  assert.equal(process.env.PWD, local.root, "do not change the backend's PWD");
+});
+
 test("tabs have independent shells; disconnect terminates only its own PTY", async (t) => {
   const local = await fixture(t);
   const a = client(t, local.url);

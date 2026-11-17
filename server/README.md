@@ -17,7 +17,9 @@ Origin. Cross-site upgrades, proxy-origin substitutions and unknown upgrade
 paths are rejected before allocating a terminal or reading repository metadata.
 
 Each accepted socket lazily starts one real PTY in the canonical workspace root,
-without snapshotting jj or changing the selected revision. The shared `shell`
+with both its working directory and `PWD` set to that root, even when the backend
+was launched from a subdirectory or given a different repository via `-R`.
+This does not snapshot jj or change the selected revision. The shared `shell`
 preference selects one literal executable (paths containing spaces are valid),
 with no command parsing, interpolation or arguments. Empty uses `$SHELL`, then
 the operating-system user's shell, then `/bin/sh`. The shell inherits the

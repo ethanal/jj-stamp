@@ -7,7 +7,9 @@ import {
   mkdir,
   mkdtemp,
   readFile,
+  realpath,
   rm,
+  symlink,
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -23,11 +25,13 @@ const directory = await mkdtemp(
   path.join(tmpdir(), "jj-stamp-terminal-browser-"),
 );
 resources.defer(() => rm(directory, { recursive: true, force: true }));
-const repoPath = await createDemo(directory);
+const repoPath = await realpath(await createDemo(directory));
+const launchPath = path.join(directory, "linked-subdirectory");
+await symlink(path.join(repoPath, "src"), launchPath);
 const configPath = path.join(directory, "config.json");
 await writeFile(configPath, JSON.stringify({ shell: "/bin/sh" }));
 const local = await startLocalServer({
-  service: new ReviewService({ repoPath }),
+  service: new ReviewService({ repoPath: launchPath }),
   configPath,
   assetsDir: path.resolve("dist/client"),
   port: 0,
@@ -465,8 +469,15 @@ await page.keyboard.press("t");
 await expect(input).toBeFocused();
 assert.equal(connections, 1);
 
-await command("test -t 0 && test -t 1 && printf '\\nTTY_OK\\n'; pwd", repoPath);
+await command(
+  "test -t 0 && test -t 1 && printf '\\nTTY_OK\\n'",
+  "\r\nTTY_OK\r\n",
+);
 assert.ok(output.includes("TTY_OK"));
+await command(
+  'printf \'\\nREPO_ROOT:%s:%s:END\\n\' "$(pwd -P)" "$PWD"',
+  `\r\nREPO_ROOT:${repoPath}:${repoPath}:END\r\n`,
+);
 await command(
   "export STAMP_PERSIST=kept; printf '\\nREADY_%s\\n' \"$STAMP_PERSIST\"",
   "READY_kept",
@@ -625,6 +636,10 @@ await page.keyboard.press("Escape");
 await page.keyboard.press("t");
 assert.equal(connections, 1);
 await command("printf '\\nSTILL_%s\\n' \"$STAMP_PERSIST\"", "STILL_kept");
+await command(
+  "cd src; printf '\\nNESTED:%s:END\\n' \"$(pwd -P)\"",
+  `\r\nNESTED:${path.join(repoPath, "src")}:END\r\n`,
+);
 
 // Even a nonzero clean shell exit automatically starts exactly one fresh native
 // session, clears old emulator memory, and adopts the saved executable.
@@ -655,6 +670,10 @@ await command(
 await command(
   "printf '\\nRESET_%s\\n' \"${STAMP_PERSIST-unset}\"",
   "RESET_unset",
+);
+await command(
+  'printf \'\\nREPO_ROOT:%s:%s:END\\n\' "$(pwd -P)" "$PWD"',
+  `\r\nREPO_ROOT:${repoPath}:${repoPath}:END\r\n`,
 );
 
 // A failed executable starts no retry loop. Saving a valid setting alone must
