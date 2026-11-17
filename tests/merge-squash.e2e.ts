@@ -180,7 +180,12 @@ async function assertOriginalTrees() {
 }
 
 try {
-  await page.goto(url);
+  // Cold Vite transforms can outlast the browser's default navigation timeout.
+  // App readiness is asserted below rather than waiting for every load resource.
+  await page.goto(url, {
+    waitUntil: "domcontentloaded",
+    timeout: 60_000,
+  });
   await expect(selectedLine()).toBeVisible({ timeout: 30_000 });
   await expect(trigger).toHaveText("Choose revision…⌄");
   await expect(trigger).toHaveAttribute("title", reason);
