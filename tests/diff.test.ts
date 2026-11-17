@@ -50,7 +50,6 @@ test("executable regular-file metadata is supported, but binary and nonregular f
     "index abc..def 120000",
     "new file mode 120000",
     "deleted file mode 160000",
-    "old mode 100644\nnew mode 100755",
     "new file mode 100755\nBinary files /dev/null and b/a.ts differ",
   ])
     assert.throws(() => parseFile(`${metadata}\n${patch}`, "a.ts"));

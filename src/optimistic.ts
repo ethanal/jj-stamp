@@ -1,24 +1,71 @@
 import type { DiffFile, Hunk, RepoState, Row, Selections } from "./types";
-import { pureRenameSelectionId } from "./file-selection";
+import { metadataSelectionId } from "./file-selection";
 
-/** Coordinates are in the selected diff. Renames use line 0 and the old path as text. */
+/** Coordinates are in the selected diff; metadata changes use line 0. */
 export type RowRef = {
   path: string;
-  kind: "+" | "-" | "rename";
+  kind: "+" | "-" | "rename" | "copy" | "mode";
   line: number;
   text: string;
   noNewline?: boolean;
+  /** File metadata carried along with the first text selection. */
+  metadata?: string;
 };
 export type SquashSpec = { id: string; lines: number[] };
 
 const key = (ref: RowRef): string =>
-  JSON.stringify([ref.path, ref.kind, ref.line, ref.text, !!ref.noNewline]);
+  JSON.stringify([
+    ref.path,
+    ref.kind,
+    ref.line,
+    ref.text,
+    !!ref.noNewline,
+    ref.metadata ?? null,
+  ]);
 
-function renameRef(file: DiffFile): RowRef {
-  return { path: file.path, kind: "rename", line: 0, text: file.oldPath! };
+function modeText(file: DiffFile): string | undefined {
+  return file.oldMode !== undefined && file.newMode !== undefined
+    ? JSON.stringify([file.oldMode, file.newMode])
+    : undefined;
 }
 
-function rowRef(path: string, row: Row): RowRef {
+function metadataRef(file: DiffFile): RowRef | undefined {
+  const mode = modeText(file);
+  const kind =
+    file.oldPath !== undefined
+      ? "rename"
+      : file.copyFrom !== undefined
+        ? "copy"
+        : mode
+          ? "mode"
+          : undefined;
+  if (!kind) return;
+  const from = file.oldPath ?? file.copyFrom;
+  return {
+    path: file.path,
+    kind,
+    line: 0,
+    text:
+      kind === "mode"
+        ? mode!
+        : mode
+          ? JSON.stringify([from, file.oldMode, file.newMode])
+          : from!,
+  };
+}
+
+function metadataFingerprint(file: DiffFile): string | undefined {
+  return metadataRef(file)
+    ? JSON.stringify([
+        file.oldPath ?? null,
+        file.copyFrom ?? null,
+        file.oldMode ?? null,
+        file.newMode ?? null,
+      ])
+    : undefined;
+}
+
+function rowRef(file: DiffFile, row: Row): RowRef {
   const kind = row.raw[0];
   if (kind !== "+" && kind !== "-")
     throw new Error(
@@ -29,12 +76,14 @@ function rowRef(path: string, row: Row): RowRef {
     throw new Error(
       "Selection must identify a changed row with valid source coordinates.",
     );
+  const metadata = metadataFingerprint(file);
   return {
-    path,
+    path: file.path,
     kind,
     line,
     text: row.raw.slice(1),
     ...(row.noNewline ? { noNewline: true } : {}),
+    ...(metadata ? { metadata } : {}),
   };
 }
 
@@ -46,8 +95,11 @@ function checkedKeys(refs: RowRef[]): Set<string> {
       typeof ref.path !== "string" ||
       typeof ref.text !== "string" ||
       (ref.noNewline !== undefined && typeof ref.noNewline !== "boolean") ||
-      (ref.kind === "rename"
-        ? ref.line !== 0 || ref.noNewline !== undefined
+      (ref.metadata !== undefined && typeof ref.metadata !== "string") ||
+      (["rename", "copy", "mode"].includes(ref.kind)
+        ? ref.line !== 0 ||
+          ref.noNewline !== undefined ||
+          ref.metadata !== undefined
         : (ref.kind !== "+" && ref.kind !== "-") ||
           !Number.isSafeInteger(ref.line) ||
           ref.line < 1)
@@ -93,7 +145,7 @@ export function refsFromSelection(
       const row = rowsByIndex.get(index);
       if (!row || ambiguous.has(index))
         throw new Error("Selected row no longer exists or is ambiguous.");
-      refs.push(rowRef(entry.file.path, row));
+      refs.push(rowRef(entry.file, row));
     }
   }
   // Also verifies uniqueness across hunks and the exact remapping used at dispatch.
@@ -101,14 +153,14 @@ export function refsFromSelection(
   return refs;
 }
 
-/** Select all remaining text changes, or a pure rename, in the optimistic view. */
+/** Select all remaining text changes, or metadata-only changes, in the optimistic view. */
 export function refsFromFile(state: RepoState, path: string): RowRef[] {
   const file = state.files.find((entry) => entry.path === path);
   if (!file) throw new Error("Selected file no longer exists.");
   if (file.unsupported) throw new Error("Selected file is unsupported.");
   if (file.squashUnsupported) throw new Error(file.squashUnsupported);
-  if (pureRenameSelectionId(file) !== undefined) {
-    const refs = [renameRef(file)];
+  if (metadataSelectionId(file) !== undefined) {
+    const refs = [metadataRef(file)!];
     specsForRefs(state, refs);
     return refs;
   }
@@ -131,16 +183,19 @@ export function specsForRefs(state: RepoState, refs: RowRef[]): SquashSpec[] {
   const matches = new Set<string>();
   const specs: SquashSpec[] = [];
   const ids = new Set<string>();
+  const paths = new Set(refs.map((ref) => ref.path));
   for (const file of state.files) {
-    const renameId = pureRenameSelectionId(file);
-    if (renameId !== undefined) {
-      const renameKey = key(renameRef(file));
-      if (wanted.has(renameKey)) {
+    if (file.squashUnsupported && paths.has(file.path))
+      throw new Error(file.squashUnsupported);
+    const metadataId = metadataSelectionId(file);
+    if (metadataId !== undefined) {
+      const metadataKey = key(metadataRef(file)!);
+      if (wanted.has(metadataKey)) {
         if (file.squashUnsupported) throw new Error(file.squashUnsupported);
-        if (matches.has(renameKey))
-          throw new Error("Rename reference is ambiguous.");
-        matches.add(renameKey);
-        specs.push({ id: renameId, lines: [] });
+        if (matches.has(metadataKey))
+          throw new Error("Metadata reference is ambiguous.");
+        matches.add(metadataKey);
+        specs.push({ id: metadataId, lines: [] });
       }
     }
     for (const hunk of file.hunks) {
@@ -152,7 +207,7 @@ export function specsForRefs(state: RepoState, refs: RowRef[]): SquashSpec[] {
         indexCounts.set(row.index, (indexCounts.get(row.index) ?? 0) + 1);
       for (const row of hunk.rows) {
         if (row.raw[0] !== "+" && row.raw[0] !== "-") continue;
-        const value = key(rowRef(file.path, row));
+        const value = key(rowRef(file, row));
         if (!wanted.has(value)) continue;
         if (file.unsupported) throw new Error("Selected file is unsupported.");
         if (file.squashUnsupported) throw new Error(file.squashUnsupported);
@@ -183,11 +238,12 @@ export function specsForRefs(state: RepoState, refs: RowRef[]): SquashSpec[] {
 export function changeSignature(state: RepoState): string {
   const keys: string[] = [];
   for (const file of state.files) {
-    if (file.oldPath !== undefined) keys.push(key(renameRef(file)));
+    const metadata = metadataRef(file);
+    if (metadata) keys.push(key(metadata));
     for (const hunk of file.hunks)
       for (const row of hunk.rows)
         if (row.raw[0] === "+" || row.raw[0] === "-")
-          keys.push(key(rowRef(file.path, row)));
+          keys.push(key(rowRef(file, row)));
   }
   return JSON.stringify(keys.sort());
 }
@@ -203,13 +259,14 @@ export function combineSquashRefs(
   const wanted = checkedKeys(next);
   const combined = [...selected];
   const matched = new Set<string>();
+  const affected = new Set(selected.map((ref) => ref.path));
   for (const file of state.files) {
-    if (pureRenameSelectionId(file) !== undefined) {
-      const original = renameRef(file);
+    if (metadataSelectionId(file) !== undefined) {
+      const original = metadataRef(file)!;
       const value = key(original);
       if (!moved.has(value) && wanted.has(value)) {
         if (matched.has(value))
-          throw new Error("Rename reference is ambiguous.");
+          throw new Error("Metadata reference is ambiguous.");
         matched.add(value);
         combined.push(original);
       }
@@ -220,13 +277,14 @@ export function combineSquashRefs(
     for (const hunk of file.hunks)
       for (const row of hunk.rows) {
         if (row.raw[0] !== "+" && row.raw[0] !== "-") continue;
-        const original = rowRef(file.path, row);
+        const original = rowRef(file, row);
         if (moved.has(key(original))) {
           delta += original.kind === "+" ? 1 : -1;
           continue;
         }
         const projected = key({
           ...original,
+          ...(affected.has(file.path) ? { metadata: undefined } : {}),
           line: original.line + (original.kind === "-" ? delta : 0),
         });
         if (!wanted.has(projected)) continue;
@@ -320,7 +378,7 @@ function projectFile(
       const kind = row.raw[0];
       if (kind !== " " && kind !== "+" && kind !== "-")
         throw new Error("Cannot project unsupported patch rows.");
-      const move = kind !== " " && selected.has(key(rowRef(file.path, row)));
+      const move = kind !== " " && selected.has(key(rowRef(file, row)));
       if (move && kind === "-") {
         delta--;
         continue;
@@ -354,10 +412,21 @@ function projectFile(
   if (!hunks.length) return null;
   const isNew = /^--- \/dev\/null$/m.test(file.patch) && movedAdditions === 0;
   const isDeleted = /^\+\+\+ \/dev\/null$/m.test(file.patch);
+  const indexHeader = /^index (\S+)(?: (100644|100755))?$/m.exec(file.patch);
+  const mode =
+    file.newMode ??
+    indexHeader?.[2] ??
+    /^(?:new|deleted) file mode (100644|100755)$/m.exec(file.patch)?.[1] ??
+    "100644";
   const prefix = [
     `diff --git a/${file.path} b/${file.path}`,
-    ...(isNew ? ["new file mode 100644"] : []),
-    ...(isDeleted ? ["deleted file mode 100644"] : []),
+    ...(isNew ? [`new file mode ${mode}`] : []),
+    ...(isDeleted ? [`deleted file mode ${mode}`] : []),
+    // Parent content changed; original blob hashes are no longer valid. An
+    // all-zero index preserves non-default/transition modes for rendering only.
+    ...(!isNew && !isDeleted && (mode === "100755" || file.newMode)
+      ? [`index 0000000..0000000 ${mode}`]
+      : []),
     `--- ${isNew ? "/dev/null" : `a/${file.path}`}`,
     `+++ ${isDeleted ? "/dev/null" : `b/${file.path}`}`,
   ];
@@ -386,9 +455,12 @@ function projectFile(
         ]),
       ].join("\n") + "\n",
   };
-  // The first selected edits carry the rename into the parent. Remaining
-  // source edits are ordinary modifications at the destination path.
+  // First selection carries the rename/copy base and mode into the parent.
+  // Remaining edits are ordinary modifications at the destination path.
   delete projected.oldPath;
+  delete projected.copyFrom;
+  delete projected.oldMode;
+  delete projected.newMode;
   return projected;
 }
 

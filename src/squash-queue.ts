@@ -123,7 +123,9 @@ export class SquashQueue {
       );
     if (!view) throw new Error("Load repository state before squashing.");
     if (!refs.length)
-      throw new Error("Select at least one changed line or rename to squash.");
+      throw new Error(
+        "Select at least one changed line, rename, copy, or mode change to squash.",
+      );
     const target = targetChangeId ?? view.parent?.changeId;
     const pending = this.jobs[0];
     if (pending && target !== pending.targetChangeId)
@@ -297,18 +299,33 @@ export class SquashQueue {
         const view = idle
           ? { ...result.state, files: this.snapshot.view!.files }
           : this.snapshot.view;
-        const renameCount = job.refs.filter(
-          (ref) => ref.kind === "rename",
-        ).length;
-        const lineCount = job.count - renameCount;
         const summary = [
-          ...(lineCount
-            ? [`${lineCount} ${lineCount === 1 ? "line" : "lines"}`]
-            : []),
-          ...(renameCount
-            ? [`${renameCount} ${renameCount === 1 ? "rename" : "renames"}`]
-            : []),
-        ].join(" and ");
+          [
+            "line",
+            "lines",
+            job.refs.filter((ref) => ref.kind === "+" || ref.kind === "-")
+              .length,
+          ],
+          [
+            "rename",
+            "renames",
+            job.refs.filter((ref) => ref.kind === "rename").length,
+          ],
+          [
+            "copy",
+            "copies",
+            job.refs.filter((ref) => ref.kind === "copy").length,
+          ],
+          [
+            "mode change",
+            "mode changes",
+            job.refs.filter((ref) => ref.kind === "mode").length,
+          ],
+        ]
+          .flatMap(([singular, plural, count]) =>
+            count ? [`${count} ${count === 1 ? singular : plural}`] : [],
+          )
+          .join(" and ");
         this.publish({
           confirmed: result.state,
           view,

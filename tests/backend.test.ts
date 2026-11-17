@@ -308,7 +308,7 @@ test("serialized duplicate squash requests execute once only", async () => {
   assert.equal(after.canUndo, true);
 });
 
-test("missing newlines are supported; mode, binary and rename structures fail closed", async () => {
+test("missing newlines and regular mode changes are supported; binary and malformed renames fail closed", async () => {
   const { service, state, root } = await fixture();
   await writeFile(path.join(root, "src/notifications.ts"), "no newline");
   const next = await service.getState();
@@ -316,8 +316,15 @@ test("missing newlines are supported; mode, binary and rename structures fail cl
   assert.equal(supported.unsupported, undefined);
   assert.equal(supported.hunks.at(-1)!.rows.at(-1)!.noNewline, true);
   const goodPatch = state.files[0].patch;
+  assert.equal(
+    parseFile(
+      "old mode 100644\nnew mode 100755\n" + goodPatch,
+      state.files[0].path,
+    ).newMode,
+    "100755",
+  );
   for (const extra of [
-    "old mode 100644\nnew mode 100755\n",
+    "old mode 100644\nnew mode 120000\n",
     "Binary files a/x and b/x differ\n",
     "rename from x\nrename to y\n",
   ]) {

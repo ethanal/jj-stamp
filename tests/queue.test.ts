@@ -10,7 +10,7 @@ import {
 } from "../src/optimistic.ts";
 import { RequestError } from "../src/api.ts";
 import { SquashQueue, type SquashTransport } from "../src/squash-queue.ts";
-import type { RepoState } from "../src/types.ts";
+import type { DiffFile, RepoState } from "../src/types.ts";
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -1338,3 +1338,119 @@ test("destination eligibility is checked again before a waiting batch dispatches
   assert.equal(queue.getSnapshot().halted, true);
   assert.equal(queue.getSnapshot().pending, 0);
 });
+
+function metadataOnly(kind: "copy" | "mode" | "rename"): DiffFile {
+  return {
+    path: `${kind}.sh`,
+    ...(kind === "copy" ? { copyFrom: "source.sh" } : {}),
+    ...(kind === "rename" ? { oldPath: "old.sh" } : {}),
+    oldMode: "100644",
+    newMode: "100755",
+    patch: `diff --git a/${kind}.sh b/${kind}.sh\nold mode 100644\nnew mode 100755\n`,
+    additions: 0,
+    deletions: 0,
+    hunks: [],
+  };
+}
+
+for (const target of [undefined, OLDER]) {
+  test(`metadata-only copies and executable changes compact with text and report metadata labels for ${target ? "custom destination" : "Parent"}`, async () => {
+    const { queue, posts, reads, state } = setup();
+    state.files.push(
+      metadataOnly("copy"),
+      metadataOnly("mode"),
+      metadataOnly("rename"),
+    );
+    queue.replace(state);
+    const first = refsFromFile(state, "a");
+    queue.enqueue(first, target);
+    const copy = refsFromFile(queue.getSnapshot().view!, "copy.sh");
+    queue.enqueue(copy, target);
+    const mode = refsFromFile(queue.getSnapshot().view!, "mode.sh");
+    queue.enqueue(mode, target);
+    const rename = refsFromFile(queue.getSnapshot().view!, "rename.sh");
+    queue.enqueue(rename, target);
+    assert.deepEqual(queue.getSnapshot().view!.files, []);
+    assert.equal(queue.getSnapshot().pending, 2);
+    const firstAck = acknowledge(state, first, "v1");
+    posts[0].result.resolve({ state: firstAck });
+    await tick();
+    assert.equal(posts.length, 2);
+    assert.equal(posts[0].input.target, target ?? PARENT);
+    assert.equal(posts[1].input.target, target ?? PARENT);
+    assert.deepEqual(posts[1].input.selections, [
+      { id: 'copy:["source.sh","copy.sh"]', lines: [] },
+      { id: 'mode:["mode.sh","100644","100755"]', lines: [] },
+      { id: 'rename:["old.sh","rename.sh"]', lines: [] },
+    ]);
+    posts[1].result.resolve({
+      state: acknowledge(firstAck, [...copy, ...mode, ...rename], "v2"),
+    });
+    await tick();
+    assert.equal(
+      queue.getSnapshot().notice,
+      "1 rename and 1 copy and 1 mode change squashed.",
+    );
+    assert.equal(queue.getSnapshot().halted, false);
+    assert.equal(reads.length, 0);
+  });
+
+  test(`copy and mode transitions move with first text edits, while waiting edits remap normally for ${target ? "custom destination" : "Parent"}`, async () => {
+    const { queue, posts, reads, state } = setup();
+    state.files[0].copyFrom = "source";
+    state.files[0].oldMode = "100644";
+    state.files[0].newMode = "100755";
+    state.files[0].patch = state.files[0].patch.replace(
+      "\n",
+      "\ncopy from source\ncopy to a\nold mode 100644\nnew mode 100755\n",
+    );
+    queue.replace(state);
+    const first = refs(state, 2);
+    queue.enqueue(first, target);
+    const partial = queue.getSnapshot().view!;
+    assert.equal(partial.files[0].copyFrom, undefined);
+    assert.equal(partial.files[0].newMode, undefined);
+    const second = refsFromFile(partial, "a");
+    queue.enqueue(second, target);
+    const firstAck = acknowledge(state, first, "v1", true);
+    posts[0].result.resolve({ state: firstAck });
+    await tick();
+    assert.equal(posts.length, 2);
+    assert.deepEqual(posts[1].input, {
+      target: target ?? PARENT,
+      version: "v1",
+      selections: [{ id: "authoritative-v1", lines: [1, 2, 3] }],
+    });
+    posts[1].result.resolve({ state: acknowledge(firstAck, second, "v2") });
+    await tick();
+    assert.equal(queue.getSnapshot().halted, false);
+    assert.equal(queue.getSnapshot().pending, 0);
+    assert.deepEqual(queue.getSnapshot().confirmed!.files, []);
+    assert.equal(state.files[0].copyFrom, "source");
+    assert.equal(reads.length, 0);
+  });
+}
+
+for (const metadata of [
+  { copyFrom: "unexpected-source" },
+  { oldMode: "100644", newMode: "100755" },
+] as const) {
+  test(`unexpected ${"copyFrom" in metadata ? "copy" : "mode"} metadata in text acknowledgement cancels waiting squashes`, async () => {
+    const { queue, posts, reads, state } = setup();
+    state.files.push(metadataOnly("copy"));
+    queue.replace(state);
+    const selected = refs(state, 2);
+    queue.enqueue(selected);
+    queue.enqueue(refsFromFile(queue.getSnapshot().view!, "copy.sh"));
+    const unexpected = acknowledge(state, selected, "v1");
+    Object.assign(unexpected.files[0], metadata);
+    posts[0].result.resolve({ state: unexpected });
+    await tick();
+    assert.equal(queue.getSnapshot().halted, true);
+    assert.equal(queue.getSnapshot().pending, 0);
+    assert.equal(queue.getSnapshot().confirmed, unexpected);
+    assert.match(queue.getSnapshot().error, /differed from the projected/);
+    assert.equal(posts.length, 1);
+    assert.equal(reads.length, 0);
+  });
+}
