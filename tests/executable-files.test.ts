@@ -15,6 +15,7 @@ import test from "node:test";
 import { jj } from "../server/process.ts";
 import { ReviewService, type Selection } from "../server/service.ts";
 import { createDemo } from "./fixtures.ts";
+import { metadataSelectionId } from "../src/file-selection.ts";
 
 for (const api of ["direct", "legacy"] as const) {
   test(`${api} executable text squash preserves contents, modes, renames and exact undo`, async (t) => {
@@ -102,7 +103,7 @@ for (const api of ["direct", "legacy"] as const) {
       ).stdout;
     const sourceTree = await tree("@");
     const parentTree = await tree("@-");
-    for (const name of ["binary.sh", "mode-only.sh", "symlink.sh"])
+    for (const name of ["binary.sh", "symlink.sh"])
       assert.ok(
         state.files.find((file) => file.path === name)?.unsupported,
         name,
@@ -118,6 +119,7 @@ for (const api of ["direct", "legacy"] as const) {
       "removed.sh": null,
       "rename-old.sh": null,
       "pure-old.sh": null,
+      "mode-only.sh": base["mode-only.sh"],
     };
     const selections: Selection[] = [];
     for (const name of Object.keys(expected)) {
@@ -130,12 +132,15 @@ for (const api of ["direct", "legacy"] as const) {
         commitId: state.source.commitId,
         path: name,
       });
-      if (name === "pure-new.sh") {
-        assert.equal(file.oldPath, "pure-old.sh");
-        selections.push({
-          id: `rename:${JSON.stringify([file.oldPath, file.path])}`,
-          lines: [],
-        });
+      if (name === "pure-new.sh") assert.equal(file.oldPath, "pure-old.sh");
+      if (name === "mode-only.sh") {
+        assert.equal(file.oldMode, "100644");
+        assert.equal(file.newMode, "100755");
+        assert.deepEqual(file.hunks, []);
+      }
+      const metadataId = metadataSelectionId(file);
+      if (metadataId !== undefined) {
+        selections.push({ id: metadataId, lines: [] });
         continue;
       }
       if (name === "rename-new.sh") assert.equal(file.oldPath, "rename-old.sh");
@@ -210,6 +215,14 @@ for (const api of ["direct", "legacy"] as const) {
         name === "nonexec.sh" ? 0 : 0o111,
       );
     }
+    assert.equal(
+      await readFile(path.join(root, "mode-only.sh"), "utf8"),
+      base["mode-only.sh"],
+    );
+    assert.equal(
+      (await stat(path.join(root, "mode-only.sh"))).mode & 0o111,
+      0o111,
+    );
     const undone = await service.undo(result.state.version);
     assert.equal(undone.state.source.commitId, state.source.commitId);
     assert.deepEqual(undone.state.files, state.files);

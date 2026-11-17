@@ -15,6 +15,11 @@ export interface DiffFile {
   path: string;
   /** Original path for a rename; path always identifies the destination. */
   oldPath?: string;
+  /** Copy source; unlike a rename, the source remains unchanged. */
+  copyFrom?: string;
+  /** Present together only for executable-bit transitions on regular files. */
+  oldMode?: "100644" | "100755";
+  newMode?: "100644" | "100755";
   patch: string;
   additions: number;
   deletions: number;

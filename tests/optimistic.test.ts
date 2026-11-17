@@ -11,6 +11,13 @@ import {
   type RowRef,
 } from "../src/optimistic.ts";
 import type { DiffFile, RepoState } from "../src/types.ts";
+import {
+  metadataSelectionId,
+  pureRenameSelectionId,
+  filePathLabel,
+  modeChangeLabel,
+} from "../src/file-selection.ts";
+import { parseRenderDiff } from "../src/render-diff.ts";
 
 function file(
   path: string,
@@ -819,4 +826,214 @@ test("compaction combines pure renames with other renames and shifted text refer
   assert.throws(() =>
     combineSquashRefs(repo, [], [{ ...selected[0], text: "stale.ts" }]),
   );
+});
+
+function copied(modified = false): DiffFile {
+  const base = modified
+    ? file("copy.ts", "@@ -1,2 +1,2 @@\n-old1\n-old2\n+new1\n+new2")
+    : { path: "copy.ts", patch: "", hunks: [], additions: 0, deletions: 0 };
+  return {
+    ...base,
+    copyFrom: "source.ts",
+    patch: modified
+      ? base.patch
+          .replace("a/copy.ts", "a/source.ts")
+          .replace("index ", "copy from source.ts\ncopy to copy.ts\nindex ")
+          .replace("--- a/copy.ts", "--- a/source.ts")
+      : "diff --git a/source.ts b/copy.ts\ncopy from source.ts\ncopy to copy.ts\n",
+  };
+}
+
+function changedMode(base: DiffFile, executable = true): DiffFile {
+  const oldMode = executable ? "100644" : "100755";
+  const newMode = executable ? "100755" : "100644";
+  return {
+    ...base,
+    oldMode,
+    newMode,
+    patch: base.patch.replace(
+      "\n",
+      `\nold mode ${oldMode}\nnew mode ${newMode}\n`,
+    ),
+  };
+}
+
+test("metadata selection IDs preserve rename compatibility and distinguish copies and mode transitions", () => {
+  const modeOnly = changedMode({
+    path: "run.sh",
+    patch: "diff --git a/run.sh b/run.sh\n",
+    hunks: [],
+    additions: 0,
+    deletions: 0,
+  });
+  const cases = [
+    [pureRename(), 'rename:["old.ts","new.ts"]'],
+    [changedMode(pureRename()), 'rename:["old.ts","new.ts"]'],
+    [copied(), 'copy:["source.ts","copy.ts"]'],
+    [changedMode(copied()), 'copy:["source.ts","copy.ts"]'],
+    [modeOnly, 'mode:["run.sh","100644","100755"]'],
+    [changedMode(modeOnly, false), 'mode:["run.sh","100755","100644"]'],
+  ] as const;
+  for (const [entry, id] of cases) {
+    assert.equal(metadataSelectionId(entry), id);
+    assert.equal(pureRenameSelectionId(entry), entry.oldPath ? id : undefined);
+    assert.equal(
+      metadataSelectionId({ ...entry, unsupported: "Binary" }),
+      undefined,
+    );
+    assert.equal(metadataSelectionId({ ...entry, hunks: [{}] }), undefined);
+    const repo = state(entry);
+    const refs = refsFromFile(repo, entry.path);
+    assert.equal(refs.length, 1);
+    assert.equal(refs[0].line, 0);
+    assert.deepEqual(specsForRefs(repo, refs), [{ id, lines: [] }]);
+    assert.deepEqual(projectSquash(repo, refs).files, []);
+    for (const invalid of [
+      [refs[0], refs[0]],
+      [{ ...refs[0], line: 1 }],
+      [{ ...refs[0], text: "stale" }],
+      [{ ...refs[0], noNewline: false }],
+    ])
+      assert.throws(() => specsForRefs(repo, invalid));
+    assert.throws(
+      () =>
+        refsFromFile(
+          state({ ...entry, squashUnsupported: "Read-only" }),
+          entry.path,
+        ),
+      /Read-only/,
+    );
+  }
+  assert.match(filePathLabel(copied()), /source.ts → copy.ts \(copy\)/);
+  assert.match(modeChangeLabel(modeOnly)!, /executable \(100644 → 100755\)/);
+  assert.match(
+    modeChangeLabel(changedMode(modeOnly, false))!,
+    /non-executable/,
+  );
+});
+
+test("copy and mode metadata participate in exact metadata and text references and signatures", () => {
+  for (const modified of [false, true]) {
+    for (const base of [copied(modified), changedMode(copied(modified))]) {
+      const repo = state(base);
+      const refs = refsFromFile(repo, base.path);
+      for (const changed of [
+        { ...base, copyFrom: "another-source.ts" },
+        { ...base, copyFrom: undefined },
+        { ...base, oldMode: "100755" as const, newMode: "100644" as const },
+        {
+          ...base,
+          oldMode: undefined,
+          newMode: undefined,
+          copyFrom: "other.ts",
+        },
+        { ...base, oldPath: base.copyFrom, copyFrom: undefined },
+      ]) {
+        assert.notEqual(changeSignature(repo), changeSignature(state(changed)));
+        assert.throws(
+          () => specsForRefs(state(changed), refs),
+          /no longer match/,
+        );
+      }
+    }
+  }
+  for (const base of [
+    pureRename(),
+    file("run.sh", "@@ -1 +1 @@\n-old\n+new"),
+  ]) {
+    const mode = changedMode(base);
+    const refs = refsFromFile(state(mode), mode.path);
+    assert.notEqual(changeSignature(state(mode)), changeSignature(state(base)));
+    assert.throws(() => specsForRefs(state(base), refs), /no longer match/);
+    assert.throws(
+      () => specsForRefs(state(changedMode(base, false)), refs),
+      /no longer match/,
+    );
+  }
+});
+
+test("first copy/mode text selection carries metadata once, preserves source and destination mode, and compacts", () => {
+  for (const executable of [false, true]) {
+    for (const base of [
+      copied(true),
+      file("run.sh", "@@ -1,2 +1,2 @@\n-old1\n-old2\n+new1\n+new2"),
+      {
+        ...file("new.ts", "@@ -1,2 +1,2 @@\n-old1\n-old2\n+new1\n+new2"),
+        oldPath: "old.ts",
+      },
+    ]) {
+      const entry = changedMode(base, executable);
+      const source = file("source.ts", "@@ -1 +1 @@\n-source-old\n+source-new");
+      const repo = state(entry, source);
+      const original = structuredClone(repo);
+      for (const row of [1, 3]) {
+        const selected = select(repo, entry.hunks[0].id, row);
+        const partial = projectSquash(repo, selected);
+        const remaining = partial.files[0];
+        assert.equal(partial.files[1], source);
+        assert.equal(remaining.copyFrom, undefined);
+        assert.equal(remaining.oldPath, undefined);
+        assert.equal(remaining.oldMode, undefined);
+        assert.equal(remaining.newMode, undefined);
+        assert.doesNotMatch(
+          remaining.patch,
+          /^(?:copy|rename) (?:from|to)|^(?:old|new) mode/m,
+        );
+        assert.match(
+          remaining.patch,
+          new RegExp(`^index .* ${entry.newMode}$`, "m"),
+        );
+        const next = refsFromFile(partial, entry.path);
+        assert.ok(next.every((ref) => ref.metadata === undefined));
+        const combined = combineSquashRefs(repo, selected, next);
+        assert.deepEqual(
+          projectSquash(repo, combined),
+          projectSquash(partial, next),
+        );
+        assert.deepEqual(projectSquash(repo, combined).files, [source]);
+        validatePatches(partial);
+      }
+      assert.deepEqual(repo, original);
+    }
+  }
+});
+
+test("copy render adapter uses copy source for both pure and edited copies without changing transport", () => {
+  for (const modified of [false, true]) {
+    const entry = copied(modified);
+    const original = structuredClone(entry);
+    const rendered = parseRenderDiff(entry)!;
+    assert.equal(rendered.prevName, "source.ts");
+    assert.equal(rendered.name, "copy.ts");
+    assert.equal(rendered.type, modified ? "rename-changed" : "rename-pure");
+    assert.equal(
+      rendered.deletionLines.join(""),
+      modified ? "old1\nold2\n" : "",
+    );
+    assert.equal(
+      rendered.additionLines.join(""),
+      modified ? "new1\nnew2\n" : "",
+    );
+    assert.deepEqual(entry, original);
+  }
+});
+
+test("executable additions and deletions retain their mode after partial projection", () => {
+  for (const mode of ["new", "deleted"] as const) {
+    const body =
+      mode === "new"
+        ? "@@ -0,0 +1,2 @@\n+one\n+two"
+        : "@@ -1,2 +0,0 @@\n-one\n-two";
+    const entry = file("run.sh", body, mode);
+    entry.patch = entry.patch.replaceAll("100644", "100755");
+    const repo = state(entry);
+    const partial = projectSquash(repo, select(repo, "run.sh-0", 1));
+    assert.equal(partial.files[0].oldMode, undefined);
+    assert.equal(partial.files[0].newMode, undefined);
+    assert.match(
+      partial.files[0].patch,
+      mode === "new" ? /^index .* 100755$/m : /^deleted file mode 100755$/m,
+    );
+    validatePatches(partial);
+  }
 });

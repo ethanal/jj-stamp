@@ -351,7 +351,6 @@ test("unsupported formats and incorrect EOF claims fail closed even with no sele
   const original = patch(hunk(["-old", "+new"]));
   for (const modified of [
     original + "\\ No newline at end of file\n",
-    original.replace("--- a/", "old mode 100644\nnew mode 100755\n--- a/"),
     original.replace(
       "--- a/",
       "rename from original\nrename to renamed\n--- a/",

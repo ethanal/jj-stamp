@@ -3,6 +3,7 @@ import { FileTree, useFileTree } from "@pierre/trees/react";
 import type { GitStatusEntry } from "@pierre/trees";
 import type { DiffFile } from "./types";
 import { unsupportedFileLabel } from "./file-display";
+import { filePathLabel } from "./file-selection";
 
 interface Props {
   focusRequest?: number;
@@ -71,7 +72,7 @@ export function ChangedFilesTree(props: Props) {
     renderRowDecoration({ item }) {
       const file = filesByPath.current.get(item.path);
       if (!file) return null;
-      const label = file.oldPath ? `${file.oldPath} → ${file.path}` : file.path;
+      const label = filePathLabel(file);
       const unsupported = unsupportedFileLabel(file);
       return {
         text: unsupported ?? `+${file.additions}−${file.deletions}`,
@@ -128,11 +129,13 @@ export function ChangedFilesTree(props: Props) {
               path: file.path,
               status: file.oldPath
                 ? "renamed"
-                : file.patch.includes("new file mode")
+                : file.copyFrom
                   ? "added"
-                  : file.patch.includes("deleted file mode")
-                    ? "deleted"
-                    : "modified",
+                  : file.patch.includes("new file mode")
+                    ? "added"
+                    : file.patch.includes("deleted file mode")
+                      ? "deleted"
+                      : "modified",
             },
           ];
         }),

@@ -308,7 +308,7 @@ test("serialized duplicate squash requests execute once only", async () => {
   assert.equal(after.canUndo, true);
 });
 
-test("missing newlines are supported; mode, binary and rename structures fail closed", async () => {
+test("missing newlines and regular mode changes are supported; binary and malformed renames fail closed", async () => {
   const { service, state, root } = await fixture();
   await writeFile(path.join(root, "src/notifications.ts"), "no newline");
   const next = await service.getState();
@@ -316,8 +316,16 @@ test("missing newlines are supported; mode, binary and rename structures fail cl
   assert.equal(supported.unsupported, undefined);
   assert.equal(supported.hunks.at(-1)!.rows.at(-1)!.noNewline, true);
   const goodPatch = state.files[0].patch;
+  assert.equal(
+    parseFile(
+      "old mode 100644\nnew mode 100755\n" +
+        goodPatch.replace(/^(index \S+) 100(?:644|755)$/m, "$1"),
+      state.files[0].path,
+    ).newMode,
+    "100755",
+  );
   for (const extra of [
-    "old mode 100644\nnew mode 100755\n",
+    "old mode 100644\nnew mode 120000\n",
     "Binary files a/x and b/x differ\n",
     "rename from x\nrename to y\n",
   ]) {
@@ -1930,11 +1938,11 @@ test("revision API validates strict versioned identity input and returns the exp
   assert.deepEqual(await service.getState(), moved);
 });
 
-test("native callback failure includes its full invocation over HTTP and never retried by reads or restart", async (t) => {
+test("squash callback failure includes its full invocation over HTTP and never retried by reads or restart", async (t) => {
   const { root, state } = await fixture();
-  // Native callback errors must preserve jj diagnostics, without legacy dependency advice.
+  // Callback errors must preserve jj diagnostics without internal product labels.
   const stderr =
-    "Error: Failed to edit diff\nCaused by:\n    jj-stamp native callback: source tree did not match pinned plan\n    Tool exited with exit status: 1\n";
+    "Error: Failed to edit diff\nCaused by:\n    Cannot squash selected changes: source tree did not match pinned plan\n    Tool exited with exit status: 1\n";
   let squashCalls = 0;
   let invocation = "";
   const service = new ReviewService({
@@ -1986,7 +1994,9 @@ test("native callback failure includes its full invocation over HTTP and never r
   assert.equal(response.headers.get("cache-control"), "no-store");
   const error = await response.json();
   assert.equal(error.code, "TOOL_FAILED");
-  assert.match(error.output, /native callback/);
+  assert.match(error.output, /Cannot squash selected changes/);
+  assert.doesNotMatch(error.error, /native|editor/i);
+  assert.match(error.error, /temporary squash plan has been removed/);
   assert.doesNotMatch(error.error, /GNU patch|required patch executable/);
   assert.match(
     error.error,

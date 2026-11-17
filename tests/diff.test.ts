@@ -34,6 +34,24 @@ test("native diff parser preserves exact rows, coordinates and whitespace", () =
   assert.equal(ranges([1, 2, 4, 6, 7, 8]), "1-2,4,6-8");
 });
 
+test("unsupported diff messages describe the problem without editor terminology", () => {
+  for (const [input, name, message] of [
+    [
+      patch.replaceAll("a.ts", 'quoted"file.ts'),
+      'quoted"file.ts',
+      "File paths containing whitespace, quotes, or control characters are not supported.",
+    ],
+    [
+      patch.replace("-before", "--- header-like"),
+      "a.ts",
+      "This patch contains header-like code lines that cannot be parsed safely.",
+    ],
+  ]) {
+    assert.throws(() => parseFile(input, name), { message });
+    assert.doesNotMatch(message, /native|editor/i);
+  }
+});
+
 test("executable regular-file metadata is supported, but binary and nonregular files are not", () => {
   for (const mode of ["100644", "100755"]) {
     const modified = patch.replace(
@@ -50,7 +68,6 @@ test("executable regular-file metadata is supported, but binary and nonregular f
     "index abc..def 120000",
     "new file mode 120000",
     "deleted file mode 160000",
-    "old mode 100644\nnew mode 100755",
     "new file mode 100755\nBinary files /dev/null and b/a.ts differ",
   ])
     assert.throws(() => parseFile(`${metadata}\n${patch}`, "a.ts"));

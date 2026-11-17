@@ -23,6 +23,7 @@ import { SidebarResize } from "./SidebarResize";
 import { SplitDiffLayout } from "./SplitDiffLayout";
 import { SquashFileButton } from "./SquashFileButton";
 import "./squash-destination.css";
+import { filePathLabel, modeChangeLabel } from "./file-selection";
 import type { ColorScheme, FileView } from "./preferences";
 import type {
   DiffFile,
@@ -36,11 +37,14 @@ export type DiffStyle = "unified" | "split";
 
 function FileName({ file }: { file: DiffFile }) {
   return (
-    <span title={file.oldPath ? `${file.oldPath} → ${file.path}` : file.path}>
-      {file.oldPath && (
-        <span className="file-previous-path">{file.oldPath} → </span>
+    <span title={filePathLabel(file)}>
+      {(file.oldPath ?? file.copyFrom) && (
+        <span className="file-previous-path">
+          {file.oldPath ?? file.copyFrom} →{" "}
+        </span>
       )}
       {file.path}
+      {file.copyFrom !== undefined && " (copy)"}
     </span>
   );
 }
@@ -990,6 +994,31 @@ export function ReviewViewer({
                         <span>
                           Squashing selected edits also squashes the rename into
                           the destination.
+                        </span>
+                      )}
+                    </div>
+                  )}
+                  {entry.copyFrom !== undefined && !entry.unsupported && (
+                    <div className="rename-notice">
+                      <span>
+                        {entry.hunks.length
+                          ? "Copied and modified."
+                          : "Copied without content changes."}
+                      </span>
+                      <span>
+                        {entry.hunks.length
+                          ? "Squashing selected edits also copies the full parent-tree contents into the selected destination. Remaining edits stay at the copied path. The original source is unchanged."
+                          : "Squashing this file copies it into the selected destination. The original source is unchanged."}
+                      </span>
+                    </div>
+                  )}
+                  {modeChangeLabel(entry) && !entry.unsupported && (
+                    <div className="rename-notice">
+                      <span>{modeChangeLabel(entry)}.</span>
+                      {entry.hunks.length > 0 && (
+                        <span>
+                          Squashing any selected edits also squashes this mode
+                          change into the selected destination.
                         </span>
                       )}
                     </div>

@@ -82,14 +82,12 @@ test("rename envelopes validate every path claim and retain ordinary exact rows"
     renamePatch().replace("+++ b/new/file.txt", "+++ /dev/null"),
     renamePatch().replace("--- a/", "new file mode 100644\n--- a/"),
     renamePatch().replace("--- a/", "deleted file mode 100644\n--- a/"),
-    renamePatch().replace("--- a/", "old mode 100644\nnew mode 100755\n--- a/"),
 
     renamePatch().replace("--- a/", "index abc..def 120000\n--- a/"),
     renamePatch().replace(
       "--- a/",
       "Binary files a/old and b/new differ\n--- a/",
     ),
-    renamePatch().replaceAll("rename", "copy"),
     pure + "similarity index 101%\n",
     pure + "similarity index 90%\n",
     pure + "index abc..def 100644\n",

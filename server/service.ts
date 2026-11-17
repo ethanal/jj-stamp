@@ -4,7 +4,7 @@ import path from "node:path";
 import { parseFile, ranges } from "./diff.ts";
 import type { Row } from "./diff.ts";
 import { materializeSelection } from "./selection.ts";
-import { pureRenameSelectionId } from "../src/file-selection.ts";
+import { metadataSelectionId } from "../src/file-selection.ts";
 import { validateDiffEditorPlan, withDiffEditor } from "./diff-editor.ts";
 import type { DiffEditorPlan } from "./diff-editor.ts";
 import { readMergedParentFiles } from "./diff-reader.ts";
@@ -70,6 +70,9 @@ export interface ReviewFile {
   path: string;
   /** Rename source; path remains the destination and API lookup key. */
   oldPath?: string;
+  copyFrom?: string;
+  oldMode?: "100644" | "100755";
+  newMode?: "100644" | "100755";
   /** Advisory classification from this source commit's versioned attributes. */
   generated?: boolean;
   patch: string;
@@ -580,8 +583,14 @@ export class ReviewService {
       };
       try {
         const parsed = parseFile(patch, name);
-        if (parsed.oldPath !== undefined) {
-          file.oldPath = parsed.oldPath;
+        for (const key of [
+          "oldPath",
+          "copyFrom",
+          "oldMode",
+          "newMode",
+        ] as const) {
+          if (parsed[key] !== undefined)
+            Object.assign(file, { [key]: parsed[key] });
         }
         if (includeHunks) {
           file.hunks = parsed.hunks.map((hunk) => {
@@ -591,6 +600,12 @@ export class ReviewService {
               JSON.stringify([
                 name,
                 ...(parsed.oldPath === undefined ? [] : [parsed.oldPath]),
+                ...(parsed.copyFrom === undefined
+                  ? []
+                  : ["copy", parsed.copyFrom]),
+                ...(parsed.oldMode === undefined
+                  ? []
+                  : [parsed.oldMode, parsed.newMode]),
                 hunk.header,
                 hunk.rows.map((r) => [r.raw, r.noNewline ?? false]),
               ]),
@@ -853,7 +868,9 @@ export class ReviewService {
     const paths = [
       ...new Set(
         state.files.flatMap((file) =>
-          file.oldPath === undefined ? [file.path] : [file.oldPath, file.path],
+          [file.oldPath, file.copyFrom, file.path].filter(
+            (name): name is string => name !== undefined,
+          ),
         ),
       ),
     ].sort();
@@ -1400,7 +1417,7 @@ export class ReviewService {
           );
         return { name, contents: result.stdout };
       };
-      const oldPath = file.oldPath ?? file.path;
+      const oldPath = file.oldPath ?? file.copyFrom ?? file.path;
       let oldFile: { name: string; contents: string } | null = null;
       if (!/^--- \/dev\/null$/m.test(file.patch)) {
         if (content.baseCommitId) {
@@ -1409,7 +1426,7 @@ export class ReviewService {
           const base = await this.mergedParentFiles(
             content.repo.path,
             content.commitId,
-            file.oldPath ? [file.oldPath, file.path] : [file.path],
+            oldPath !== file.path ? [oldPath, file.path] : [file.path],
           );
           oldFile = this.parentTreeFile(base, oldPath);
         }
@@ -1449,7 +1466,7 @@ export class ReviewService {
           "--",
           `root-file:${JSON.stringify(name)}`,
         ]);
-        // Pure renames have no text hunks to reveal binary content. Enforce
+        // Metadata-only changes have no text hunks to reveal binary content. Enforce
         // the same lossless text boundary as immutable file context reads.
         if (
           result.stdout.includes("\0") ||
@@ -1463,7 +1480,7 @@ export class ReviewService {
           );
         return { name, contents: result.stdout };
       };
-      const oldPath = file.oldPath ?? file.path;
+      const oldPath = file.oldPath ?? file.copyFrom ?? file.path;
       let oldFile: { name: string; contents: string } | null = null;
       if (!/^--- \/dev\/null$/m.test(file.patch)) {
         if (parents.length === 1) {
@@ -1472,7 +1489,7 @@ export class ReviewService {
           const base = await this.mergedParentFiles(
             this.root,
             before.source.commitId,
-            file.oldPath ? [file.oldPath, file.path] : [file.path],
+            oldPath !== file.path ? [oldPath, file.path] : [file.path],
           );
           oldFile = this.parentTreeFile(base, oldPath);
         }
@@ -1600,7 +1617,7 @@ export class ReviewService {
       throw new ApiError(
         400,
         "INVALID_SELECTION",
-        "Select at least one changed line or rename.",
+        "Select at least one changed line or file metadata change.",
       );
     const byId = new Map<string, number[]>();
     for (const selection of input.selections) {
@@ -1616,7 +1633,7 @@ export class ReviewService {
         throw new ApiError(
           400,
           "INVALID_SELECTION",
-          "Selections must contain unique hunks or rename IDs and unique, positive patch-body line indices.",
+          "Selections must contain unique hunks or metadata IDs and unique, positive patch-body line indices.",
         );
       }
       byId.set(
@@ -1633,19 +1650,19 @@ export class ReviewService {
     const specs: string[] = [];
     let selectedLines = 0;
     for (const file of state.files) {
-      const renameId = pureRenameSelectionId(file);
-      if (renameId !== undefined && byId.has(renameId)) {
+      const metadataId = metadataSelectionId(file);
+      if (metadataId !== undefined && byId.has(metadataId)) {
         if (file.squashUnsupported)
           throw new ApiError(422, "SQUASH_UNSUPPORTED", file.squashUnsupported);
-        if (byId.get(renameId)!.length)
+        if (byId.get(metadataId)!.length)
           throw new ApiError(
             400,
             "INVALID_SELECTION",
-            "A pure rename selection must contain no text rows.",
+            "A metadata-only selection must contain no text rows.",
           );
         picked.push({ patch: file.patch, path: file.path, lines: [] });
-        specs.push(renameId);
-        byId.delete(renameId);
+        specs.push(metadataId);
+        byId.delete(metadataId);
       }
       for (const hunk of file.hunks) {
         const lines = byId.get(hunk.id);
@@ -1689,9 +1706,15 @@ export class ReviewService {
       : await this.mergedParentFiles(
           this.root,
           state.source.commitId,
-          selectedFiles.flatMap((file) =>
-            file.oldPath ? [file.oldPath, file.path] : [file.path],
-          ),
+          [
+            ...new Set(
+              selectedFiles.flatMap((file) =>
+                [file.oldPath, file.copyFrom, file.path].filter(
+                  (name): name is string => name !== undefined,
+                ),
+              ),
+            ),
+          ],
           "UNSAFE_PREVIEW",
         );
     const editPlan: DiffEditorPlan = {
@@ -1726,7 +1749,7 @@ export class ReviewService {
       };
       // jj applies only the selected source delta to the destination and owns
       // the merge/rebase; our job is exact selection against its parent tree.
-      const basePath = file.oldPath ?? file.path;
+      const basePath = file.oldPath ?? file.copyFrom ?? file.path;
       const base = mergedBase
         ? mergedBase.get(basePath)!
         : /^--- \/dev\/null$/m.test(file.patch)
@@ -1764,20 +1787,62 @@ export class ReviewService {
               base: base!.toString("base64"),
               source: null,
               result: null,
+              ...(file.oldMode === undefined
+                ? {}
+                : {
+                    baseMode: file.oldMode === "100755" ? 0o755 : 0o644,
+                    sourceMode: null,
+                    resultMode: null,
+                  }),
             },
             {
               path: file.path,
               base: null,
               source: source!.toString("base64"),
               result: materialized.result!.toString("base64"),
+              ...(file.newMode === undefined
+                ? {}
+                : {
+                    baseMode: null,
+                    sourceMode: file.newMode === "100755" ? 0o755 : 0o644,
+                    resultMode: file.newMode === "100755" ? 0o755 : 0o644,
+                  }),
             },
           );
         } else {
           editPlan.files.push({
             path: file.path,
-            base: base?.toString("base64") ?? null,
+            // A copy's old-side bytes reconstruct its content, but its new
+            // destination is absent in the parent. Restrict jj to that path;
+            // never include or rewrite the retained copy source.
+            base:
+              file.copyFrom === undefined
+                ? (base?.toString("base64") ?? null)
+                : null,
             source: source?.toString("base64") ?? null,
             result: materialized.result?.toString("base64") ?? null,
+            ...(file.oldMode === undefined
+              ? {}
+              : {
+                  baseMode:
+                    file.copyFrom !== undefined || base === null
+                      ? null
+                      : file.oldMode === "100755"
+                        ? 0o755
+                        : 0o644,
+                  sourceMode:
+                    source === null
+                      ? null
+                      : file.newMode === "100755"
+                        ? 0o755
+                        : 0o644,
+                  resultMode:
+                    materialized.result === null
+                      ? null
+                      : file.newMode === "100755"
+                        ? 0o755
+                        : 0o644,
+                }),
           });
         }
         previews.push(materialized.preview);
@@ -2027,7 +2092,7 @@ export class ReviewService {
         ? "The tool failed without a recorded history change. Nothing was automatically retried. Refresh before trying again."
         : "The tool failed and history may have changed. Inspect jj op log before doing anything else. No retry or rollback was attempted.") +
         (nativeSquash
-          ? " Native-editor manifest paths are temporary and have been removed; this diagnostic command is not a replayable retry."
+          ? " The temporary squash plan has been removed; this diagnostic command is not a replayable retry."
           : ""),
       { output, ...(current ? { currentOperation: current } : {}) },
     );
