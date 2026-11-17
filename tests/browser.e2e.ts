@@ -30,6 +30,7 @@ async function reviewWorkingCopy() {
   apiRouter = createApi(service);
 }
 const initial = await service.getState();
+const repositoryTitle = `jj-stamp: ${path.basename(initial.repo.path)}`;
 const app = express();
 app.use("/api", (req, res, next) => apiRouter(req, res, next));
 const fixture = await createBrowserFixture({
@@ -85,7 +86,9 @@ async function drag(from: Locator, to: Locator) {
   await expect(page.getByRole("button", { name: "Settings" })).toBeDisabled();
   for (const button of await page.locator("button:disabled").all()) {
     const outlined = await button.evaluate((element) =>
-      element.matches(".action-button, .layout-toggle button"),
+      element.matches(
+        ".action-button, .layout-toggle button, .squash-destination-trigger",
+      ),
     );
     await expect(button).toHaveCSS("opacity", outlined ? "0.4" : "1");
   }
@@ -135,7 +138,7 @@ async function expectConfirmedSquashUnavailable(
   ).toHaveCount(0);
   await expect(page.locator("[data-line][data-fold-selected]")).toHaveCount(0);
   // Keep shortcut focus outside the embedded diff. File-backed states use the
-  // explicit dismiss control; the fileless merge below covers Escape dismissal.
+  // explicit dismiss control; callers can also exercise Escape dismissal.
   await page.getByRole("button", { name: "Refresh", exact: true }).focus();
   const mutationCount = mutations.length;
   await page.keyboard.press("s");
@@ -174,9 +177,7 @@ try {
   await expect(page.getByRole("checkbox")).toHaveCount(0);
   await expect(page.getByRole("button", { name: "reset demo" })).toHaveCount(0);
   await expect(codeLine(21)).toBeVisible();
-  await expect(page).toHaveTitle(
-    `${initial.source.description} (${initial.source.changeId.slice(0, 8)} ${initial.repo.path})`,
-  );
+  await expect(page).toHaveTitle(repositoryTitle);
   await expect(page.getByLabel("Repository path")).toHaveText(
     initial.repo.path,
   );
@@ -1090,24 +1091,24 @@ try {
     "Updated commit title\n\nDescription body",
   ]);
   const described = await refreshState();
-  await expect(page).toHaveTitle(
-    `Updated commit title (${described.source.changeId.slice(0, 8)} ${initial.repo.path})`,
+  await expect(page).toHaveTitle(repositoryTitle);
+  await expect(page.locator(".source-description")).toContainText(
+    "Updated commit title",
   );
   await jj(initial.repo.path, ["new", "-m", "Next change"]);
   const stillReviewed = await refreshState();
   assert.equal(stillReviewed.source.changeId, described.source.changeId);
-  await expect(page).toHaveTitle(
-    `Updated commit title (${described.source.changeId.slice(0, 8)} ${initial.repo.path})`,
-  );
+  await expect(page).toHaveTitle(repositoryTitle);
   await reviewWorkingCopy();
   const next = await refreshState();
   assert.notEqual(next.source.changeId, described.source.changeId);
   await expect(page.locator(".file-tree [role=treeitem]")).toHaveCount(0);
-  await expect(page).toHaveTitle(
-    `Next change (${next.source.changeId.slice(0, 8)} ${initial.repo.path})`,
+  await expect(page).toHaveTitle(repositoryTitle);
+  await expect(page.locator(".source-description")).toContainText(
+    "Next change",
   );
   console.log(
-    "✓ Page title follows the short change ID and commit title on refresh",
+    "✓ Repository page title stays stable while revision headings follow refresh and navigation",
   );
   // Tree structure follows real repository changes, including duplicate
   // basenames, read-only files, and removal/restoration of a whole file.
@@ -1278,7 +1279,7 @@ try {
     "✓ Single-parent conflict hides idle squash actions, shows the exact keyboard error, dismisses quietly, and switches back cleanly",
   );
   await jj(repoPath, ["edit", left]);
-  // A merge can be reviewed, but there is no single safe squash destination.
+  // A merge requires an explicit destination, not a global squash prohibition.
   await jj(repoPath, ["new", "@-", "-m", "Other branch"]);
   await jj(repoPath, ["new", left, "@", "-m", "Two-parent merge"]);
   const merge = (
@@ -1293,16 +1294,41 @@ try {
   assert.equal(mergeResponse.status(), 200, await mergeResponse.text());
   const mergeState = (await mergeResponse.json()).state;
   assert.equal(mergeState.parent, null);
-  assert.match(mergeState.squashUnavailable, /exactly one immediate parent/);
+  assert.equal(mergeState.squashUnavailable, undefined);
+  assert(mergeState.targets.length > 0);
   await expect(page.getByLabel("Current change ID")).toHaveAttribute(
     "title",
     merge,
   );
   await expect(page.getByLabel("Squash destination change ID")).toHaveText("—");
-  await expectConfirmedSquashUnavailable(
-    mergeState.squashUnavailable,
-    "escape",
+  const mergeDestination = page.getByRole("button", { name: /^Squash into/ });
+  await expect(mergeDestination).toHaveText("Choose revision…⌄");
+  await expect(
+    page.getByRole("button", { name: "Squash", exact: true }),
+  ).toBeDisabled();
+  await page.getByRole("button", { name: "Refresh", exact: true }).focus();
+  const mergeMutationCount = mutations.length;
+  await page.keyboard.press("s");
+  await expect(page.getByRole("alert").locator(".error-summary")).toHaveText(
+    "Choose a destination in the log; this revision has multiple parents.",
   );
+  assert.equal(mutations.length, mergeMutationCount);
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("alert")).toHaveCount(0);
+  await mergeDestination.click();
+  const destinationMenu = page.getByRole("menu", {
+    name: "Squash destination",
+  });
+  await expect(
+    destinationMenu.getByRole("menuitemradio", { name: /^Parent/ }),
+  ).toBeDisabled();
+  await expect(
+    destinationMenu.getByRole("menuitem", {
+      name: "Choose revision in log…",
+      exact: true,
+    }),
+  ).toBeEnabled();
+  await page.keyboard.press("Escape");
   const selectedCleanMerge = page.waitForResponse((response) =>
     response.url().endsWith("/api/revision"),
   );
@@ -1320,7 +1346,7 @@ try {
   await expect(page.getByRole("button", { name: "Refresh" })).toBeEnabled();
   await expectSquashActions(cleanMergeState.files[0]?.path);
   console.log(
-    "✓ Two-parent change hides idle squash actions, shows the exact keyboard error, dismisses quietly, and switches back cleanly",
+    "✓ Two-parent change requires an explicit destination, enables the picker, blocks squash without a target, and switches back cleanly",
   );
   // When a source last selected as @ is auto-abandoned, the same service follows
   // the replacement working copy on its next state read, including cold reloads.

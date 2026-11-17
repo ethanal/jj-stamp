@@ -871,6 +871,7 @@ export function CodeDiff({
     const key = (event: KeyboardEvent) => {
       if (
         event.defaultPrevented ||
+        document.querySelector("dialog[open]") ||
         event.repeat ||
         event.isComposing ||
         event.ctrlKey ||

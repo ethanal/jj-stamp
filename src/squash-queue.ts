@@ -18,6 +18,7 @@ export interface SquashTransport {
   squash(input: {
     version: string;
     selections: SquashSpec[];
+    target: string;
   }): Promise<{ state: RepoState; warning?: string }>;
   readState(): Promise<RepoState>;
 }
@@ -36,7 +37,16 @@ interface Job {
   before: RepoState;
   refs: RowRef[];
   beforeSignature: string;
+  sourceChangeId: string;
+  targetChangeId: string;
   count: number;
+}
+
+function eligibleTarget(state: RepoState, changeId: string): boolean {
+  return (
+    !state.squashUnavailable &&
+    state.targets.some((target) => target.changeId === changeId)
+  );
 }
 
 /** One in-flight mutation and one compacted waiting batch, each sent at most once. */
@@ -105,7 +115,7 @@ export class SquashQueue {
     this.publish({ error: "", errorDetails: [] });
   }
 
-  enqueue(refs: RowRef[]): void {
+  enqueue(refs: RowRef[], targetChangeId?: string): void {
     const { view, halted, recovering } = this.snapshot;
     if (halted || recovering)
       throw new Error(
@@ -114,6 +124,23 @@ export class SquashQueue {
     if (!view) throw new Error("Load repository state before squashing.");
     if (!refs.length)
       throw new Error("Select at least one changed line or rename to squash.");
+    const target = targetChangeId ?? view.parent?.changeId;
+    const pending = this.jobs[0];
+    if (pending && target !== pending.targetChangeId)
+      throw new Error(
+        "Wait for pending squashes before changing the destination revision.",
+      );
+    if (pending && view.source.changeId !== pending.sourceChangeId)
+      throw new Error(
+        "Queued source revision no longer matches the selected revision.",
+      );
+    if (!target)
+      throw new Error("No Parent revision is available for squashing.");
+    if (!eligibleTarget(view, target))
+      throw new Error(
+        view.squashUnavailable ??
+          "The selected destination revision is no longer eligible for squashing.",
+      );
     // Validate and finish projection before changing any queue state.
     const saved = refs.map((ref) => ({ ...ref }));
     const beforeSignature = changeSignature(view);
@@ -130,6 +157,8 @@ export class SquashQueue {
         before: view,
         refs: saved,
         beforeSignature,
+        sourceChangeId: view.source.changeId,
+        targetChangeId: target,
         count: saved.length,
       });
     }
@@ -216,7 +245,15 @@ export class SquashQueue {
       while (this.jobs.length) {
         const job = this.jobs[0];
         const confirmed = this.snapshot.confirmed;
-        if (!confirmed || changeSignature(confirmed) !== job.beforeSignature)
+        if (!confirmed || confirmed.source.changeId !== job.sourceChangeId)
+          throw new Error(
+            "Queued source revision no longer matches the confirmed revision.",
+          );
+        if (!eligibleTarget(confirmed, job.targetChangeId))
+          throw new Error(
+            "Queued destination revision is no longer eligible for squashing.",
+          );
+        if (changeSignature(confirmed) !== job.beforeSignature)
           throw new Error(
             "Queued selection no longer matches the confirmed changes.",
           );
@@ -226,16 +263,29 @@ export class SquashQueue {
         const result = await this.transport.squash({
           version: confirmed.version,
           selections,
+          target: job.targetChangeId,
         });
+        const sourceChanged =
+          result.state.source.changeId !== job.sourceChangeId;
+        const targetUnavailable = !eligibleTarget(
+          result.state,
+          job.targetChangeId,
+        );
         if (
           result.warning ||
+          sourceChanged ||
+          targetUnavailable ||
           changeSignature(result.state) !== changeSignature(expected)
         ) {
           this.stopAtKnownState(
             result.state,
             result.warning
               ? `Squash completed with a warning: ${result.warning} Queued squashes were canceled. Refresh or undo before continuing.`
-              : "Squash result differed from the projected changes. Queued squashes were canceled. Refresh or undo before continuing.",
+              : sourceChanged
+                ? "The source revision changed after squashing. Queued squashes were canceled. Refresh or undo before continuing."
+                : targetUnavailable
+                  ? "The destination revision is no longer eligible after squashing. Queued squashes were canceled. Refresh or undo before continuing."
+                  : "Squash result differed from the projected changes. Queued squashes were canceled. Refresh or undo before continuing.",
           );
           return;
         }

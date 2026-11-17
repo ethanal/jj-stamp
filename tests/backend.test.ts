@@ -81,7 +81,7 @@ test("full hunk squash rewrites pinned parent, retains other changes, and exact 
   assert.equal(preview.selectedLines, 2);
   assert.ok(
     preview.command.includes(
-      `--from ${state.source.commitId} --into ${state.targets[0].commitId}`,
+      `--from 'commit_id("${state.source.commitId}")' --into 'commit_id("${state.targets[0].commitId}")'`,
     ),
   );
   assert.ok(
@@ -609,7 +609,7 @@ test("nonzero tool exit after real squash blocks this service, while restart onl
     assert.equal(error.code, "PARTIAL_FAILURE");
     assert.ok(
       String(error.details?.output).startsWith(
-        `Working directory: ${root}\nFailed command:\njj squash --from ${state.source.commitId} --into ${state.parent!.commitId} --tool jj-stamp --use-destination-message --keep-emptied`,
+        `Working directory: ${root}\nFailed command:\njj squash --from 'commit_id("${state.source.commitId}")' --into 'commit_id("${state.parent!.commitId}")' --tool jj-stamp --use-destination-message --keep-emptied`,
       ),
     );
     assert.match(String(error.details?.output), /Simulated post-write failure/);
@@ -965,7 +965,7 @@ test("immediate squash chooses only the exact parent, retains partial rows, and 
   assert.deepEqual(undone.state.parent, state.parent);
 });
 
-test("immediate squash rejects target override and concurrent duplicate execution", async () => {
+test("direct squash rejects extra properties and concurrent duplicate execution", async () => {
   const { service, state } = await fixture();
   const hunk = state.files[0].hunks[0];
   const request = {
@@ -975,7 +975,7 @@ test("immediate squash rejects target override and concurrent duplicate executio
   await rejectsCode(
     service.squashLines({
       ...request,
-      target: state.targets[1].changeId,
+      destination: state.targets[1].changeId,
     } as typeof request),
     "INVALID_REQUEST",
   );
@@ -1220,7 +1220,7 @@ test("conflicted one-parent sources expose conflict diffs and file context acros
   );
 });
 
-test("merge parents are unavailable rather than selecting any ancestor; file context fails closed", async () => {
+test("merge parents require an explicit destination and support merged-parent file context", async () => {
   const { state, root } = await fixture();
   await jj(root, ["new", state.source.commitId, "-m", "left"]);
   await writeFile(path.join(root, "left.txt"), "left\n");
@@ -1234,7 +1234,7 @@ test("merge parents are unavailable rather than selecting any ancestor; file con
   const service = new ReviewService({ repoPath: root });
   const merged = await service.getState();
   assert.equal(merged.parent, null);
-  assert.match(merged.squashUnavailable!, /exactly one immediate parent/);
+  assert.equal(merged.squashUnavailable, undefined);
   assert.ok(merged.targets.length > 1);
   const hunk = merged.files[0].hunks[0];
   await rejectsCode(
@@ -1244,10 +1244,24 @@ test("merge parents are unavailable rather than selecting any ancestor; file con
     }),
     "SQUASH_UNAVAILABLE",
   );
-  await rejectsCode(
-    service.getFile({ version: merged.version, path: "merge.txt" }),
-    "UNSUPPORTED_DIFF",
+  assert.deepEqual(
+    await service.getFile({ version: merged.version, path: "merge.txt" }),
+    {
+      oldFile: null,
+      newFile: { name: "merge.txt", contents: "merge\n" },
+    },
   );
+  const result = await service.squashLines({
+    version: merged.version,
+    target: merged.targets.find((target) => target.commitId === left)!.changeId,
+    selections: [{ id: hunk.id, lines: changes(hunk) }],
+  });
+  assert.deepEqual(result.state.files, []);
+  assert.equal(result.state.parent, null);
+  assert.equal(result.state.canUndo, true);
+  const undone = await service.undo(result.state.version);
+  assert.deepEqual(undone.state.source, merged.source);
+  assert.deepEqual(undone.state.files, merged.files);
 });
 
 test("log uses the review revset and real jj graph output, with no custom app text template or ANSI", async () => {
@@ -1466,7 +1480,10 @@ test("new endpoint contracts include parent, raw log, context and immediate squa
   };
   for (const [route, body] of [
     ["squash-lines", {}],
-    ["squash-lines", { ...request, target: state.targets[1].changeId }],
+    ["squash-lines", { ...request, target: "@" }],
+    ["squash-lines", { ...request, target: null }],
+    ["squash-lines", { ...request, target: 7 }],
+    ["squash-lines", { ...request, destination: state.targets[1].changeId }],
     ["squash-lines", { ...request, selections: [] }],
     ["file", {}],
     [
@@ -1541,7 +1558,7 @@ for (const side of ["base", "source"] as const) {
         if (
           args[0] === "file" &&
           args[1] === "show" &&
-          args.includes(revision)
+          args.includes(`commit_id("${revision}")`)
         ) {
           corrupted = true;
           const stdout = "wrong pinned file contents\n";
@@ -1929,9 +1946,9 @@ test("native callback failure includes its full invocation over HTTP and never r
         assert.deepEqual(args.slice(0, 9), [
           "squash",
           "--from",
-          state.source.commitId,
+          `commit_id("${state.source.commitId}")`,
           "--into",
-          state.parent!.commitId,
+          `commit_id("${state.parent!.commitId}")`,
           "--tool",
           "jj-stamp",
           "--use-destination-message",
@@ -2082,7 +2099,7 @@ test("transient preparation file-read failures do not poison cached diffs or aut
     assert.ok(error instanceof ProcessError);
     assert.equal(error.result.stderr, "temporary file read failure\n");
     assert.equal(error.command, "jj");
-    assert.ok(error.args.includes(state.parent!.commitId));
+    assert.ok(error.args.includes(`commit_id("${state.parent!.commitId}")`));
     return true;
   });
   assert.equal(reads, 1);
@@ -2145,7 +2162,7 @@ test("direct squash reads exact pinned file sides and only the new source diff, 
       "file",
       "show",
       "-r",
-      revision,
+      `commit_id("${revision}")`,
       "--ignore-working-copy",
       "--",
       `root-file:${JSON.stringify(file.path)}`,

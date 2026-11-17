@@ -429,9 +429,10 @@ test("real jj renames support live and immutable review, literal old/new side re
     const args = liveReads[index];
     assert.equal(args.at(-1), `root-file:${JSON.stringify(name)}`);
     assert.ok(args.indexOf("--ignore-working-copy") < args.indexOf("--"));
+    // Even full hexadecimal IDs must not resolve through same-named bookmarks.
     assert.equal(
       args[args.indexOf("-r") + 1],
-      index ? state.source.commitId : state.parent!.commitId,
+      `commit_id("${index ? state.source.commitId : state.parent!.commitId}")`,
     );
   }
   const commitId = state.source.commitId;

@@ -1,0 +1,199 @@
+.squash-destination {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+  min-width: 0;
+  max-width: 100%;
+  min-height: 26px;
+  font-size: calc(var(--font-size) - 2px);
+}
+.squash-destination-label {
+  color: var(--muted);
+  white-space: nowrap;
+  font-size: calc(var(--font-size) - 3px);
+}
+.squash-destination-trigger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 26px;
+  padding: 3px 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--panel);
+  color: var(--fg);
+  font: inherit;
+  white-space: nowrap;
+}
+.squash-destination-trigger:hover:not(:disabled) {
+  background: var(--hover);
+  border-color: var(--muted);
+}
+.squash-destination-trigger.is-picking {
+  color: var(--modified);
+  border-color: var(--modified);
+  border-style: dashed;
+}
+.squash-destination-trigger.has-error {
+  border-color: var(--error-border);
+}
+.squash-destination-trigger:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.squash-destination-dot {
+  color: var(--muted);
+}
+.squash-destination-trigger code {
+  font: inherit;
+  color: var(--modified);
+}
+.squash-destination-menu {
+  position: fixed;
+  z-index: 1000;
+  width: min(352px, calc(100vw - 16px));
+  overflow: auto;
+  padding: 5px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--panel);
+  color: var(--fg);
+  box-shadow: 0 8px 24px #0004;
+  font:
+    calc(var(--font-size) - 1px) "Source Code Pro",
+    monospace;
+  white-space: normal;
+}
+.squash-destination-error {
+  margin: 0;
+  padding: 7px 8px;
+  font-size: calc(var(--font-size) - 3px);
+  line-height: 1.5;
+  color: var(--muted);
+}
+
+.squash-destination-menu [role^="menuitem"] {
+  display: flex;
+  gap: 8px;
+  width: 100%;
+  padding: 8px;
+  border: 0;
+  border-radius: 3px;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  font: inherit;
+}
+.squash-destination-menu [role^="menuitem"] > span:last-child {
+  min-width: 0;
+}
+.squash-destination-menu strong {
+  display: block;
+  overflow-wrap: anywhere;
+}
+.squash-destination-menu strong {
+  font-weight: 500;
+}
+
+.squash-destination-menu [role^="menuitem"]:hover:not(:disabled),
+.squash-destination-menu [role^="menuitem"]:focus-visible {
+  background: var(--hover);
+}
+.squash-destination-menu [role^="menuitem"]:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.squash-destination-radio {
+  flex: 0 0 14px;
+  color: var(--modified);
+}
+
+.squash-destination-error {
+  color: var(--error-fg);
+}
+.destination-status-context {
+  color: var(--modified);
+}
+.squash-destination-trigger:focus-visible,
+.squash-destination-menu [role^="menuitem"]:focus-visible,
+.destination-pick-help button:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: -2px;
+}
+.destination-graph-viewport {
+  position: relative;
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+}
+.destination-graph-viewport[hidden] {
+  display: none;
+}
+.destination-graph-viewport > .jj-log {
+  min-width: 0;
+}
+.destination-arrow {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 20px;
+  height: 100%;
+  color: var(--modified);
+  pointer-events: none;
+}
+.destination-arrow path {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1;
+}
+.destination-arrow.is-preview .destination-arrow-elbow {
+  stroke-dasharray: 3 3;
+}
+.destination-pick-help {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border);
+  color: var(--modified);
+  font-size: calc(var(--font-size) - 3px);
+  line-height: 1.5;
+}
+.destination-pick-help button {
+  flex-shrink: 0;
+  min-height: 28px;
+  min-width: 64px;
+  padding: 4px 10px;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  background: var(--panel);
+  color: var(--fg);
+  font: inherit;
+}
+.jj-log .log-row.is-destination,
+.jj-log .log-row.is-destination:has(.log-change:focus-visible) {
+  background: color-mix(in srgb, var(--modified) 15%, var(--panel));
+}
+.jj-log .log-row.is-destination .log-change {
+  color: var(--modified);
+}
+.jj-log.is-picking-destination .log-row.is-destination {
+  box-shadow: none;
+}
+.jj-log.is-picking-destination .log-row.is-eligible-destination {
+  cursor: pointer;
+}
+.jj-log.is-picking-destination .log-change:disabled {
+  color: var(--muted);
+  cursor: not-allowed;
+}
+@media (max-width: 600px) {
+  .squash-destination {
+    flex-wrap: wrap;
+    gap: 3px 6px;
+  }
+}

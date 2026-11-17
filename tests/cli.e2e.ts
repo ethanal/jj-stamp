@@ -376,9 +376,9 @@ process.exit(result.status ?? 1);
     assert.deepEqual(args.slice(0, 9), [
       "squash",
       "--from",
-      initial.source.commitId,
+      `commit_id("${initial.source.commitId}")`,
       "--into",
-      initial.parent!.commitId,
+      `commit_id("${initial.parent!.commitId}")`,
       "--tool",
       "jj-stamp",
       "--use-destination-message",
@@ -421,6 +421,88 @@ process.exit(result.status ?? 1);
     assert.deepEqual(args.slice(args.indexOf("--") + 1), [
       `root-file:${JSON.stringify(file.path)}`,
     ]);
+    await box.assertNoAppState();
+  },
+);
+
+test(
+  "built CLI uses its bundled merged-parent reader for an explicit merge squash and undo",
+  { timeout: 45_000 },
+  async (t) => {
+    const box = await sandbox(t);
+    const repo = path.join(box.root, "merge-repo");
+    await mkdir(repo);
+    await jj(repo, ["git", "init", "--no-colocate"]);
+    for (const [key, value] of [
+      ["user.name", "Merge CLI"],
+      ["user.email", "merge-cli@example.test"],
+      ['revset-aliases."immutable_heads()"', "root()"],
+    ])
+      await jj(repo, ["config", "set", "--repo", key, value]);
+    const id = async () =>
+      (
+        await jj(repo, ["log", "--no-graph", "-r", "@", "-T", "change_id"])
+      ).stdout.trim();
+    const base = Array.from({ length: 30 }, (_, i) => `line ${i}\n`).join("");
+    await writeFile(path.join(repo, "shared.txt"), base);
+    await jj(repo, ["describe", "-m", "Base"]);
+    const baseId = await id();
+    await jj(repo, ["new", baseId, "-m", "Left"]);
+    const leftText = base.replace("line 2\n", "left inherited\n");
+    await writeFile(path.join(repo, "shared.txt"), leftText);
+    const left = await id();
+    await jj(repo, ["new", baseId, "-m", "Right"]);
+    await writeFile(
+      path.join(repo, "shared.txt"),
+      base.replace("line 25\n", "right inherited\n"),
+    );
+    await jj(repo, ["new", left, "@", "-m", "Merge"]);
+    const merged = leftText.replace("line 25\n", "right inherited\n");
+    const source = merged.replace(
+      "line 12\n",
+      "line 12\nselected\nunselected\n",
+    );
+    await writeFile(path.join(repo, "shared.txt"), source);
+    const cli = box.start(["-R", repo, "--no-open", "--port", "0"]);
+    const url = await cli.url();
+    const initial: State = JSON.parse((await request(url, "/api/state")).body);
+    assert.equal(initial.parent, null);
+    assert.equal(initial.squashUnavailable, undefined);
+    const post = async (endpoint: string, body: unknown) =>
+      request(url, endpoint, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-Fold-Request": "1" },
+        body: JSON.stringify(body),
+      });
+    const context = await post("/api/commit-file", {
+      commitId: initial.source.commitId,
+      path: "shared.txt",
+    });
+    assert.equal(context.status, 200, context.body);
+    assert.equal(JSON.parse(context.body).oldFile.contents, merged);
+    const hunk = initial.files[0].hunks[0];
+    const row = hunk.rows.find((row) => row.raw === "+selected")!;
+    assert.ok(row);
+    const squashed = await post("/api/squash-lines", {
+      version: initial.version,
+      target: left,
+      selections: [{ id: hunk.id, lines: [row.index] }],
+    });
+    assert.equal(squashed.status, 200, squashed.body);
+    const after: State = JSON.parse(squashed.body).state;
+    assert.equal(after.canUndo, true);
+    assert.equal(
+      (await jj(repo, ["file", "show", "-r", left, "shared.txt"])).stdout,
+      leftText.replace("line 12\n", "line 12\nselected\n"),
+    );
+    assert.equal(await readFile(path.join(repo, "shared.txt"), "utf8"), source);
+    const undone = await post("/api/undo", { version: after.version });
+    assert.equal(undone.status, 200, undone.body);
+    assert.equal(
+      JSON.parse(undone.body).state.source.commitId,
+      initial.source.commitId,
+    );
+    await cli.stop("SIGTERM");
     await box.assertNoAppState();
   },
 );

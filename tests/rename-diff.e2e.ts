@@ -147,7 +147,13 @@ try {
     /^Diff for/,
   );
   await expect(page.locator(".rename-notice")).toContainText(
-    "Squashing selected edits also squashes the rename into the parent.",
+    "Squashing selected edits also squashes the rename into the destination.",
+  );
+  await expect(
+    page.getByRole("button", { name: `Squash file ${newPath}`, exact: true }),
+  ).toHaveAttribute(
+    "title",
+    "Squash the rename and all text edits into the selected destination",
   );
 
   // Renamed sides hydrate from distinct paths, including collapsed old-side context.
@@ -364,6 +370,7 @@ try {
         body: {
           version: before.version,
           selections: [{ id: pureToken, lines: [] }],
+          target: before.parent!.changeId,
         },
       },
     ]);

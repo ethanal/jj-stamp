@@ -672,3 +672,98 @@ test("temp-prefix canonicalization still rejects scratch symlinks, traversal and
   );
   assert.equal(await readFile(path.join(f.left, "dir/a"), "utf8"), "base\n");
 });
+
+test("older-ancestor jj scratch trees remain source-parent/source and preserve intervening edits", async (t) => {
+  const f = await fixture(t);
+  const jj = (args: string[]) =>
+    execute("jj", ["--no-pager", ...args], {
+      cwd: f.repository,
+      env: {
+        ...process.env,
+        JJ_CONFIG: "",
+        JJ_USER: "Native Test",
+        JJ_EMAIL: "native@example.com",
+      },
+    });
+  await jj(["git", "init", "--no-colocate"]);
+  await jj([
+    "config",
+    "set",
+    "--repo",
+    'revset-aliases."immutable_heads()"',
+    "root()",
+  ]);
+  const base = Array.from({ length: 40 }, (_, i) => `line ${i + 1}\n`).join("");
+  const middle = base.replace("line 20\n", "intermediate revision\n");
+  const source = middle.replace("line 1\n", "line 1\nselected\nunselected\n");
+  const selected = middle.replace("line 1\n", "line 1\nselected\n");
+  await writeFile(path.join(f.repository, "a.txt"), base);
+  await jj(["commit", "-m", "destination"]);
+  await writeFile(path.join(f.repository, "a.txt"), middle);
+  await jj(["commit", "-m", "intermediate"]);
+  await writeFile(path.join(f.repository, "a.txt"), source);
+  await jj(["describe", "-m", "source"]);
+  const plan: DiffEditorPlan = {
+    version: 1,
+    repository: f.repository,
+    files: [
+      {
+        path: "a.txt",
+        base: b64(middle),
+        source: b64(source),
+        result: b64(selected),
+      },
+    ],
+  };
+  const squash = (value: DiffEditorPlan) =>
+    withDiffEditor(value, (config) =>
+      jj([
+        "squash",
+        "--tool",
+        "jj-stamp",
+        "--from",
+        "@",
+        "--into",
+        "@--",
+        "--keep-emptied",
+        "--use-destination-message",
+        ...config,
+        "--",
+        'root-file:"a.txt"',
+      ]),
+    );
+  const operation = (
+    await jj(["op", "log", "--no-graph", "-n", "1", "-T", "id"])
+  ).stdout;
+  // Destination bytes are deliberately wrong for the left scratch inventory.
+  // Reject them before any write, without weakening callback byte validation.
+  await assert.rejects(
+    squash({ ...plan, files: [{ ...plan.files[0], base: b64(base) }] }),
+    (error) => {
+      assert.match((error as { stderr: string }).stderr, /base bytes mismatch/);
+      return true;
+    },
+  );
+  assert.equal(
+    (await jj(["op", "log", "--no-graph", "-n", "1", "-T", "id"])).stdout,
+    operation,
+  );
+  assert.equal(
+    await readFile(path.join(f.repository, "a.txt"), "utf8"),
+    source,
+  );
+  await squash(plan);
+  assert.equal(
+    (await jj(["file", "show", "-r", "@--", "a.txt"])).stdout,
+    base.replace("line 1\n", "line 1\nselected\n"),
+  );
+  assert.equal(
+    (await jj(["file", "show", "-r", "@-", "a.txt"])).stdout,
+    selected,
+  );
+  assert.equal((await jj(["file", "show", "-r", "@", "a.txt"])).stdout, source);
+  assert.equal(
+    await readFile(path.join(f.repository, "a.txt"), "utf8"),
+    source,
+  );
+});

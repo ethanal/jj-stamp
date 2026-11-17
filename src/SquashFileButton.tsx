@@ -25,9 +25,9 @@ export function SquashFileButton({
         reason ||
         (file.oldPath
           ? file.hunks.length
-            ? "Squash the rename and all text edits into the immediate parent"
-            : "Squash the rename into the immediate parent"
-          : "Squash all changes in this file into the immediate parent")
+            ? "Squash the rename and all text edits into the selected destination"
+            : "Squash the rename into the selected destination"
+          : "Squash all changes in this file into the selected destination")
       }
       disabled={
         disabled ||

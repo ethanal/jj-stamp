@@ -7,6 +7,7 @@ import { materializeSelection } from "./selection.ts";
 import { pureRenameSelectionId } from "../src/file-selection.ts";
 import { validateDiffEditorPlan, withDiffEditor } from "./diff-editor.ts";
 import type { DiffEditorPlan } from "./diff-editor.ts";
+import { readMergedParentFiles } from "./diff-reader.ts";
 import { editorExpression, resolveEditorPath } from "./editor.ts";
 import { ApiError } from "./errors.ts";
 import { ReadLane } from "./read-lane.ts";
@@ -83,6 +84,7 @@ export interface ReviewFile {
 export interface CommitContent {
   repo: { name: string; path: string };
   commitId: string;
+  /** Null for a root or a native merged-parent tree without one base commit. */
   baseCommitId: string | null;
   files: ReviewFile[];
 }
@@ -130,6 +132,8 @@ export interface Selection {
 export interface SquashLinesInput {
   version: string;
   selections: Selection[];
+  /** Omit for Parent; explicit destinations are exact eligible change IDs. */
+  target?: string;
 }
 export interface FileContents {
   oldFile: { name: string; contents: string } | null;
@@ -199,13 +203,15 @@ export const reviewLogRevset =
 function same(actual: unknown, expected: unknown) {
   return JSON.stringify(actual) === JSON.stringify(expected);
 }
+// Bare hashes are symbols: a same-named bookmark takes precedence in jj.
+const commitRevset = (id: string) => `commit_id(${JSON.stringify(id)})`;
 function squashArgs(source: string, target: string): string[] {
   return [
     "squash",
     "--from",
-    source,
+    commitRevset(source),
     "--into",
-    target,
+    commitRevset(target),
     "--tool",
     "jj-stamp",
     "--use-destination-message",
@@ -621,10 +627,6 @@ export class ReviewService {
     selections = [{}],
     snapshot = true,
   }: ViewOptions = {}): Promise<ReviewView[]> {
-    const checkExactCommit = selections.some(
-      (selection) =>
-        selection.workingCopy || selection.commitId || selection.revset,
-    );
     const revsets = selections.map((selection) => {
       const source = selection.workingCopy
         ? "@"
@@ -660,9 +662,10 @@ export class ReviewService {
           // all visible history. Preserve configured conflicts() aliases.
           contained(`(${metadataRevset}) & conflicts()`) +
           ' ++ "\\t" ++ json(self.contained_in("mutable()"))' +
-          // Expressions and commit_id() can name hidden or divergent commits. Unlike a
-          // change_id() lookup, counting their rows alone cannot establish safety.
-          (checkExactCommit ? ' ++ "\\t" ++ json(!hidden && !divergent)' : "") +
+          // Counting ancestor rows cannot detect divergent copies outside this
+          // ancestry. Destinations, like exact source selections, must identify
+          // one visible, non-divergent revision globally.
+          ' ++ "\\t" ++ json(!hidden && !divergent)' +
           ' ++ "\\n"',
       ]).catch((error: unknown) => {
         // Invalid expressions and ambiguous commit prefixes fail at evaluation time instead of
@@ -686,7 +689,7 @@ export class ReviewService {
       .map((line) =>
         parseRevisionRecord(
           line,
-          selections.length * 3 + 2 + Number(checkExactCommit),
+          selections.length * 3 + 3,
           "Unrecognized revision metadata.",
         ),
       );
@@ -740,9 +743,12 @@ export class ReviewService {
         mutableSource && !conflictedSource
           ? metadata
               // A resolution can be moved back into its conflicted parent in
-              // pieces. Keep older conflicted ancestors out of legacy targets.
+              // pieces. Keep older conflicted ancestors out of custom targets.
               .filter(
-                (entry) => entry.target && (!entry.conflict || entry.parent),
+                (entry) =>
+                  entry.target &&
+                  entry.availableExactCommit &&
+                  (!entry.conflict || entry.parent),
               )
               .map((entry) => entry.revision)
           : [];
@@ -759,10 +765,12 @@ export class ReviewService {
         ? "The current revision is immutable; viewing only."
         : conflictedSource
           ? "The current revision contains conflicts; viewing only. Resolve it with jj before squashing."
-          : parents.length !== 1
-            ? "Squashing requires exactly one immediate parent; merges are not supported."
+          : parents.length > 1
+            ? targets.length
+              ? undefined
+              : "No eligible mutable destination is available; viewing only."
             : !parent
-              ? "The immediate parent is immutable; squashing into an older ancestor is not allowed."
+              ? "The immediate parent is immutable or unavailable; squashing into an older ancestor is not allowed."
               : undefined;
       return {
         source,
@@ -1221,8 +1229,7 @@ export class ReviewService {
     return pending;
   }
   private commitRevset(commitId: string): string {
-    // Bare hashes are symbols: a same-named bookmark takes precedence in jj.
-    return `commit_id(${JSON.stringify(commitId)})`;
+    return commitRevset(commitId);
   }
   /** Deliberately bypass init(), live views and the selected source's demand cache. */
   private async loadPinnedContent(commitId: string): Promise<CommitContent> {
@@ -1266,12 +1273,6 @@ export class ReviewService {
         "COMMIT_UNAVAILABLE",
         "The exact commit could not be resolved.",
       );
-    if (parents.length > 1)
-      throw new ApiError(
-        422,
-        "UNSUPPORTED_DIFF",
-        "Display content requires a single parent; merge context is not supported.",
-      );
     const diff = (
       await this.pinnedRead(
         root,
@@ -1284,7 +1285,8 @@ export class ReviewService {
     return {
       repo: { name: path.basename(root), path: root },
       commitId,
-      baseCommitId: parents[0] ?? null,
+      // A merge's parent tree is synthesized by jj, not any individual parent.
+      baseCommitId: parents.length === 1 ? parents[0] : null,
       files,
     };
   }
@@ -1317,6 +1319,45 @@ export class ReviewService {
       return structuredClone(await this.pinnedContent(input.commitId));
     });
   }
+  private parentTreeFile(
+    files: Map<string, Buffer | null>,
+    name: string,
+  ): { name: string; contents: string } {
+    const bytes = files.get(name);
+    if (!bytes)
+      throw new ApiError(
+        422,
+        "UNSUPPORTED_DIFF",
+        "The expected file is unavailable in the merged-parent tree.",
+      );
+    const contents = bytes.toString("utf8");
+    if (contents.includes("\0") || !Buffer.from(contents).equals(bytes))
+      throw new ApiError(
+        422,
+        "UNSUPPORTED_DIFF",
+        "Only lossless UTF-8 text contents are supported.",
+      );
+    return { name, contents };
+  }
+  private async mergedParentFiles(
+    root: string,
+    commitId: string,
+    paths: string[],
+    code: "UNSUPPORTED_DIFF" | "UNSAFE_PREVIEW" = "UNSUPPORTED_DIFF",
+  ): Promise<Map<string, Buffer | null>> {
+    try {
+      return await readMergedParentFiles(root, commitId, paths, this.jjRunner);
+    } catch (error) {
+      if (error instanceof ProcessOutputLimitError)
+        throw new ApiError(413, "CONTENT_TOO_LARGE", error.message);
+      if (error instanceof ProcessError) throw error;
+      throw new ApiError(
+        422,
+        code,
+        error instanceof Error ? error.message : String(error),
+      );
+    }
+  }
   getCommitFile(input: {
     commitId: string;
     path: string;
@@ -1333,12 +1374,7 @@ export class ReviewService {
         );
       if (file.unsupported)
         throw new ApiError(422, "UNSUPPORTED_DIFF", file.unsupported);
-      if (!content.baseCommitId)
-        throw new ApiError(
-          422,
-          "UNSUPPORTED_DIFF",
-          "File context requires exactly one source parent.",
-        );
+
       const read = async (revision: string, name: string) => {
         const result = await this.pinnedRead(
           content.repo.path,
@@ -1364,9 +1400,20 @@ export class ReviewService {
           );
         return { name, contents: result.stdout };
       };
-      const oldFile = /^--- \/dev\/null$/m.test(file.patch)
-        ? null
-        : await read(content.baseCommitId, file.oldPath ?? file.path);
+      const oldPath = file.oldPath ?? file.path;
+      let oldFile: { name: string; contents: string } | null = null;
+      if (!/^--- \/dev\/null$/m.test(file.patch)) {
+        if (content.baseCommitId) {
+          oldFile = await read(content.baseCommitId, oldPath);
+        } else {
+          const base = await this.mergedParentFiles(
+            content.repo.path,
+            content.commitId,
+            file.oldPath ? [file.oldPath, file.path] : [file.path],
+          );
+          oldFile = this.parentTreeFile(base, oldPath);
+        }
+      }
       const newFile = /^\+\+\+ \/dev\/null$/m.test(file.patch)
         ? null
         : await read(content.commitId, file.path);
@@ -1386,13 +1433,10 @@ export class ReviewService {
         );
       if (file.unsupported)
         throw new ApiError(422, "UNSUPPORTED_DIFF", file.unsupported);
-      const parents = await this.revisions(`${before.source.commitId}-`);
-      if (parents.length !== 1)
-        throw new ApiError(
-          422,
-          "UNSUPPORTED_DIFF",
-          "File context requires exactly one source parent; merge context is not supported.",
-        );
+      const parents = await this.revisions(
+        `${commitRevset(before.source.commitId)}-`,
+      );
+
       // A literal root-relative fileset prevents glob or fileset syntax in names
       // from reading additional paths. Both revisions are full pinned commit IDs.
       const read = async (revision: string, name: string) => {
@@ -1400,7 +1444,7 @@ export class ReviewService {
           "file",
           "show",
           "-r",
-          revision,
+          commitRevset(revision),
           "--ignore-working-copy",
           "--",
           `root-file:${JSON.stringify(name)}`,
@@ -1419,9 +1463,20 @@ export class ReviewService {
           );
         return { name, contents: result.stdout };
       };
-      const oldFile = /^--- \/dev\/null$/m.test(file.patch)
-        ? null
-        : await read(parents[0].commitId, file.oldPath ?? file.path);
+      const oldPath = file.oldPath ?? file.path;
+      let oldFile: { name: string; contents: string } | null = null;
+      if (!/^--- \/dev\/null$/m.test(file.patch)) {
+        if (parents.length === 1) {
+          oldFile = await read(parents[0].commitId, oldPath);
+        } else {
+          const base = await this.mergedParentFiles(
+            this.root,
+            before.source.commitId,
+            file.oldPath ? [file.oldPath, file.path] : [file.path],
+          );
+          oldFile = this.parentTreeFile(base, oldPath);
+        }
+      }
       const newFile = /^\+\+\+ \/dev\/null$/m.test(file.patch)
         ? null
         : await read(before.source.commitId, file.path);
@@ -1433,29 +1488,35 @@ export class ReviewService {
     input: SquashLinesInput,
   ): Promise<{ state: State; output: string; warning?: string }> {
     return this.serial("squash-lines", async () => {
-      // Reject target overrides even when called directly rather than via HTTP.
+      // Keep direct service callers as strict as the HTTP contract.
       if (
         Object.keys(input).some(
-          (key) => key !== "version" && key !== "selections",
-        )
+          (key) =>
+            key !== "version" && key !== "selections" && key !== "target",
+        ) ||
+        (input.target !== undefined &&
+          (typeof input.target !== "string" ||
+            !/^[k-z]{1,64}$/.test(input.target)))
       )
         throw new ApiError(
           400,
           "INVALID_REQUEST",
-          "Squash destination is always the immediate parent; no target override is accepted.",
+          "Supply the current version, changed-line selections, and an optional full destination change ID.",
         );
       const { state } = await this.captureState();
       this.requireVersion(state, input.version);
       this.assertNotPending();
-      if (!state.parent)
+      if (!input.target && !state.parent)
         throw new ApiError(
           409,
           "SQUASH_UNAVAILABLE",
-          state.squashUnavailable ?? "No mutable immediate parent.",
+          state.squashUnavailable ??
+            "Choose an explicit squash destination; this revision has multiple parents.",
         );
+      const targetId = input.target ?? state.parent!.changeId;
       const preview = await this.prepare(state, {
         ...input,
-        target: state.parent.changeId,
+        target: targetId,
       });
       // Keep pinned inputs private until executeSquash validates them after
       // BOTH the exact preview and the conflict baseline have been read.
@@ -1465,7 +1526,7 @@ export class ReviewService {
           token: "",
           version: state.version,
           source: state.source,
-          target: state.parent,
+          target: state.targets.find((target) => target.changeId === targetId)!,
           selections: structuredClone(input.selections),
           expires: Date.now(),
         },
@@ -1529,7 +1590,7 @@ export class ReviewService {
       throw new ApiError(
         400,
         "INVALID_TARGET",
-        "Choose a mutable immediate parent or a conflict-free mutable ancestor of the current revision.",
+        "Choose a visible, non-divergent mutable immediate parent or conflict-free mutable ancestor of the current revision.",
       );
     if (
       !Array.isArray(input.selections) ||
@@ -1617,19 +1678,29 @@ export class ReviewService {
         "INVALID_SELECTION",
         "The selected hunk does not exist in this diff.",
       );
-    if (!state.parent)
-      throw new ApiError(
-        409,
-        "SQUASH_UNAVAILABLE",
-        "Native selection requires a single mutable immediate parent.",
-      );
+    const selectedFiles = state.files.filter((file) =>
+      picked.some((pick) => pick.path === file.path),
+    );
+    // Destination choice never defines the diff base. jj presents the source's
+    // merged-parent tree for merge revisions, including when selecting one of
+    // those parents as the destination.
+    const mergedBase = state.parent
+      ? null
+      : await this.mergedParentFiles(
+          this.root,
+          state.source.commitId,
+          selectedFiles.flatMap((file) =>
+            file.oldPath ? [file.oldPath, file.path] : [file.path],
+          ),
+          "UNSAFE_PREVIEW",
+        );
     const editPlan: DiffEditorPlan = {
       version: 1,
       repository: this.root,
       files: [],
     };
     const previews: string[] = [];
-    for (const file of state.files) {
+    for (const file of selectedFiles) {
       const selections = picked.filter((pick) => pick.path === file.path);
       if (!selections.length) continue;
       const read = async (revision: string, name = file.path) => {
@@ -1637,7 +1708,7 @@ export class ReviewService {
           "file",
           "show",
           "-r",
-          revision,
+          commitRevset(revision),
           "--ignore-working-copy",
           "--",
           `root-file:${JSON.stringify(name)}`,
@@ -1653,9 +1724,14 @@ export class ReviewService {
           );
         return result.stdoutBytes ?? Buffer.from(result.stdout, "utf8");
       };
-      const base = /^--- \/dev\/null$/m.test(file.patch)
-        ? null
-        : await read(state.parent.commitId, file.oldPath ?? file.path);
+      // jj applies only the selected source delta to the destination and owns
+      // the merge/rebase; our job is exact selection against its parent tree.
+      const basePath = file.oldPath ?? file.path;
+      const base = mergedBase
+        ? mergedBase.get(basePath)!
+        : /^--- \/dev\/null$/m.test(file.patch)
+          ? null
+          : await read(state.parent!.commitId, basePath);
       const source = /^\+\+\+ \/dev\/null$/m.test(file.patch)
         ? null
         : await read(state.source.commitId);
@@ -1920,7 +1996,9 @@ export class ReviewService {
     return (
       same(operation.parents, [parent]) &&
       operation.description === `squash commits into ${target}` &&
-      operation.attributes.includes(`--from ${source} --into ${target} `) &&
+      operation.attributes.includes(
+        `${formatCommand("--from", [commitRevset(source), "--into", commitRevset(target)])} `,
+      ) &&
       operation.attributes.includes("--tool jj-stamp ")
     );
   }

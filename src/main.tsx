@@ -51,6 +51,11 @@ import {
   repositoryPageTitle,
 } from "./ReviewToolbar";
 import { GoToRevision } from "./GoToRevision";
+import { SquashDestination } from "./SquashDestination";
+import {
+  squashDestination,
+  type DestinationChoice,
+} from "./squash-destination";
 import { ShortcutsDialog } from "./ShortcutsDialog";
 import { useSidebarReveal } from "./useSidebarReveal";
 import { useScrollActiveFile } from "./useScrollActiveFile";
@@ -60,6 +65,12 @@ function retainActivePath(files: RepoState["files"], current: string): string {
   return files.some((file) => file.path === current)
     ? current
     : (files[0]?.path ?? "");
+}
+
+interface DestinationPicker {
+  sourceId: string;
+  version: string;
+  candidateId: string | null;
 }
 
 function App() {
@@ -207,18 +218,49 @@ function App() {
   const [graphRefresh, setGraphRefresh] = useState(0);
   const [showFiles, setShowFiles] = usePreference("files-expanded");
   const [showLog, setShowLog] = usePreference("log-expanded");
+  const [destinationChoice, setDestinationChoice] =
+    useState<DestinationChoice | null>(null);
+  const [destinationPicker, setDestinationPicker] =
+    useState<DestinationPicker | null>(null);
+  const destinationPickerRef = useRef(destinationPicker);
+  destinationPickerRef.current = destinationPicker;
+  const destinationTrigger = useRef<HTMLButtonElement>(null);
+  const destination = squashDestination(state, destinationChoice);
+  const customOutsideLog =
+    !!destination.custom &&
+    !log.some((row) => row.revision?.changeId === destination.custom?.changeId);
+  const pickingDestination = !!destinationPicker;
+  // Opening the picker never writes a temporary layout into sidebar preferences.
+  const logExpanded = showLog || pickingDestination;
+  const eligibleDestinationIds = useMemo(
+    () => state?.targets.map((target) => target.changeId) ?? [],
+    [state?.targets],
+  );
+  const displayedDestination = destinationPicker
+    ? (state?.targets.find(
+        (target) => target.changeId === destinationPicker.candidateId,
+      ) ?? null)
+    : destination.target;
   const [logFocusRequest, setLogFocusRequest] = useState(0);
   const [filesFocusRequest, setFilesFocusRequest] = useState(0);
   const [openRevisionId, setOpenRevisionId] = useState<string | null>(null);
   const filesReveal = useSidebarReveal(showFiles, hoverSidebars && !dragging);
-  const logReveal = useSidebarReveal(showLog, hoverSidebars && !dragging);
+  const logReveal = useSidebarReveal(logExpanded, hoverSidebars && !dragging);
   const [style, setStyle] = usePreference("diff-style");
   const configStatus = useConfigStatus();
   const lock = useRef(false);
   const [focusRefreshPending, setFocusRefreshPending] = useState(false);
   const refreshGeneration = useRef(0);
-  const autoRefreshContext = useRef({ dragging, focusRefreshPending });
-  autoRefreshContext.current = { dragging, focusRefreshPending };
+  const autoRefreshContext = useRef({
+    dragging,
+    focusRefreshPending,
+    pickingDestination,
+  });
+  autoRefreshContext.current = {
+    dragging,
+    focusRefreshPending,
+    pickingDestination,
+  };
   const filesystemRefresh = useRef<FilesystemRefresh | null>(null);
   const onDragging = useCallback((value: boolean) => {
     if (value) refreshGeneration.current++;
@@ -288,6 +330,143 @@ function App() {
     setPicked([]);
     setNotice("");
   }, []);
+  const finishDestinationPicker = useCallback(() => {
+    destinationPickerRef.current = null;
+    setDestinationPicker(null);
+    requestAnimationFrame(() =>
+      destinationTrigger.current?.focus({ preventScroll: true }),
+    );
+  }, []);
+  const beginDestinationPicker = useCallback(() => {
+    const current = queue.getSnapshot();
+    if (
+      lock.current ||
+      dragging ||
+      revisionPreview ||
+      current.pending ||
+      current.recovering ||
+      current.halted ||
+      !current.view ||
+      current.view.squashUnavailable ||
+      !current.view.targets.length
+    )
+      return;
+    if (!destinationPickerRef.current) {
+      const picker = {
+        sourceId: current.view.source.changeId,
+        version: current.view.version,
+        candidateId: destination.target?.changeId ?? null,
+      };
+      destinationPickerRef.current = picker;
+      setDestinationPicker(picker);
+    }
+    logReveal.dismiss();
+    setLogFocusRequest((value) => value + 1);
+  }, [
+    queue,
+    dragging,
+    revisionPreview,
+    destination.target?.changeId,
+    logReveal.dismiss,
+  ]);
+  const previewDestination = useCallback(
+    (changeId: string) => {
+      const picker = destinationPickerRef.current;
+      const current = queue.getSnapshot();
+      if (
+        !picker ||
+        lock.current ||
+        current.pending ||
+        current.recovering ||
+        current.halted ||
+        picker.version !== current.view?.version ||
+        picker.sourceId !== current.view?.source.changeId ||
+        !current.view.targets.some((target) => target.changeId === changeId)
+      )
+        return;
+      const next = { ...picker, candidateId: changeId };
+      destinationPickerRef.current = next;
+      setDestinationPicker(next);
+    },
+    [queue],
+  );
+  const chooseDestination = useCallback(
+    (changeId: string) => {
+      const picker = destinationPickerRef.current;
+      const current = queue.getSnapshot();
+      if (
+        !picker ||
+        lock.current ||
+        dragging ||
+        current.pending ||
+        current.recovering ||
+        current.halted ||
+        current.view?.squashUnavailable ||
+        picker.version !== current.view?.version ||
+        picker.sourceId !== current.view?.source.changeId
+      )
+        return;
+      const target = current.view.targets.find(
+        (target) => target.changeId === changeId,
+      );
+      if (!target) return;
+      setDestinationChoice({
+        sourceId: picker.sourceId,
+        mode: "custom",
+        custom: target,
+      });
+      finishDestinationPicker();
+    },
+    [queue, dragging, finishDestinationPicker],
+  );
+  const chooseParentDestination = useCallback(() => {
+    const current = queue.getSnapshot();
+    if (
+      lock.current ||
+      dragging ||
+      revisionPreview ||
+      current.pending ||
+      current.recovering ||
+      current.halted ||
+      !current.view
+    )
+      return;
+    const resolved = squashDestination(current.view, destinationChoice);
+    if (resolved.parentReason) return;
+    setDestinationChoice({
+      sourceId: current.view.source.changeId,
+      mode: "parent",
+      custom: null,
+    });
+    if (destinationPickerRef.current) finishDestinationPicker();
+  }, [
+    queue,
+    dragging,
+    revisionPreview,
+    destinationChoice,
+    finishDestinationPicker,
+  ]);
+  useLayoutEffect(() => {
+    const picker = destinationPickerRef.current;
+    if (
+      picker &&
+      (picker.sourceId !== state?.source.changeId ||
+        picker.version !== state?.version ||
+        working ||
+        dragging ||
+        queued.pending ||
+        queued.halted)
+    )
+      finishDestinationPicker();
+  }, [
+    state?.source.changeId,
+    state?.version,
+    working,
+    dragging,
+    queued.pending,
+    queued.halted,
+    finishDestinationPicker,
+  ]);
   const replace = useCallback(
     (next: RepoState) => {
       setRevisionPreview(null);
@@ -311,6 +490,7 @@ function App() {
       const current = queue.getSnapshot();
       if (
         lock.current ||
+        destinationPickerRef.current ||
         current.pending ||
         current.recovering ||
         (automatic && current.halted)
@@ -381,6 +561,7 @@ function App() {
     if (
       busy ||
       dragging ||
+      pickingDestination ||
       queued.pending ||
       queued.recovering ||
       document.visibilityState !== "visible"
@@ -395,6 +576,7 @@ function App() {
     focusRefreshPending,
     busy,
     dragging,
+    pickingDestination,
     queued.pending,
     queued.recovering,
     queued.halted,
@@ -412,6 +594,7 @@ function App() {
         !lock.current &&
         !busyRef.current &&
         !context.dragging &&
+        !context.pickingDestination &&
         !context.focusRefreshPending &&
         !!current.confirmed &&
         !current.pending &&
@@ -455,7 +638,15 @@ function App() {
   }, [queue, replaceAutomatically]);
   useEffect(() => {
     filesystemRefresh.current?.wake();
-  }, [focused, visible, busy, dragging, focusRefreshPending, queued]);
+  }, [
+    focused,
+    visible,
+    busy,
+    dragging,
+    pickingDestination,
+    focusRefreshPending,
+    queued,
+  ]);
   useEffect(() => {
     if (!focused || !visible || !queued.confirmed) return;
     const events = new EventSource("/api/events");
@@ -555,6 +746,7 @@ function App() {
       // A read-only refresh need not interrupt browsing the current files.
       // Squash remains guarded by the operation lock until it completes.
       if (
+        destinationPickerRef.current ||
         (lock.current &&
           busy !== "refreshing" &&
           busy !== "switching change") ||
@@ -578,6 +770,7 @@ function App() {
       const current = queue.getSnapshot();
       if (
         lock.current ||
+        destinationPickerRef.current ||
         revisionPreview ||
         current.recovering ||
         !current.view
@@ -604,6 +797,7 @@ function App() {
       const current = queue.getSnapshot();
       if (
         lock.current ||
+        destinationPickerRef.current ||
         dragging ||
         revisionPreview ||
         !current.view ||
@@ -611,11 +805,9 @@ function App() {
         current.halted
       )
         return;
-      if (!current.view.parent || current.view.squashUnavailable) {
-        setError(
-          current.view.squashUnavailable ||
-            "The reviewed change needs one mutable parent.",
-        );
+      const resolved = squashDestination(current.view, destinationChoice);
+      if (!resolved.target || resolved.error) {
+        setError(resolved.error || "Choose a squash destination.");
         return;
       }
       const selectedFile = current.view.files.find(
@@ -634,7 +826,7 @@ function App() {
         if (!refs.length) return;
         setError("");
         setNotice("");
-        queue.enqueue(refs);
+        queue.enqueue(refs, resolved.target.changeId);
         enqueued = true;
         const snapshot = queue.getSnapshot();
         const projected =
@@ -681,12 +873,14 @@ function App() {
       file,
       style,
       revisionPreview,
+      destinationChoice,
     ],
   );
   const undo = useCallback(async () => {
     const current = queue.getSnapshot();
     if (
       lock.current ||
+      destinationPickerRef.current ||
       dragging ||
       current.pending ||
       current.recovering ||
@@ -852,6 +1046,7 @@ function App() {
     (changeId: string, open = false) => {
       const current = queue.getSnapshot();
       if (
+        destinationPickerRef.current ||
         (lock.current && busyRef.current !== "switching change") ||
         dragging ||
         current.recovering ||
@@ -895,6 +1090,7 @@ function App() {
       const current = queue.getSnapshot();
       if (
         lock.current ||
+        destinationPickerRef.current ||
         dragging ||
         current.pending ||
         current.recovering ||
@@ -962,11 +1158,19 @@ function App() {
         event.isComposing
       )
         return;
+      if (destinationPickerRef.current) {
+        if (event.key === "Escape") {
+          event.preventDefault();
+          finishDestinationPicker();
+        }
+        return;
+      }
       if (
-        event.target instanceof Element &&
-        event.target.closest(
-          'input, textarea, select, dialog, [contenteditable="true"]',
-        )
+        document.querySelector("dialog[open]") ||
+        (event.target instanceof Element &&
+          event.target.closest(
+            'input, textarea, select, dialog, [contenteditable="true"]',
+          ))
       )
         return;
       switch (event.key.toLowerCase()) {
@@ -1019,6 +1223,7 @@ function App() {
     showFiles,
     showLog,
     selectRevision,
+    finishDestinationPicker,
   ]);
   const additions =
     state?.files.reduce((sum, file) => sum + file.additions, 0) ?? 0;
@@ -1029,9 +1234,10 @@ function App() {
     working ||
     !!revisionPreview ||
     dragging ||
+    pickingDestination ||
     queued.halted ||
-    !state?.parent ||
-    !!state.squashUnavailable;
+    !destination.target ||
+    !!destination.error;
   const squashSourceLabel =
     queued.confirmed?.source.changeIdPrefix ??
     queued.confirmed?.source.changeId;
@@ -1077,10 +1283,39 @@ function App() {
             />
           </span>
         </RevisionHeading>
+        <SquashDestination
+          parent={state?.parent}
+          target={
+            displayedDestination ??
+            (destination.mode === "custom" ? destination.custom : null)
+          }
+          mode={destination.mode}
+
+          canPick={!!state?.targets.length && !state.squashUnavailable}
+          picking={pickingDestination}
+          disabled={
+            !state ||
+            idleActionDisabled ||
+            dragging ||
+            !!revisionPreview ||
+            queued.halted
+          }
+          parentReason={destination.parentReason}
+
+          error={
+            state && !revisionPreview && destination.mode === "custom"
+              ? destination.error
+              : undefined
+          }
+          triggerRef={destinationTrigger}
+          onParent={chooseParentDestination}
+          onPick={beginDestinationPicker}
+        />
         <div className="toolbar-actions">
           <GoToRevision
             disabled={
               idleActionDisabled ||
+              pickingDestination ||
               dragging ||
               queued.halted ||
               !logVersion.current
@@ -1090,7 +1325,7 @@ function App() {
           <button
             className="action-button"
             onClick={() => void refresh()}
-            disabled={idleActionDisabled}
+            disabled={idleActionDisabled || pickingDestination}
             title="Refresh repository"
           >
             Refresh
@@ -1107,13 +1342,13 @@ function App() {
             vimMode={vimMode}
             onVimModeChange={setVimMode}
             persistenceError={configStatus.error}
-            disabled={dragging}
+            disabled={dragging || pickingDestination}
           />
         </div>
       </header>
       <ShortcutsDialog disabled={dragging} />
       <div
-        className={`workspace ${showLog ? "" : "log-collapsed"} ${showFiles ? "" : "files-collapsed"}`}
+        className={`workspace ${logExpanded ? "" : "log-collapsed"} ${showFiles ? "" : "files-collapsed"}`}
         style={
           {
             "--files-preferred-width": `${filesWidth}px`,
@@ -1129,14 +1364,15 @@ function App() {
           files={state?.files}
           activePath={pickerPath}
           source={source}
-          parent={state?.parent}
+          parent={displayedDestination}
           expanded={showFiles}
           peeking={filesReveal.peeking}
           hoverHandlers={filesReveal.handlers}
           width={filesReveal.peeking ? filesPeekWidth : filesWidth}
-          resizeDisabled={dragging}
+          resizeDisabled={dragging || pickingDestination}
           navigationDisabled={
             dragging ||
+            pickingDestination ||
             queued.recovering ||
             (!!busy && busy !== "refreshing" && busy !== "switching change")
           }
@@ -1165,7 +1401,7 @@ function App() {
             selections={selections}
             range={range}
             busy={busy}
-            working={working || !!revisionPreview}
+            working={working || !!revisionPreview || pickingDestination}
             readOnlyPreview={!!revisionPreview}
             navigationNotice={navigationNotice}
             onReturnToSource={
@@ -1179,7 +1415,7 @@ function App() {
             halted={queued.halted}
             error={error}
             diagnostics={diagnostics}
-            idleActionDisabled={idleActionDisabled}
+            idleActionDisabled={idleActionDisabled || pickingDestination}
             squashDisabled={squashDisabled}
             onSquashFile={squash}
             scrollRef={scroll}
@@ -1210,7 +1446,13 @@ function App() {
           vimMode={vimMode}
           rows={log}
           source={source}
-          expanded={showLog}
+          destination={displayedDestination}
+          pickingDestination={pickingDestination}
+          eligibleDestinationIds={eligibleDestinationIds}
+          onPreviewDestination={previewDestination}
+          onChooseDestination={chooseDestination}
+          onCancelDestination={finishDestinationPicker}
+          expanded={logExpanded}
           peeking={logReveal.peeking}
           hoverHandlers={logReveal.handlers}
           width={logReveal.peeking ? logPeekWidth : logWidth}
@@ -1222,6 +1464,10 @@ function App() {
           hasVersion={!!logVersion.current}
           onResize={logReveal.peeking ? setLogPeekWidth : setLogWidth}
           onToggle={() => {
+            if (destinationPickerRef.current) {
+              finishDestinationPicker();
+              return;
+            }
             setOpenRevisionId(null);
             logReveal.dismiss();
             setShowLog((value) => !value);
@@ -1237,6 +1483,16 @@ function App() {
         busy={busy}
         recovering={queued.recovering}
         halted={queued.halted}
+        destinationNotice={
+          pickingDestination
+            ? `Preview destination: ${displayedDestination?.changeId.slice(0, 8) ?? "choose a revision in the log"}`
+            : destination.mode === "custom"
+              ? destination.error ||
+                (customOutsideLog
+                  ? `Destination ${destination.target?.changeId.slice(0, 8)} is outside the current log filter`
+                  : undefined)
+              : undefined
+        }
         notice={
           configStatus.error ||
           notice ||
@@ -1248,14 +1504,18 @@ function App() {
         showSquash={!state?.squashUnavailable}
         canSquash={!!count && !squashDisabled}
         canUndo={
-          !!queued.confirmed?.canUndo && !idleActionDisabled && !dragging
+          !!queued.confirmed?.canUndo &&
+          !idleActionDisabled &&
+          !dragging &&
+          !pickingDestination
         }
-        working={working}
+        working={working || pickingDestination}
         dragging={dragging}
         squashTitle={
           file?.squashUnsupported ??
           state?.squashUnavailable ??
-          "Queue selected lines into this change’s immediate parent"
+          (destination.error ||
+            `Queue selected lines into ${destination.mode === "parent" ? "Parent" : "Custom revision"} ${destination.target?.changeId.slice(0, 8) ?? ""}`)
         }
         onSquash={() => squash()}
         onUndo={() => void undo()}
