@@ -37,6 +37,12 @@ const edit = (name = "a.txt"): DiffEditorPlan["files"][number] => ({
   result: b64("selected\n"),
 });
 
+test("validation failures explain the attempted action without editor terminology", () => {
+  assert.throws(() => validateDiffEditorPlan({}), {
+    message: "Cannot squash selected changes: invalid manifest",
+  });
+});
+
 async function fixture(t: TestContext, files = [edit()]) {
   const root = await mkdtemp(
     path.join(await realpath(os.tmpdir()), "jj-stamp-native-test-"),
@@ -415,9 +421,12 @@ test("explicit manifest modes require all keys, canonical numeric values and mat
   );
   for (const entry of invalid) {
     const plan = { ...f.plan, files: [entry] };
-    assert.throws(() => validateDiffEditorPlan(plan), /Native diff editor/);
+    assert.throws(
+      () => validateDiffEditorPlan(plan),
+      /Cannot squash selected changes/,
+    );
     await writeFile(f.manifest, JSON.stringify(plan));
-    await assert.rejects(f.apply(), /Native diff editor/);
+    await assert.rejects(f.apply(), /Cannot squash selected changes/);
   }
   assert.equal(await readFile(path.join(f.right, "a.txt"), "utf8"), "source\n");
 });
@@ -535,7 +544,7 @@ test("strict manifest schema, paths and canonical base64 fail closed", async (t)
   ];
   for (const value of invalid) {
     await writeFile(f.manifest, JSON.stringify(value));
-    await assert.rejects(f.apply(), /Native diff editor/);
+    await assert.rejects(f.apply(), /Cannot squash selected changes/);
   }
   await writeFile(f.manifest, "{");
   await assert.rejects(f.apply(), SyntaxError);
@@ -583,7 +592,7 @@ for (const side of ["left", "right"] as const) {
       }
       await assert.rejects(
         applyDiffEditor(f.manifest, left, right),
-        /Native diff editor/,
+        /Cannot squash selected changes/,
       );
       assert.equal(await readFile(outside, "utf8"), "source\n");
     });

@@ -35,7 +35,7 @@ export type DiffEditorPlan = {
 };
 
 function fail(message: string): never {
-  throw new Error(`Native diff editor: ${message}`);
+  throw new Error(`Cannot squash selected changes: ${message}`);
 }
 
 function objectWithKeys(

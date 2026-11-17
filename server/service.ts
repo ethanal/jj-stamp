@@ -2092,7 +2092,7 @@ export class ReviewService {
         ? "The tool failed without a recorded history change. Nothing was automatically retried. Refresh before trying again."
         : "The tool failed and history may have changed. Inspect jj op log before doing anything else. No retry or rollback was attempted.") +
         (nativeSquash
-          ? " Native-editor manifest paths are temporary and have been removed; this diagnostic command is not a replayable retry."
+          ? " The temporary squash plan has been removed; this diagnostic command is not a replayable retry."
           : ""),
       { output, ...(current ? { currentOperation: current } : {}) },
     );

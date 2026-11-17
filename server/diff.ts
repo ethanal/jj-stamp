@@ -22,7 +22,7 @@ export interface FileDiff {
   newMode?: "100644" | "100755";
   hunks: Hunk[];
 }
-/** Native-editor scope: regular UTF-8 text only. */
+/** Selection scope: regular UTF-8 text only. */
 function assertSupported(patch: string): void {
   if (/^dissimilarity index /m.test(patch)) {
     throw new Error("Dissimilarity metadata is not supported.");
@@ -46,7 +46,7 @@ function readPath(header: string, prefix: string): string | null {
   if (value === "/dev/null") return null;
   if (!value.startsWith(prefix) || /[\s\x00-\x1f\x7f"\\]/.test(value)) {
     throw new Error(
-      "Whitespace, quoted, or control-character file paths are not supported safely by the native diff editor.",
+      "File paths containing whitespace, quotes, or control characters are not supported.",
     );
   }
   const relative = value.slice(prefix.length);
@@ -270,7 +270,7 @@ export function parseFile(patch: string, path: string): FileDiff {
       // Keep the existing conservative format boundary for this experiment.
       if (raw.startsWith("--- ") || raw.startsWith("+++ ")) {
         throw new Error(
-          "This patch contains header-like code lines that the native diff editor cannot parse safely.",
+          "This patch contains header-like code lines that cannot be parsed safely.",
         );
       }
       const row: Row = { raw, hunk: hunks.length, index: hunk.rows.length + 1 };

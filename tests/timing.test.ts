@@ -173,7 +173,7 @@ test("subprocess classifications only expose allowlisted command labels", () => 
   assert.equal(jjTimingName(["file", "list", "private"]), "jj file list");
   assert.equal(
     toolTimingName(["squash", "--from", "private", "--tool", "jj-stamp"]),
-    "jj squash (native editor)",
+    "jj squash",
   );
   for (const command of ["hunks", "patch"])
     assert.equal(toolTimingName([command, "private"]), "jj");
@@ -383,11 +383,7 @@ for (const asyncObserver of [false, true]) {
     assert.ok(
       records[3].subprocesses.some(({ name }) => name === "jj file show"),
     );
-    assert.ok(
-      records[6].subprocesses.some(
-        ({ name }) => name === "jj squash (native editor)",
-      ),
-    );
+    assert.ok(records[6].subprocesses.some(({ name }) => name === "jj squash"));
     assert.ok(
       records[7].subprocesses.some(({ name }) => name === "jj op revert"),
     );

@@ -7,7 +7,7 @@ A local, keyboard-first review UI for Jujutsu. Run **`jj-stamp`** in a jj worksp
 
 Source Code Pro from Google Fonts is bundled locally for the UI, code, and file tree; a shared **Font size** setting controls the UI and diffs (10–24px, default 13px), including on narrow screens. The full font keeps graph connectors aligned without runtime font downloads. Its license is included in `public/fonts/source-code-pro/OFL.txt`.
 
-Pierre Diffs renders the code; Pierre Trees renders the file sidebar. This experimental branch uses a native TypeScript diff editor: selected file contents are constructed directly, and `jj squash --tool jj-stamp` performs the history rewrite. No hunk tool or patch-application executable is used.
+Pierre Diffs renders the code; Pierre Trees renders the file sidebar. This experimental branch constructs selected file contents directly in TypeScript, and `jj squash --tool jj-stamp` performs the history rewrite. No hunk tool or patch-application executable is used.
 
 ## Install with Nix
 
@@ -37,7 +37,7 @@ Or run without installing, from this checkout:
 nix run . -- --repository /path/to/workspace
 ```
 
-The flake bundles the browser assets, Node.js, `jj`, and jj-stamp's native diff-editor callback. `flake.lock` pins the Nix inputs. The launcher pins its absolute `jj` executable via `JJ_STAMP_JJ`; callbacks use the same Node.js runtime as the server. There is no Rust/Cargo or GNU `patch` dependency in this branch.
+The flake bundles the browser assets, Node.js, `jj`, and jj-stamp's squash callback. `flake.lock` pins the Nix inputs. The launcher pins its absolute `jj` executable via `JJ_STAMP_JJ`; callbacks use the same Node.js runtime as the server. There is no Rust/Cargo or GNU `patch` dependency in this branch.
 
 No npm installation or runtime download of assets or bundled tools is needed. Builds may need network access. Your browser and any external helpers configured in jj (for example, signing tools) are not bundled. Linux browser launch uses bundled `xdg-open`; macOS uses system `open`.
 
@@ -154,7 +154,7 @@ This is a **single-user local tool**, not a network service. Host and Origin che
 - If a queued job fails, unsent jobs are canceled and the actual repository is reloaded. Completed jobs are not rolled back. Failed mutations are never automatically retried. A definite `STALE_STATE` rejection refreshes the diff, clears stale selections, and enables fresh selections without a manual refresh; a brief notice explains the cancellation. Other failures, or a failed recovery read, keep the queue paused.
 - Do not close the browser with queued work. An accepted request can finish after a disconnection, but unsent browser-local jobs are lost.
 
-The backend stores **no durable operation state on disk**. A native squash temporarily writes a private manifest containing the pinned input and selected output bytes; it is removed after success or failure. An abrupt process/VM crash can leave that private temporary directory behind; it is not a recovery journal and is never reused. Selected revision, preview tokens, undo information and recovery guards exist only in the running process. Existing `operations-*.json` files from older versions are ignored and are not deleted automatically. Appearance and layout preferences are stored separately in the shared config file described above.
+The backend stores **no durable operation state on disk**. A squash temporarily writes a private manifest containing the pinned input and selected output bytes; it is removed after success or failure. An abrupt process/VM crash can leave that private temporary directory behind; it is not a recovery journal and is never reused. Selected revision, preview tokens, undo information and recovery guards exist only in the running process. Existing `operations-*.json` files from older versions are ignored and are not deleted automatically. Appearance and layout preferences are stored separately in the shared config file described above.
 
 An ambiguous history operation blocks further mutations and revision switching in that process. Inspect `jj op log` and the current diff before restarting; restarting clears only app bookkeeping, never rolls back history or retries a squash. Undo is available only for operations performed by the current process. Do not blindly repeat a selection after an uncertain result. See [backend notes](server/README.md).
 
@@ -169,7 +169,7 @@ npm start -- --repository /path/to/workspace --no-open
 
 Without Nix, provide Node.js 24+ and `jj` on `PATH`. No hunk tool, Rust toolchain, or external `patch` is needed. Unpack/install the complete `dist/` directory: the bundled CLI must keep its sibling `diff-editor.cjs`, `diff-reader.cjs`, and browser assets. `JJ_STAMP_JJ`, when set, selects the same absolute jj executable for reads, mutations and diagnostics.
 
-Native selection supports regular, lossless UTF-8 text with or without final newlines (including CRLF), including executable scripts, text edits in validated renames, and explicitly targeted merge revisions. Squashes preserve the executable bit; binary detection uses contents, not file permissions or extensions. Final-newline changes belong to their preceding code row; EOF markers are not separate selectable lines. Partial selections that would put more content after an unterminated line are rejected: select the related EOF changes together. Existing conservative restrictions on binary files, copies, mode changes, and ambiguous paths/formats remain. Colliding or overlapping selected paths fail closed. File snapshots are verified as bytes before applying a selection; there is no context search, offset adjustment, or fuzz.
+Line selection supports regular, lossless UTF-8 text with or without final newlines (including CRLF), including executable scripts, text edits in validated renames and copies, and explicitly targeted merge revisions. Squashes preserve or carry selected executable-bit changes; binary detection uses contents, not file permissions or extensions. Final-newline changes belong to their preceding code row; EOF markers are not separate selectable lines. Partial selections that would put more content after an unterminated line are rejected: select the related EOF changes together. Existing conservative restrictions on binary files, nonregular modes, and ambiguous paths/formats remain. Colliding or overlapping selected paths fail closed. File snapshots are verified as bytes before applying a selection; there is no context search, offset adjustment, or fuzz.
 `npm run build` typechecks and produces **`dist/cli.cjs`**, **`dist/diff-editor.cjs`**, **`dist/diff-reader.cjs`**, and **`dist/client/`**. The CLI is bundled, so it does not need `node_modules` at runtime. `npm run dev -- -R /path/to/workspace` rebuilds and runs it; restart after source edits.
 
 ```sh
@@ -185,7 +185,7 @@ nix flake check                 # installed Nix packages and runtime tools
 
 Browser suites share an ephemeral loopback server and Chromium fixture with HMR disabled. Setup failures and test completion close the browser, HTTP server and Vite instance; no fixed development port or running app is required.
 
-Tests use isolated real jj repositories. They cover exact line squashes, optimistic queue compaction/recovery, revision selection and rewrite tracking, immutable/conflict guards, explicit merge destinations, stale requests, process-local undo and recovery guards, tree and graph interactions, repository-name titles, local HTTP protections, browser launching, and graceful terminal-signal shutdown. Native tests cover exact selection, repeated text, asymmetric context, invalid UTF-8, CRLF, creation/deletion, source-tree preservation, callback inventories and filesystem containment. Nix checks exercise the installed CLI with poisoned obsolete hunk/patch executables on `PATH`, including a real partial squash, undo, and complete native-command error diagnostics.
+Tests use isolated real jj repositories. They cover exact line squashes, optimistic queue compaction/recovery, revision selection and rewrite tracking, immutable/conflict guards, explicit merge destinations, stale requests, process-local undo and recovery guards, tree and graph interactions, repository-name titles, local HTTP protections, browser launching, and graceful terminal-signal shutdown. Selection and callback tests cover exact selection, repeated text, asymmetric context, invalid UTF-8, CRLF, creation/deletion, source-tree preservation, callback inventories and filesystem containment. Nix checks exercise the installed CLI with poisoned obsolete hunk/patch executables on `PATH`, including a real partial squash, undo, and complete squash-command error diagnostics.
 
 `@pierre/trees` is pinned to a beta release; review its API when upgrading.
 
@@ -249,7 +249,7 @@ Run a newly built version with tracing enabled, reproduce a few slow change swit
 jj-stamp --trace -R /path/to/workspace 2> /tmp/jj-stamp-trace.log
 ```
 
-Each `[jj-stamp timing]` line is a JSON record for one completed backend request (including startup). It contains the operation name, queue wait (stateful queue or independent immutable-read lane), execution time, success/failure, and the start offset/duration of every service-launched subprocess. Timings are milliseconds. The native diff-editor callback is included in the `jj squash (native editor)` duration, not listed separately. Parallel spans overlap; don't sum them to estimate request wall time. Browser rendering, network transfer, and JSON response serialization are outside these backend timings.
+Each `[jj-stamp timing]` line is a JSON record for one completed backend request (including startup). It contains the operation name, queue wait (stateful queue or independent immutable-read lane), execution time, success/failure, and the start offset/duration of every service-launched subprocess. Timings are milliseconds. The squash callback is included in the `jj squash` duration, not listed separately. Parallel spans overlap; don't sum them to estimate request wall time. Browser rendering, network transfer, and JSON response serialization are outside these backend timings.
 
 Trace records contain no repository paths, revision IDs, command arguments, file contents, or subprocess output. Ordinary errors on stderr can still contain sensitive details. To share only the diagnostic records:
 

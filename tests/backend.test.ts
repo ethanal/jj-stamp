@@ -1938,11 +1938,11 @@ test("revision API validates strict versioned identity input and returns the exp
   assert.deepEqual(await service.getState(), moved);
 });
 
-test("native callback failure includes its full invocation over HTTP and never retried by reads or restart", async (t) => {
+test("squash callback failure includes its full invocation over HTTP and never retried by reads or restart", async (t) => {
   const { root, state } = await fixture();
-  // Native callback errors must preserve jj diagnostics, without legacy dependency advice.
+  // Callback errors must preserve jj diagnostics without internal product labels.
   const stderr =
-    "Error: Failed to edit diff\nCaused by:\n    jj-stamp native callback: source tree did not match pinned plan\n    Tool exited with exit status: 1\n";
+    "Error: Failed to edit diff\nCaused by:\n    Cannot squash selected changes: source tree did not match pinned plan\n    Tool exited with exit status: 1\n";
   let squashCalls = 0;
   let invocation = "";
   const service = new ReviewService({
@@ -1994,7 +1994,9 @@ test("native callback failure includes its full invocation over HTTP and never r
   assert.equal(response.headers.get("cache-control"), "no-store");
   const error = await response.json();
   assert.equal(error.code, "TOOL_FAILED");
-  assert.match(error.output, /native callback/);
+  assert.match(error.output, /Cannot squash selected changes/);
+  assert.doesNotMatch(error.error, /native|editor/i);
+  assert.match(error.error, /temporary squash plan has been removed/);
   assert.doesNotMatch(error.error, /GNU patch|required patch executable/);
   assert.match(
     error.error,
