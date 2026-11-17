@@ -1023,10 +1023,7 @@ test("immutable immediate parent never falls back to an older candidate", async 
     `${state.source.changeId} | ${state.targets[1].changeId}`,
   ]);
   restricted = await service.getState();
-  assert.deepEqual(
-    restricted.targets.map((target) => target.changeId),
-    [state.targets[1].changeId],
-  );
+  assert.deepEqual(restricted.targets, []);
   assert.equal(restricted.parent, null);
   const hunk = restricted.files[0].hunks[0];
   await rejectsCode(

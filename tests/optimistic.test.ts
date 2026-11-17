@@ -3,6 +3,7 @@ import test from "node:test";
 import { parseFile } from "../server/diff.ts";
 import {
   changeSignature,
+  canProjectSquash,
   combineSquashRefs,
   projectSquash,
   refsFromSelection,
@@ -1035,5 +1036,221 @@ test("executable additions and deletions retain their mode after partial project
       mode === "new" ? /^index .* 100755$/m : /^deleted file mode 100755$/m,
     );
     validatePatches(partial);
+  }
+});
+
+test("forward projection changes NEW only: additions disappear and deletions become context", () => {
+  const repo = state(
+    file("a", "@@ -1,4 +1,4 @@\n before\n-first\n-second\n+one\n+two\n end"),
+  );
+  const original = structuredClone(repo);
+  const projected = projectSquash(repo, select(repo, "a-0", 2, 4), true);
+  const expected = state(
+    file("a", "@@ -1,4 +1,4 @@\n before\n first\n-second\n+two\n end"),
+  );
+  assert.equal(changeSignature(projected), changeSignature(expected));
+  assert.deepEqual(projected.files[0].hunks[0].rows, [
+    { index: 1, raw: " before", oldLine: 1, newLine: 1 },
+    { index: 2, raw: " first", oldLine: 2, newLine: 2 },
+    { index: 3, raw: "-second", oldLine: 3 },
+    { index: 4, raw: "+two", newLine: 3 },
+    { index: 5, raw: " end", oldLine: 4, newLine: 4 },
+  ]);
+  assert.deepEqual(repo, original);
+  validatePatches(projected);
+});
+
+test("forward offsets cross removed hunks on NEW while OLD stays at its baseline", () => {
+  const repo = state(
+    file(
+      "a",
+      "@@ -2,0 +3,2 @@\n+x\n+y\n@@ -10,2 +11,0 @@\n-d1\n-d2\n@@ -20,2 +20,2 @@\n-old\n+new\n end",
+    ),
+  );
+  const projected = projectSquash(
+    repo,
+    refsFromSelection(repo, { "a-0": [1, 2], "a-1": [1] }),
+    true,
+  );
+  const expected = state(
+    file(
+      "a",
+      "@@ -10,2 +10,1 @@\n d1\n-d2\n@@ -20,2 +19,2 @@\n-old\n+new\n end",
+    ),
+  );
+  assert.equal(changeSignature(projected), changeSignature(expected));
+  assert.deepEqual(
+    projected.files[0].hunks.map((hunk) => hunk.header),
+    expected.files[0].hunks.map((hunk) => hunk.header),
+  );
+  validatePatches(projected);
+});
+
+test("forward added files stay new; restored deleted files become ordinary with their original mode", () => {
+  for (const executable of [false, true]) {
+    const mode = executable ? "100755" : "100644";
+    for (const kind of ["new", "deleted"] as const) {
+      const entry = file(
+        "a",
+        kind === "new"
+          ? "@@ -0,0 +1,3 @@\n+first\n+second\n+third"
+          : "@@ -1,3 +0,0 @@\n-first\n-second\n-third",
+        kind,
+      );
+      entry.patch = entry.patch.replaceAll("100644", mode);
+      const repo = state(entry);
+      const first = select(repo, "a-0", 2);
+      const partial = projectSquash(repo, first, true);
+      const expected = state(
+        kind === "new"
+          ? file("a", "@@ -0,0 +1,2 @@\n+first\n+third", "new")
+          : file("a", "@@ -1,3 +1,1 @@\n-first\n second\n-third"),
+      );
+      assert.equal(changeSignature(partial), changeSignature(expected));
+      assert.match(
+        partial.files[0].patch,
+        kind === "new"
+          ? new RegExp(`^new file mode ${mode}$`, "m")
+          : /^--- a\/a\n\+\+\+ b\/a$/m,
+      );
+      if (kind === "deleted" && executable)
+        assert.match(partial.files[0].patch, /^index .* 100755$/m);
+      if (kind === "deleted")
+        assert.doesNotMatch(
+          partial.files[0].patch,
+          /deleted file mode|\/dev\/null/,
+        );
+      validatePatches(partial);
+      const remaining = refsFromFile(partial, "a");
+      const combined = combineSquashRefs(repo, first, remaining, true);
+      assert.deepEqual(projectSquash(repo, combined, true).files, []);
+      assert.deepEqual(projectSquash(partial, remaining, true).files, []);
+    }
+  }
+});
+
+test("forward compaction maps shifted NEW refs back exactly, including repeated text and OLD refs", () => {
+  const repo = state(
+    file("a", "@@ -1,2 +1,3 @@\n-same\n-same\n+same\n+same\n+same"),
+    file("b", "@@ -0,0 +1,2 @@\n+same\n+same", "new"),
+  );
+  let seed = 56789;
+  for (let run = 0; run < 20; run++) {
+    let view = repo;
+    let combined: RowRef[] = [];
+    while (view.files.length) {
+      const available = view.files.flatMap((entry) =>
+        refsFromFile(view, entry.path),
+      );
+      seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
+      const next = [available[seed % available.length]];
+      combined = combineSquashRefs(repo, combined, next, true);
+      view = projectSquash(view, next, true);
+      assert.equal(
+        changeSignature(projectSquash(repo, combined, true)),
+        changeSignature(view),
+      );
+      validatePatches(view);
+    }
+    assert.equal(combined.length, 7);
+  }
+  const first = select(repo, "a-0", 3);
+  const partial = projectSquash(repo, first, true);
+  const next = select(partial, "a-0", 3);
+  assert.equal(next[0].line, 1);
+  assert.equal(combineSquashRefs(repo, first, next, true)[1].line, 2);
+  const old = select(partial, "a-0", 2);
+  assert.equal(combineSquashRefs(repo, first, old, true)[1].line, 2);
+  assert.throws(
+    () => combineSquashRefs(repo, first, [next[0], next[0]], true),
+    /Duplicate/,
+  );
+});
+
+test("forward EOF validation follows the changed NEW side, not the fixed OLD side", () => {
+  const marker = "\\ No newline at end of file";
+  const repo = state(
+    file("a", `@@ -1 +1 @@\n-old\n${marker}\n+new\n${marker}`),
+  );
+  const partial = projectSquash(repo, select(repo, "a-0", 2), true);
+  assert.equal(
+    changeSignature(partial),
+    changeSignature(state(file("a", `@@ -1 +0,0 @@\n-old\n${marker}`))),
+  );
+  validatePatches(partial);
+  assert.throws(
+    () => projectSquash(repo, select(repo, "a-0", 1), true),
+    /related EOF changes together/,
+  );
+  assert.deepEqual(
+    projectSquash(repo, refsFromFile(repo, "a"), true).files,
+    [],
+  );
+  const tail = state(
+    file("a", `@@ -1,2 +1,2 @@\n-old\n+new\n-tail\n${marker}\n+end`),
+  );
+  const restored = projectSquash(tail, select(tail, "a-0", 3, 4), true);
+  assert.match(
+    restored.files[0].patch,
+    / tail\n\\ No newline at end of file\n$/,
+  );
+  validatePatches(restored);
+});
+
+test("forward mode changes revert to OLD mode; move/copy metadata requires native confirmation", () => {
+  for (const executable of [false, true]) {
+    const entry = changedMode(
+      file("run.sh", "@@ -1,2 +1,2 @@\n-old\n+new\n-tail\n+end"),
+      executable,
+    );
+    const repo = state(entry);
+    const first = select(repo, "run.sh-0", 2);
+    const partial = projectSquash(repo, first, true);
+    assert.equal(partial.files[0].oldMode, undefined);
+    assert.equal(partial.files[0].newMode, undefined);
+    assert.match(
+      partial.files[0].patch,
+      new RegExp(`^index .* ${entry.oldMode}$`, "m"),
+    );
+    assert.doesNotMatch(partial.files[0].patch, /^(?:old|new) mode/m);
+    const expected = state(
+      file("run.sh", "@@ -1,2 +1,1 @@\n-old\n-tail\n+end"),
+    );
+    assert.equal(changeSignature(partial), changeSignature(expected));
+    const rest = refsFromFile(partial, "run.sh");
+    assert.deepEqual(
+      projectSquash(repo, combineSquashRefs(repo, first, rest, true), true)
+        .files,
+      [],
+    );
+    validatePatches(partial);
+    const modeOnly = changedMode(
+      {
+        path: "mode",
+        patch: "diff --git a/mode b/mode\n",
+        hunks: [],
+        additions: 0,
+        deletions: 0,
+      },
+      executable,
+    );
+    assert.deepEqual(
+      projectSquash(
+        state(modeOnly),
+        refsFromFile(state(modeOnly), "mode"),
+        true,
+      ).files,
+      [],
+    );
+  }
+  for (const entry of [pureRename(), copied(), copied(true)]) {
+    const repo = state(entry);
+    const selected = refsFromFile(repo, entry.path);
+    assert.equal(canProjectSquash(repo, selected, true), false);
+    assert.equal(canProjectSquash(repo, selected), true);
+    assert.throws(
+      () => projectSquash(repo, selected, true),
+      /authoritative result/,
+    );
   }
 });

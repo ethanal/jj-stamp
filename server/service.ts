@@ -248,6 +248,7 @@ export class ReviewService {
   private activePath?: string;
   private history: SessionHistory = {};
   private readonly plans = new Map<string, Plan>();
+
   // Commit IDs pin both the tree and its parent(s). Never cache mutable revsets,
   // workspace snapshots, operation heads, conflicts, or configuration decisions.
   private readonly fileCache = new Map<string, ReviewFile[]>();
@@ -652,7 +653,14 @@ export class ReviewService {
             : selection.revset
               ? `(${selection.revset})`
               : this.sourceRevset;
-      return [source, `mutable() & ::${source} ~ ${source}`, `${source}-`];
+      return [
+        source,
+        `mutable() & ::${source} ~ ${source}`,
+        `${source}-`,
+        // Viewing immutable history must not enumerate its entire mutable
+        // descendant cone when no squash from that source can be authorized.
+        `mutable() & (${source} & mutable()):: ~ ${source}`,
+      ];
     });
     const metadataRevset = revsets
       .flat()
@@ -677,8 +685,8 @@ export class ReviewService {
           // all visible history. Preserve configured conflicts() aliases.
           contained(`(${metadataRevset}) & conflicts()`) +
           ' ++ "\\t" ++ json(self.contained_in("mutable()"))' +
-          // Counting ancestor rows cannot detect divergent copies outside this
-          // ancestry. Destinations, like exact source selections, must identify
+          // Counting related rows cannot detect divergent copies outside this
+          // history. Destinations, like exact source selections, must identify
           // one visible, non-divergent revision globally.
           ' ++ "\\t" ++ json(!hidden && !divergent)' +
           ' ++ "\\n"',
@@ -704,19 +712,20 @@ export class ReviewService {
       .map((line) =>
         parseRevisionRecord(
           line,
-          selections.length * 3 + 3,
+          selections.length * 4 + 3,
           "Unrecognized revision metadata.",
         ),
       );
     return selections.map((selection, index) => {
       const metadata = rows.map(({ revision, flags }) => ({
         revision,
-        source: flags[index * 3],
-        target: flags[index * 3 + 1],
-        parent: flags[index * 3 + 2],
-        conflict: flags[selections.length * 3],
-        mutable: flags[selections.length * 3 + 1],
-        availableExactCommit: flags[selections.length * 3 + 2],
+        source: flags[index * 4],
+        ancestor: flags[index * 4 + 1],
+        parent: flags[index * 4 + 2],
+        descendant: flags[index * 4 + 3],
+        conflict: flags[selections.length * 4],
+        mutable: flags[selections.length * 4 + 1],
+        availableExactCommit: flags[selections.length * 4 + 2],
       }));
       const sources = metadata
         .filter((entry) => entry.source)
@@ -754,26 +763,38 @@ export class ReviewService {
       const mutableSource = metadata.some(
         (entry) => entry.source && entry.mutable,
       );
+      const parents = metadata.filter((entry) => entry.parent);
+      const singleMutableParent =
+        parents.length === 1 &&
+        parents[0].mutable &&
+        parents[0].availableExactCommit;
       const targets =
         mutableSource && !conflictedSource
           ? metadata
               // A resolution can be moved back into its conflicted parent in
-              // pieces. Keep older conflicted ancestors out of custom targets.
+              // pieces. Other custom targets must be conflict-free. Without a
+              // single eligible parent, descendants still permit an explicit
+              // forward squash; never substitute an older ancestor for Parent.
               .filter(
                 (entry) =>
-                  entry.target &&
+                  (entry.descendant ||
+                    (entry.ancestor &&
+                      (singleMutableParent || parents.length > 1))) &&
                   entry.availableExactCommit &&
                   (!entry.conflict || entry.parent),
               )
-              .map((entry) => entry.revision)
+              // Keep the existing ancestor order; append new forward targets.
+              .sort((a, b) => Number(a.descendant) - Number(b.descendant))
+              .map((entry) =>
+                entry.descendant
+                  ? { ...entry.revision, isDescendant: true }
+                  : entry.revision,
+              )
           : [];
-      const parents = metadata
-        .filter((entry) => entry.parent)
-        .map((entry) => entry.revision);
       const parent =
         parents.length === 1
           ? (targets.find(
-              (target) => target.commitId === parents[0].commitId,
+              (target) => target.commitId === parents[0].revision.commitId,
             ) ?? null)
           : null;
       const squashUnavailable = !mutableSource
@@ -784,7 +805,7 @@ export class ReviewService {
             ? targets.length
               ? undefined
               : "No eligible mutable destination is available; viewing only."
-            : !parent
+            : !parent && !targets.length
               ? "The immediate parent is immutable or unavailable; squashing into an older ancestor is not allowed."
               : undefined;
       return {
@@ -1528,7 +1549,7 @@ export class ReviewService {
           409,
           "SQUASH_UNAVAILABLE",
           state.squashUnavailable ??
-            "Choose an explicit squash destination; this revision has multiple parents.",
+            "Choose an explicit squash destination; this revision has no single eligible mutable parent.",
         );
       const targetId = input.target ?? state.parent!.changeId;
       const preview = await this.prepare(state, {
@@ -1607,7 +1628,7 @@ export class ReviewService {
       throw new ApiError(
         400,
         "INVALID_TARGET",
-        "Choose a visible, non-divergent mutable immediate parent or conflict-free mutable ancestor of the current revision.",
+        "Choose a visible, non-divergent mutable immediate parent or conflict-free mutable ancestor or descendant of the current revision.",
       );
     if (
       !Array.isArray(input.selections) ||
@@ -1938,10 +1959,123 @@ export class ReviewService {
       stale();
     return this.executeSquash(plan, before);
   }
+  /** A forward squash should conserve the destination and all later trees.
+   * Capture the whole visible cone, not just eligible mutable destinations. */
+  private async forwardCone(
+    revision: string,
+    operation: string,
+  ): Promise<Array<{ changeId: string; commitId: string }>> {
+    const { stdout } = await this.jjRunner(
+      this.root,
+      [
+        "log",
+        "--ignore-working-copy",
+        "--at-operation",
+        operation,
+        "--no-graph",
+        "--config",
+        "ui.log-word-wrap=false",
+        "-r",
+        `${revision}::`,
+        "-T",
+        'json(change_id) ++ "\\t" ++ json(commit_id) ++ "\\n"',
+      ],
+      { maxOutputBytes: 64 * 1024 },
+    ).catch((error: unknown) => {
+      if (error instanceof ProcessOutputLimitError)
+        throw new ApiError(
+          422,
+          "UNSAFE_PREVIEW",
+          "The forward squash destination has too much descendant history to validate safely. Choose a newer destination.",
+        );
+      throw error;
+    });
+    if (Buffer.byteLength(stdout) > 64 * 1024)
+      throw new ApiError(
+        422,
+        "UNSAFE_PREVIEW",
+        "The forward squash destination has too much descendant history to validate safely. Choose a newer destination.",
+      );
+    const rows = stdout.trim().split("\n").filter(Boolean);
+    if (rows.length > 128)
+      throw new ApiError(
+        422,
+        "UNSAFE_PREVIEW",
+        "A forward squash can validate at most 128 destination and descendant commits. Choose a newer destination.",
+      );
+    return rows.map((row) => {
+      const fields: unknown[] = row
+        .split("\t")
+        .map((value) => JSON.parse(value));
+      const [changeId, commitId] = fields;
+      if (
+        fields.length !== 2 ||
+        typeof changeId !== "string" ||
+        !/^[k-z]{1,64}$/.test(changeId) ||
+        typeof commitId !== "string" ||
+        !/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(commitId)
+      )
+        throw new Error("Unrecognized forward squash revision metadata.");
+      return { changeId, commitId };
+    });
+  }
+  private async forwardContentsChanged(
+    before: Array<{ changeId: string; commitId: string }>,
+    target: string,
+    operation: string,
+  ): Promise<boolean> {
+    const after = await this.forwardCone(this.changeRevset(target), operation);
+    const ids = new Map(after.map((row) => [row.changeId, row.commitId]));
+    let changed = after.length !== before.length || ids.size !== after.length;
+    for (const old of before) {
+      const current = ids.get(old.changeId);
+      if (!current) {
+        changed = true;
+        continue;
+      }
+      if (current === old.commitId) continue;
+      // Commit hashes change when their parents are rewritten, even when the
+      // tree does not. Compare pinned trees using portable jj, not Git internals.
+      const diff = await this.jjRunner(
+        this.root,
+        [
+          "diff",
+          "--ignore-working-copy",
+          "--at-operation",
+          operation,
+          "--from",
+          commitRevset(old.commitId),
+          "--to",
+          commitRevset(current),
+          "--summary",
+        ],
+        { maxOutputBytes: 64 * 1024 },
+      );
+      if (diff.stdout.trim()) changed = true;
+    }
+    return changed;
+  }
   private async executeSquash(
     plan: Plan,
     before: State,
   ): Promise<{ state: State; output: string; warning?: string }> {
+    const forwardBefore = plan.target.isDescendant
+      ? await this.forwardCone(
+          commitRevset(plan.target.commitId),
+          before.operation,
+        )
+      : undefined;
+    if (
+      forwardBefore &&
+      (!forwardBefore.some((row) => row.commitId === plan.target.commitId) ||
+        new Set(forwardBefore.map((row) => row.changeId)).size !==
+          forwardBefore.length)
+    )
+      throw new ApiError(
+        422,
+        "UNSAFE_PREVIEW",
+        "The forward squash destination or its descendants are unavailable or divergent; their contents cannot be validated safely.",
+      );
     // Compare change identities: rebasing an existing conflict changes its
     // commit ID, but does not mean this squash introduced that conflict.
     const existingConflicts = await this.conflictChangeIds();
@@ -2020,6 +2154,20 @@ export class ReviewService {
       )
         warning =
           "The squash created a conflict. Undo this operation or resolve the affected revision with jj before editing it.";
+      if (
+        forwardBefore &&
+        (await this.forwardContentsChanged(
+          forwardBefore,
+          plan.target.changeId,
+          afterOp.id,
+        ))
+      )
+        warning = [
+          warning,
+          "The forward squash changed existing destination or descendant contents. jj can drop later inverse edits when moving changes forward. Undo this operation and inspect the affected history before continuing.",
+        ]
+          .filter(Boolean)
+          .join("\n\n");
       after = await this.readState();
       if (after.operation !== afterOp.id)
         throw new Error("Another operation followed the squash.");

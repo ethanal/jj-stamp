@@ -5,6 +5,8 @@ export interface Revision {
   author?: string;
   /** jj's shortest distinguishing prefix, not an arbitrary fixed truncation. */
   changeIdPrefix?: string;
+  /** Set only on state.targets entries that follow the reviewed source. */
+  isDescendant?: boolean;
 }
 
 /** Selection expressions are bounded and passed only as literal jj arguments. */

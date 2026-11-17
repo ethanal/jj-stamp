@@ -445,7 +445,7 @@ for (const api of ["direct", "legacy", "http"] as const) {
   });
 }
 
-test("custom destinations require exact eligible ancestor IDs, never expressions, prefixes or fallback", async (t) => {
+test("custom destinations require exact eligible related IDs, never expressions, prefixes or fallback", async (t) => {
   const { root, state } = await fixture(t);
   await jj(root, ["new", state.source.commitId, "-m", "Descendant"]);
   const descendant = (
@@ -463,12 +463,13 @@ test("custom destinations require exact eligible ancestor IDs, never expressions
     },
   });
   const current = await service.getState();
+  assert.ok(current.targets.some((target) => target.changeId === descendant));
+  const olderTarget = state.targets[1].changeId;
   for (const target of [
     current.source.changeId,
-    current.targets[1].changeId.slice(0, 8),
+    olderTarget.slice(0, 8),
     "z".repeat(32),
     sibling,
-    descendant,
     "z".repeat(1),
   ]) {
     await rejectsCode(
@@ -490,12 +491,16 @@ test("custom destinations require exact eligible ancestor IDs, never expressions
     "set",
     "--repo",
     'revset-aliases."immutable_heads()"',
-    current.targets[1].commitId,
+    state.targets[1].commitId,
   ]);
   const restricted = await service.getState();
   assert.equal(restricted.parent!.changeId, current.parent!.changeId);
   await rejectsCode(
-    service.squashLines({ ...request(current), version: restricted.version }),
+    service.squashLines({
+      ...request(current),
+      target: olderTarget,
+      version: restricted.version,
+    }),
     "INVALID_TARGET",
   );
 });
