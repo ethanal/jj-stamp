@@ -72,12 +72,21 @@ try {
   await page.getByRole("button", { name: "Settings", exact: true }).click();
   const settings = page.getByRole("dialog", { name: "Settings", exact: true });
   const input = settings.getByLabel("jj log revset", { exact: true });
+  await expect(
+    settings.getByRole("button", {
+      name: /reset|back.?up/i,
+      includeHidden: true,
+    }),
+  ).toHaveCount(0);
   await expect(input).toHaveValue(defaultLogRevset);
   await expect(settings).toHaveCSS("width", "720px");
   for (const width of [600, 390, 320]) {
     await page.setViewportSize({ width, height: 900 });
     const box = await settings.boundingBox();
     assert(box && box.x >= 16 && box.x + box.width <= width - 16);
+    await expect(
+      settings.getByRole("button", { name: "Apply", exact: true }),
+    ).toBeInViewport();
   }
   await page.setViewportSize({ width: 1440, height: 900 });
   await input.fill("broken(");
@@ -140,13 +149,16 @@ try {
   assert.deepEqual(revisions, ["bad", "bbbb"]);
   await page.getByRole("button", { name: "Settings", exact: true }).click();
   await expect(input).toHaveValue("none()");
-  await settings.getByRole("button", { name: "Reset to default" }).click();
+  await input.fill(defaultLogRevset);
   await expect(input).toHaveValue(defaultLogRevset);
   await settings.getByRole("button", { name: "Apply", exact: true }).click();
   await expect(page.locator(".log-row")).toHaveCount(2);
   await expect(
     page.getByLabel("Current change ID", { exact: true }),
   ).toHaveText(second.changeId);
+  await expect
+    .poll(async () => (await fixture.readConfig())["log-revset"])
+    .toBe(defaultLogRevset);
   assert.deepEqual(errors, []);
   console.log("Revision lookup and log settings browser checks passed.");
 } finally {

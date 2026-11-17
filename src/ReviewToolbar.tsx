@@ -2,7 +2,6 @@ import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import type { Revision } from "./types";
 import { useDialogBackdropDismiss } from "./useDialogBackdropDismiss";
 import {
-  defaultLogRevset,
   colorSchemes,
   fontSizeLimits,
   parseFontSize,
@@ -95,9 +94,7 @@ export function SettingsDialog({
   vimMode,
   onVimModeChange,
   persistenceError,
-  canResetPersistence,
-  onResetPersistence,
-  disabled: interactionDisabled,
+  disabled,
 }: {
   logRevset: string;
   onLogRevsetChange: (revset: string) => Promise<void>;
@@ -110,14 +107,8 @@ export function SettingsDialog({
   hoverSidebars: boolean;
   onHoverSidebarsChange: (enabled: boolean) => void;
   persistenceError?: string;
-  canResetPersistence?: boolean;
-  onResetPersistence?: () => Promise<string>;
   disabled: boolean;
 }) {
-  const [confirmReset, setConfirmReset] = useState(false);
-  const [resetting, setResetting] = useState(false);
-  const [resetNotice, setResetNotice] = useState("");
-  const disabled = interactionDisabled || resetting;
   const [revsetDraft, setRevsetDraft] = useState(logRevset);
   const savedRevset = useRef(logRevset);
   useEffect(() => {
@@ -140,8 +131,6 @@ export function SettingsDialog({
         onClick={() => {
           setRevsetDraft(logRevset);
           setRevsetError("");
-          setConfirmReset(false);
-          setResetNotice("");
           dialog.current?.showModal();
         }}
         disabled={disabled}
@@ -184,63 +173,6 @@ export function SettingsDialog({
         {persistenceError && (
           <p className="settings-help" role="status">
             {persistenceError}
-          </p>
-        )}
-        {canResetPersistence && onResetPersistence && (
-          <div className="settings-recovery">
-            {confirmReset ? (
-              <>
-                <p className="settings-help">
-                  Reset shared settings to defaults in every window? The invalid
-                  file will be backed up beside config.json before resetting.
-                  You can also repair the file manually instead.
-                </p>
-                <div className="revset-actions">
-                  <button
-                    type="button"
-                    disabled={disabled}
-                    onClick={() => setConfirmReset(false)}
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    type="button"
-                    disabled={disabled}
-                    onClick={async () => {
-                      setResetting(true);
-                      setResetNotice("");
-                      try {
-                        const backup = await onResetPersistence();
-                        setResetNotice(
-                          `Settings reset to defaults. Original file backed up as ${backup} beside config.json.`,
-                        );
-                        setConfirmReset(false);
-                      } catch {
-                        // The shared store reports the failure with the other
-                        // persistence errors; never retry a reset implicitly.
-                      } finally {
-                        setResetting(false);
-                      }
-                    }}
-                  >
-                    Back up and reset settings
-                  </button>
-                </div>
-              </>
-            ) : (
-              <button
-                type="button"
-                disabled={disabled}
-                onClick={() => setConfirmReset(true)}
-              >
-                Reset invalid settings…
-              </button>
-            )}
-          </div>
-        )}
-        {resetNotice && (
-          <p className="settings-help" role="status">
-            {resetNotice}
           </p>
         )}
         <section
@@ -318,13 +250,6 @@ export function SettingsDialog({
             </p>
           )}
           <div className="revset-actions">
-            <button
-              type="button"
-              disabled={disabled || savingRevset}
-              onClick={() => setRevsetDraft(defaultLogRevset)}
-            >
-              Reset to default
-            </button>
             <button
               type="submit"
               disabled={

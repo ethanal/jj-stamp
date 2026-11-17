@@ -48,7 +48,7 @@ The flake exposes a default package/app and development shell for x86_64/aarch64
 ## Review
 
 - **Open a revision:** click **Open revision** or press **`c`**, type a change ID or commit ID (full ID or unique prefix), or a revset matching exactly one commit (such as `@-` or `@+`), and press **Enter**. **Escape** dismisses the compact input. Invalid, empty, or multi-commit matches leave the displayed revision unchanged. The selected change is followed through later rewrites; this does not check out the revision. The input opens immediately in either keyboard mode; Vim’s `gg` remains dedicated to jumping to the first diff line. Lookup waits until queued squashes and other operations finish.
-- **Filter the log:** edit **Settings → jj log revset** and click **Apply**. The expression is validated before saving to the shared config file; errors keep the previous filter and graph. **Reset to default**, then **Apply**, restores the built-in review filter. Filtering never changes the displayed revision; Open revision works even for IDs outside the graph.
+- **Filter the log:** edit **Settings → jj log revset** and click **Apply**. The expression is validated before saving to the shared config file; errors keep the previous filter and graph. Filtering never changes the displayed revision; Open revision works even for IDs outside the graph.
 - **Choose a change:** click its ID in the right-hand graph. Immutable and conflicted changes can be viewed quietly, with squash controls hidden. Pressing `s` explains why squashing is unavailable. The chosen change is followed by its full change ID through rewrites; moving the working copy or a bookmark does not silently select something else.
 - **Choose a destination:** **Squash into →** in the top bar shows **Parent** or **Custom** and its revision ID, even with the log hidden. **Parent** always means the reviewed revision's actual immediate parent—not the next visible log row. **Choose revision in log…** temporarily opens the graph: hover or use **↑ / ↓** to preview an eligible mutable ancestor, then click its row or press **Enter** to choose it. **Escape** or **Cancel** restores the previous destination; choosing or canceling restores the previous log layout and preserves selected lines. Picking never squashes anything. Selecting **Parent** clears the custom destination; use the log picker to choose a custom revision again. An active custom destination stays pinned by its full change ID through rewrites and graph-filter changes. An unavailable custom revision blocks squash rather than silently falling back. The file-sidebar footer shows `source → destination`; hover either ID for its full value. A revision with multiple parents requires an explicit destination: the top bar shows **Choose revision…**, and **Parent** is unavailable. Choose an eligible mutable parent or older ancestor in the log; no parent is selected automatically. A single immutable or unavailable immediate parent still blocks squash rather than substituting an older ancestor.
 - **Select lines:** drag on code or line numbers to select changed lines for squash. **Shift+click/drag** extends the range from its anchor. A plain click/drag starts a new range; click a selected single line again to clear it. **Alt+drag** selects native browser text instead. Included context is highlighted but never squashed. Switching changes or files clears the selection. Mouse selection works the same in Vim mode.
@@ -132,16 +132,10 @@ responses and settings events contain only the typed, effective settings.
 
 Malformed JSON, invalid UTF-8, a non-object root, and oversized files are
 rejected. Such edits leave each connected window on its last valid settings and
-show an error; repair the file to resume sync. Removing the file resets
-preferences to defaults. If you cannot repair malformed JSON, invalid UTF-8 or
-a non-object root, choose **Reset invalid settings…** in Settings, then **Back up
-and reset settings**. This resets shared preferences in every window, but first
-saves the original bytes to a private `config.json.<unique-id>.invalid.bak` file
-in the same directory. Canceling does not change the file. Valid objects (even
-with unknown keys or unsupported values), unreadable, nonregular, and oversized
-files cannot be reset this way.
-After a repair or reset, failed edits are not replayed; make any desired changes
-again.
+show an error; manually repair or remove the file to resume sync. Removing the
+file returns preferences to defaults. Settings has no backup or reset buttons;
+invalid files are never replaced through the UI or API. After a manual repair or
+removal, failed edits are not replayed; make any desired changes again.
 A manually edited log revset must be valid for the repositories using it; unlike
 the Settings dialog, a text editor cannot validate it against jj before saving.
 Unsaved log-filter drafts in open dialogs are preserved when other windows edit

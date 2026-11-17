@@ -99,7 +99,26 @@ for (const page of pages) {
     page.getByRole("checkbox", { name: /Vim mode/ }),
   ).not.toBeChecked();
 }
+await assertNoRecoveryControls();
 await assert.rejects(readFile(configPath), { code: "ENOENT" });
+
+async function assertNoRecoveryControls() {
+  for (const page of pages) {
+    await expect(
+      page.getByRole("button", {
+        name: /reset|back.?up/i,
+        includeHidden: true,
+      }),
+    ).toHaveCount(0);
+  }
+}
+
+async function screenshot(name: string) {
+  if (!process.env.JJ_STAMP_SCREENSHOTS) return;
+  const directory = path.resolve(process.env.JJ_STAMP_SCREENSHOTS);
+  await mkdir(directory, { recursive: true });
+  await first.page.screenshot({ path: path.join(directory, name) });
+}
 
 async function scheme(value: string) {
   for (const page of pages) {
@@ -175,8 +194,13 @@ await expect(
   first.page.getByRole("textbox", { name: "jj log revset" }),
 ).toHaveValue("none()");
 await expect(thirdDraft).toHaveValue("mine()");
+// Reopening discards that unsaved draft so subsequent disk edits can follow
+// the saved revset in all windows again.
+await third.getByRole("button", { name: "Close settings" }).click();
+await third.getByRole("button", { name: "Settings", exact: true }).click();
+await expect(thirdDraft).toHaveValue("none()");
 
-// Malformed edits retain the last good view, surface an error, and recover.
+// Malformed edits retain the last good view and require manual file repair.
 await writeFile(configPath, "{ broken JSON");
 for (const page of pages) {
   await expect(page.getByRole("dialog").getByRole("status")).toContainText(
@@ -187,6 +211,7 @@ for (const page of pages) {
     "dim",
   );
 }
+await assertNoRecoveryControls();
 // An attempted save must fail without overwriting the invalid file.
 await first.page.getByLabel("Color scheme").selectOption("light");
 await expect(first.page.getByRole("dialog").getByRole("status")).toContainText(
@@ -201,6 +226,7 @@ await scheme("light");
 for (const page of pages) {
   await expect(page.getByRole("dialog").getByRole("status")).toHaveCount(0);
 }
+assert.deepEqual(await readdir(root), ["config.json"]);
 
 // Future keys and unsupported enum/type/range values are tolerated on external
 // edits and initial page loads. Valid siblings apply; only unsupported fields
@@ -221,23 +247,33 @@ const futureConfig = {
 };
 await writeFile(configPath, JSON.stringify(futureConfig));
 await scheme("dark");
-await first.page.reload();
-await first.page.getByRole("button", { name: "Settings", exact: true }).click();
-await scheme("dark");
-for (const page of pages) {
-  await expect(page.getByLabel("Font size", { exact: true })).toHaveValue("13");
-  await expect(
-    page.getByRole("checkbox", { name: /Vim mode/ }),
-  ).not.toBeChecked();
-  await expect(
-    page.getByRole("checkbox", { name: /Reveal sidebars on hover/ }),
-  ).toBeChecked();
-  await expect(page.locator(".workspace")).toHaveClass(/files-collapsed/);
-  await expect(page.getByRole("dialog").getByRole("status")).toHaveCount(0);
-  await expect(
-    page.getByRole("button", { name: "Reset invalid settings…" }),
-  ).toHaveCount(0);
+async function assertUnsupportedDefaults() {
+  await scheme("dark");
+  for (const page of pages) {
+    await expect(page.getByLabel("Font size", { exact: true })).toHaveValue(
+      "13",
+    );
+    await expect(
+      page.getByRole("checkbox", { name: /Vim mode/ }),
+    ).not.toBeChecked();
+    await expect(
+      page.getByRole("checkbox", { name: /Reveal sidebars on hover/ }),
+    ).toBeChecked();
+    await expect(page.locator(".workspace")).toHaveClass(/files-collapsed/);
+    await expect(
+      page.getByRole("textbox", { name: "jj log revset" }),
+    ).toHaveValue("all()");
+    await expect(page.getByRole("dialog").getByRole("status")).toHaveCount(0);
+  }
+  await assertNoRecoveryControls();
 }
+await assertUnsupportedDefaults();
+// All three windows also tolerate unsupported settings on a fresh page load,
+// including both independent server connections.
+await Promise.all(pages.map((page) => page.reload()));
+for (const page of pages)
+  await page.getByRole("button", { name: "Settings", exact: true }).click();
+await assertUnsupportedDefaults();
 for (const url of [first.url, second.url]) {
   const response = await fetch(`${url}/api/config`);
   assert.equal(response.status, 200);
@@ -263,11 +299,9 @@ for (const page of pages) {
   ).not.toBeChecked();
   await expect(page.getByRole("dialog")).toBeVisible();
   await expect(page.getByRole("dialog").getByRole("status")).toHaveCount(0);
-  await expect(
-    page.getByRole("button", { name: "Reset invalid settings…" }),
-  ).toHaveCount(0);
 }
-await screenshot("unknown-config-values-supported.png");
+await assertNoRecoveryControls();
+await screenshot("settings-default-fallback-no-reset.png");
 
 // Explicitly replacing one unsupported field leaves every other raw key alone.
 await first.page.getByLabel("Color scheme").selectOption("light");
@@ -280,72 +314,54 @@ await expect
     "color-scheme": "light",
   });
 
-// Only malformed documents need recovery. It is explicit, preserves the exact
-// original bytes, and resets every connected window.
+// Malformed documents retain the last valid settings, with manual repair
+// guidance rather than backup/reset controls or automatic file replacement.
 const malformedConfig = '{ "font-size": 15, "color-scheme": "light", }\n';
 await writeFile(configPath, malformedConfig);
-const recoveryButton = first.page.getByRole("button", {
-  name: "Reset invalid settings…",
-});
-await expect(recoveryButton).toBeVisible();
-await expect(first.page.getByRole("dialog").getByRole("status")).toContainText(
-  "invalid JSON",
-);
-async function screenshot(name: string) {
-  if (!process.env.JJ_STAMP_SCREENSHOTS) return;
-  const directory = path.resolve(process.env.JJ_STAMP_SCREENSHOTS);
-  await mkdir(directory, { recursive: true });
-  await first.page.screenshot({ path: path.join(directory, name) });
+for (const page of pages) {
+  const status = page.getByRole("dialog").getByRole("status");
+  await expect(status).toContainText("invalid JSON");
+  await expect(status).toContainText(/manually|manual repair|edit.*file/i);
+  await expect(page.getByLabel("Font size", { exact: true })).toHaveValue("13");
+  await expect(
+    page.getByRole("checkbox", { name: /Reveal sidebars on hover/ }),
+  ).not.toBeChecked();
+  await expect(page.locator(".workspace")).toHaveClass(/files-collapsed/);
+  await expect(
+    page.getByRole("textbox", { name: "jj log revset" }),
+  ).toHaveValue("all()");
 }
-await screenshot("malformed-settings-recovery.png");
-await recoveryButton.click();
-await first.page.getByRole("button", { name: "Cancel", exact: true }).click();
+await scheme("light");
+await assertNoRecoveryControls();
+await screenshot("settings-malformed-no-reset.png");
 assert.equal(await readFile(configPath, "utf8"), malformedConfig);
 assert.deepEqual(await readdir(root), ["config.json"]);
-await recoveryButton.click();
-await expect(
-  first.page.getByText(/Reset shared settings to defaults/),
-).toBeVisible();
-await screenshot("malformed-settings-confirmation.png");
-await first.page
-  .getByRole("button", {
-    name: "Back up and reset settings",
-  })
-  .click();
-await scheme("dark");
-await expect(first.page.getByRole("dialog").getByRole("status")).toContainText(
-  "Settings reset to defaults. Original file backed up as",
+
+// The user repairs the file externally. A valid partial config clears every
+// window's error and uses defaults for omitted fields, without a server restart.
+await writeFile(
+  configPath,
+  JSON.stringify({ "color-scheme": "dim", "font-size": 16 }),
 );
-await expect(recoveryButton).toHaveCount(0);
-const backups = (await readdir(root)).filter((name) =>
-  name.endsWith(".invalid.bak"),
-);
-assert.equal(backups.length, 1);
-assert.equal(
-  await readFile(path.join(root, backups[0]), "utf8"),
-  malformedConfig,
-);
-for (const page of [second.page, third]) {
+await scheme("dim");
+for (const page of pages) {
   await expect(page.getByRole("dialog").getByRole("status")).toHaveCount(0);
+  await expect(page.getByLabel("Font size", { exact: true })).toHaveValue("16");
+  await expect(page.locator(".workspace")).not.toHaveClass(/files-collapsed/);
+  await expect(
+    page.getByRole("textbox", { name: "jj log revset" }),
+  ).toHaveValue(defaultConfig["log-revset"]);
 }
-await screenshot("malformed-settings-reset-complete.png");
+await assertNoRecoveryControls();
 await first.page.getByLabel("Color scheme").selectOption("light");
 await scheme("light");
 await expect
   .poll(async () => (await first.readConfig())["color-scheme"])
   .toBe("light");
-
-// Optional evidence captures the real UI from both independently served windows.
-if (process.env.JJ_STAMP_SCREENSHOTS) {
-  const directory = path.resolve(process.env.JJ_STAMP_SCREENSHOTS);
-  await mkdir(directory, { recursive: true });
-  await first.page.screenshot({
-    path: path.join(directory, "shared-config-server-one.png"),
-  });
-  await second.page.screenshot({
-    path: path.join(directory, "shared-config-server-two.png"),
-  });
+for (const page of pages) {
+  await expect(page.getByRole("dialog").getByRole("status")).toHaveCount(0);
 }
+assert.deepEqual(await readdir(root), ["config.json"]);
 
 // Deletion resets to defaults and recreation works without restarting streams.
 await unlink(configPath);
@@ -361,5 +377,5 @@ await expect(first.page.locator("html")).toHaveAttribute(
 assert.deepEqual(first.errors, []);
 assert.deepEqual(second.errors, []);
 console.log(
-  "Config sync browser checks passed: two servers, three windows, background sync, merged edits, atomic disk saves, tolerant future values on external edit/reload, raw unknown preservation, explicit field replacement, malformed edits, failed-save repair, confirmed reset with backup, subsequent save, deletion/recreation, reload, ignored browser cache.",
+  "Config sync browser checks passed: two servers, three windows, background sync, merged edits, atomic disk saves, tolerant future values on external edit/reload, raw unknown preservation, explicit field replacement, malformed edits, failed-save manual repair, no backup/reset controls or backup files, subsequent save, deletion/recreation, reload, ignored browser cache.",
 );

@@ -15,7 +15,6 @@ import {
 
 const MAX_CONFIG_BYTES = 64 * 1024;
 const MAX_PENDING_TASKS = 64;
-const resetInvalidSchema = z.object({ confirm: z.literal(true) }).strict();
 
 export function resolveConfigPath(
   env: NodeJS.ProcessEnv = process.env,
@@ -48,16 +47,8 @@ function ioError(error: unknown): ConfigError {
 
 function invalid(message: string): ConfigError {
   return new ConfigError(
-    `${message} Repair config.json or explicitly reset invalid preferences to defaults with an automatic backup.`,
+    `${message} Manually repair or remove config.json to resume shared preferences.`,
     "CONFIG_INVALID",
-    409,
-  );
-}
-
-function notInvalid(): ConfigError {
-  return new ConfigError(
-    "Shared preferences are valid or missing. Only an existing invalid config.json can be reset.",
-    "CONFIG_NOT_INVALID",
     409,
   );
 }
@@ -362,55 +353,22 @@ export class ConfigStore {
           return current.config;
         const next = { ...current.config, ...patch };
         return this.replace(next, serializePatch(current, patch));
-      }, true);
+      });
     });
   }
 
-  resetInvalid(value: unknown): Promise<{ config: Config; backup: string }> {
-    resetInvalidSchema.parse(value);
-    return this.enqueue(() =>
-      this.withLock(async () => {
-        // Size, readability and file-type errors are deliberately outside the
-        // parse catch: even CONFIG_INVALID oversized files cannot be reset.
-        const bytes = await readBytes(this.file);
-        if (bytes === undefined) throw notInvalid();
-        try {
-          parseBytes(bytes);
-          throw notInvalid();
-        } catch (error) {
-          if (
-            !(error instanceof ConfigError) ||
-            error.code !== "CONFIG_INVALID"
-          )
-            throw error;
-        }
-        const backup = `${this.file}.${randomUUID()}.invalid.bak`;
-        // Keep a completed backup even if replacing the config later fails.
-        // A failed/incomplete backup never permits a replacement.
-        await writePrivate(backup, bytes);
-        const config = await this.replace({ ...defaultConfig });
-        return { config, backup: path.basename(backup) };
-      }),
-    );
-  }
-
-  /** Shared by saves and recovery, covering the entire read/validate/write. */
-  private async withLock<T>(
-    work: () => Promise<T>,
-    createDirectory = false,
-  ): Promise<T> {
+  /** Lock the entire save read/validate/write across cooperating processes. */
+  private async withLock<T>(work: () => Promise<T>): Promise<T> {
     const lockPath = `${this.file}.lock`;
     let lock: Awaited<ReturnType<typeof open>> | undefined;
     try {
-      if (createDirectory)
-        await mkdir(path.dirname(this.file), { recursive: true, mode: 0o700 });
+      await mkdir(path.dirname(this.file), { recursive: true, mode: 0o700 });
       const deadline = Date.now() + 3000;
       while (!lock) {
         try {
           lock = await open(lockPath, "wx", 0o600);
         } catch (error) {
           const code = (error as NodeJS.ErrnoException).code;
-          if (code === "ENOENT" && !createDirectory) throw notInvalid();
           if (code !== "EEXIST") throw error;
           if (Date.now() >= deadline)
             throw new ConfigError(
@@ -439,10 +397,7 @@ export class ConfigStore {
     }
   }
 
-  private async replace(
-    config: Config,
-    text = `${JSON.stringify(config, null, 2)}\n`,
-  ): Promise<Config> {
+  private async replace(config: Config, text: string): Promise<Config> {
     if (Buffer.byteLength(text) > MAX_CONFIG_BYTES)
       throw new ConfigError(
         "Saving these preferences would exceed the 64 KiB limit. Reduce config.json before saving preferences.",
@@ -610,9 +565,6 @@ export function createConfigApi(options: ConfigApiOptions = {}): ConfigRouter {
   router.get("/events", (req, res) => store.connect(req, res));
   router.get("/", async (_req, res) => res.json(await store.read()));
   router.post("/", async (req, res) => res.json(await store.patch(req.body)));
-  router.post("/reset-invalid", async (req, res) =>
-    res.json(await store.resetInvalid(req.body)),
-  );
   router.use(((error: unknown, _req, res, next) => {
     if (error instanceof ConfigError) {
       res.status(error.status).json({ error: error.message, code: error.code });

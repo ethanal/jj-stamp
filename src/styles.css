@@ -1684,7 +1684,7 @@ kbd {
 }
 .revset-actions {
   display: flex;
-  justify-content: space-between;
+  justify-content: flex-end;
   gap: 12px;
 }
 .revset-actions button {

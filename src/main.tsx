@@ -37,7 +37,6 @@ import {
   useAppearancePreferences,
   usePreference,
   useConfigStatus,
-  resetInvalidConfig,
 } from "./preferences";
 import {
   FilesSidebar,
@@ -1343,8 +1342,6 @@ function App() {
             vimMode={vimMode}
             onVimModeChange={setVimMode}
             persistenceError={configStatus.error}
-            canResetPersistence={configStatus.canReset}
-            onResetPersistence={resetInvalidConfig}
             disabled={dragging || pickingDestination}
           />
         </div>

@@ -8,8 +8,6 @@ import type { Config } from "./config.ts";
 import { configStore } from "./config-store.ts";
 export * from "./preference-values.ts";
 
-export const resetInvalidConfig = () => configStore.resetInvalid();
-
 export function useConfigStatus() {
   return useSyncExternalStore(
     configStore.subscribe,

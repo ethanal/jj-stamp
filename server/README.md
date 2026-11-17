@@ -138,20 +138,10 @@ and supported values. Browser storage is neither read nor migrated.
   unsupported values are rejected. It merges only requested keys into the fresh
   raw disk object, preserves all unrelated values, and returns only the full
   typed effective config. It retains the HTTP server's same-origin, JSON and
-  `X-Fold-Request: 1` protections.
+  `X-Fold-Request: 1` protections. Failed saves are not automatically retried.
   Unpatched raw values, including numeric literals and deep objects, are kept
   without recursive serialization. A save that would exceed 64KiB returns
   `409 CONFIG_TOO_LARGE` without replacing the current file.
-- `POST /config/reset-invalid {confirm:true}` explicitly recovers an existing
-  malformed JSON, invalid UTF-8 or non-object file under the same writer lock.
-  It backs up the exact original bytes in an exclusive, synced 0600
-  `config.json.<uuid>.invalid.bak` sibling before atomically installing defaults.
-  Returns `{config,backup}` with the backup's basename. Missing files and valid
-  objects (including those with unknown keys or unsupported values) return
-  `409 CONFIG_NOT_INVALID`; oversized, unreadable, symlinked and nonregular files
-  cannot be reset. Completed backups remain available even if the subsequent
-  replacement fails. The usual POST protections apply; neither saves nor resets
-  are automatically retried.
 - `GET /config/events` is a separate bounded SSE stream. Named `config` events
   contain only full typed effective settings (no unknown keys), initially and
   after a disk change; named `config-error` events contain `{error,code}` and
@@ -163,10 +153,11 @@ Each server checks only this bounded, regular config file every 250ms while
 subscribed; it does not scan repositories or spawn tools. Atomic editor saves,
 in-place edits, missing files, deletion and recreation are observed. Malformed
 JSON, invalid UTF-8, non-object roots, oversized files and read failures are
-never overwritten automatically; GET/POST return an error until repaired, and
-streams resume on repair. Unknown keys and unsupported values in valid objects
-do not produce errors or enable reset. Missing files use defaults without
-creating a file/directory. Explicit patches create the config directory and use
+never overwritten; GET/POST return an error until the file is manually repaired
+or removed, and streams resume afterward. There is no settings reset endpoint or
+automatic backup creation. Unknown keys and unsupported values in valid objects
+do not produce errors. Missing files use defaults without creating a
+file/directory. Explicit patches create the config directory and use
 an exclusive cross-process `config.json.lock`, a private same-directory temporary
 file and atomic rename. The read/merge/write is locked, so distinct concurrent
 patches survive. External editors cannot be locked by this protocol. A bounded
