@@ -23,7 +23,7 @@ function typing(event: KeyboardEvent) {
     .some(
       (node) =>
         node instanceof HTMLElement &&
-        (node.closest("input, textarea, select, dialog") ||
+        (node.closest("input, textarea, select, dialog, .terminal-panel") ||
           node.isContentEditable),
     );
 }

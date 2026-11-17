@@ -647,7 +647,7 @@ kbd {
   flex: 1;
   min-height: 0;
   grid-template-columns: var(--files-width) minmax(0, 1fr) var(--log-width);
-  grid-template-rows: minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr) auto;
   /* Contain sliding previews and their shadows above the status bar. */
   overflow: clip;
 }
@@ -668,12 +668,12 @@ kbd {
 }
 .sidebar {
   grid-column: 1;
-  grid-row: 1;
+  grid-row: 1 / -1;
   border-right: 1px solid var(--border);
 }
 .log-panel {
   grid-column: 3;
-  grid-row: 1;
+  grid-row: 1 / -1;
   border-left: 1px solid var(--border);
 }
 /* Peeks overflow their collapsed grid track without moving the diff. */
@@ -1497,7 +1497,7 @@ kbd {
   .workspace {
     --log-height: 175px;
     grid-template-columns: var(--files-width) minmax(0, 1fr);
-    grid-template-rows: minmax(0, 1fr) var(--log-height);
+    grid-template-rows: minmax(0, 1fr) auto var(--log-height);
   }
   .workspace.files-collapsed {
     --files-width: 30px;
@@ -1510,9 +1510,15 @@ kbd {
   }
   .log-panel {
     grid-column: 2;
-    grid-row: 2;
+    grid-row: 3;
     border-left: 0;
     border-top: 1px solid var(--border);
+  }
+  .workspace.terminal-open .sidebar {
+    grid-row: 1;
+  }
+  .workspace.terminal-open .log-panel {
+    grid-column: 1 / -1;
   }
   .log-panel.is-peeking {
     --peek-offset-x: 0px;
@@ -1605,8 +1611,20 @@ kbd {
     padding: 5px 10px;
     font-size: calc(var(--font-size) - 1px);
   }
+  .file-bar-title {
+    /* The desktop 240px flex-basis becomes a height in the column toolbar. */
+    flex: 0 1 auto;
+    max-width: 100%;
+  }
   .file-bar-tools {
     margin-left: 0;
+    max-width: 100%;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    gap: 6px;
+  }
+  .file-bar-tools > * {
+    flex-shrink: 0;
   }
   .statusbar {
     grid-template-columns: minmax(0, 1fr);

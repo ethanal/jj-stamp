@@ -13,7 +13,7 @@ const groups = [
       ["l", "Toggle the log sidebar"],
       ["@", "Review the working-copy change"],
       ["c", "View commit by ID or revset; Enter opens it"],
-      ["t", "Open terminal; Escape hides, shell keeps running"],
+      ["t", "Open terminal panel"],
       ["↑ / ↓", "Navigate files or review adjacent log changes (Vim: k / j)"],
       ["Enter", "Open the focused log change and hide the log"],
       ["?", "Open this shortcut reference"],
@@ -52,6 +52,7 @@ const groups = [
     note: "Focus a resize handle first. Drag handles with the pointer to resize.",
     shortcuts: [
       ["← / →", "Resize a sidebar by 10px; split diff by 2%"],
+      ["↑ / ↓", "Resize the terminal by 10px (Shift: 40px)"],
       ["Shift + ← / →", "Resize a sidebar by 40px; split diff by 10%"],
       ["Home / End", "Jump to the handle’s minimum / maximum size"],
       ["Double-click", "Reset the split-diff divider to 50%"],

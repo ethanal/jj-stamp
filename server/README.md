@@ -60,8 +60,11 @@ remains an external runtime import in the bundled CLI; it is not compiled into
 the bundle as an assumed version. Public node-pty flow-control interception is
 disabled so input control bytes keep their normal terminal meaning.
 
-Hiding the overlay keeps its WebSocket and shell alive. Closing/reloading the
-page, disconnecting, or explicitly restarting ends that session; there is no
+Hiding the docked panel keeps its WebSocket and shell alive. A shell `exit`
+ends that session; the client starts a fresh shell and terminal over a new
+WebSocket, without replaying input. Repeated rapid unattended exits stop after
+three respawns. Errors and unexpected disconnects require an explicit retry.
+Closing/reloading the page or disconnecting ends its session; there is no
 cross-page session reattachment or durable terminal history. Shutdown closes
 upgrades and sockets and awaits shell exit, escalating HUP → TERM → KILL.
 Linux cleanup also snapshots the PTY session's process identities to terminate

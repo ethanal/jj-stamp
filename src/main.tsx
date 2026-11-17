@@ -52,7 +52,7 @@ import {
 } from "./ReviewToolbar";
 import { GoToRevision } from "./GoToRevision";
 import { ShortcutsDialog } from "./ShortcutsDialog";
-import { TerminalOverlay } from "./TerminalOverlay";
+import { TerminalPanel } from "./TerminalPanel";
 import { useSidebarReveal } from "./useSidebarReveal";
 import { useScrollActiveFile } from "./useScrollActiveFile";
 import "./styles.css";
@@ -64,6 +64,8 @@ function retainActivePath(files: RepoState["files"], current: string): string {
 }
 
 function App() {
+  const [terminalSlot, setTerminalSlot] = useState<HTMLDivElement | null>(null);
+  const [terminalOpen, setTerminalOpen] = useState(false);
   const {
     logRevset,
     setLogRevset,
@@ -1098,7 +1100,10 @@ function App() {
           >
             Refresh
           </button>
-          <TerminalOverlay
+          <TerminalPanel
+            mount={terminalSlot}
+            open={terminalOpen}
+            onOpenChange={setTerminalOpen}
             disabled={dragging}
             fontSize={fontSize}
             colorScheme={colorScheme}
@@ -1124,7 +1129,7 @@ function App() {
       </header>
       <ShortcutsDialog disabled={dragging} />
       <div
-        className={`workspace ${showLog ? "" : "log-collapsed"} ${showFiles ? "" : "files-collapsed"}`}
+        className={`workspace ${showLog ? "" : "log-collapsed"} ${showFiles ? "" : "files-collapsed"} ${terminalOpen ? "terminal-open" : ""}`}
         style={
           {
             "--files-preferred-width": `${filesWidth}px`,
@@ -1216,6 +1221,7 @@ function App() {
             loadFile={loadFile}
           />
         </DiffFontSizeContext.Provider>
+        <div className="terminal-slot" ref={setTerminalSlot} />
         <RevisionGraph
           focusRequest={logFocusRequest}
           vimMode={vimMode}
