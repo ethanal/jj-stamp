@@ -217,6 +217,9 @@ the initial UI theme gives multiple roles the same color. Application truecolors
 exactly matching those reserved identities (`#010001`–`#010012`) are also
 recolored; other truecolors and the fixed 256-color cube/grays are preserved.
 Current UI colors are a renderer mapping, not native palette metadata.
+Terminal background rectangles share device-pixel-aligned edges at fractional
+display scales, avoiding hairline seams in solid pager/diff colors without
+changing glyph metrics or text antialiasing.
 
 The published Ghostty WASM omits device-attribute replies required by fish's
 startup feature detection. A session-local compatibility parser supplies only
