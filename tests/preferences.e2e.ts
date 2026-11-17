@@ -117,6 +117,12 @@ async function assertPeekAnimation(
   );
 }
 async function assertSettingsLayout(dialog: Locator) {
+  await expect(
+    dialog.getByRole("button", {
+      name: /reset|back.?up/i,
+      includeHidden: true,
+    }),
+  ).toHaveCount(0);
   await expect(dialog).toHaveCSS("padding", "24px");
   await expect(dialog).toHaveCSS("gap", "24px");
   await expect(dialog.locator("h2")).toHaveCSS("font-size", "23px");
@@ -326,10 +332,9 @@ try {
   await expect(
     dialog.getByLabel("jj log revset", { exact: true }),
   ).toBeFocused();
-  await page.keyboard.press("Tab");
   await expect(
-    dialog.getByRole("button", { name: "Reset to default" }),
-  ).toBeFocused();
+    dialog.getByRole("button", { name: "Apply", exact: true }),
+  ).toBeDisabled();
   await page.keyboard.press("Tab");
   await expect(hoverSetting).toBeFocused();
   await expect(hoverSetting).not.toBeChecked();

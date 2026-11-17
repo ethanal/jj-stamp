@@ -5,7 +5,11 @@ import {
   type ColorScheme,
 } from "./preference-values.ts";
 
-/** Shared wire/disk format. Files may omit keys to use the defaults below. */
+/**
+ * Strict effective-config wire format and API patch validation. Disk reads are
+ * tolerant: omitted or unsupported fields use defaults individually; unknown
+ * keys and unsupported raw values survive saves unless explicitly patched.
+ */
 export const configSchema = z
   .object({
     "color-scheme": z.enum(

@@ -2,7 +2,6 @@ import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import type { Revision } from "./types";
 import { useDialogBackdropDismiss } from "./useDialogBackdropDismiss";
 import {
-  defaultLogRevset,
   colorSchemes,
   fontSizeLimits,
   parseFontSize,
@@ -251,13 +250,6 @@ export function SettingsDialog({
             </p>
           )}
           <div className="revset-actions">
-            <button
-              type="button"
-              disabled={disabled || savingRevset}
-              onClick={() => setRevsetDraft(defaultLogRevset)}
-            >
-              Reset to default
-            </button>
             <button
               type="submit"
               disabled={
