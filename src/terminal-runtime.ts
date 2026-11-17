@@ -8,7 +8,10 @@ import {
   type TerminalQuerySupport,
 } from "./terminal-queries";
 export { Terminal, FitAddon } from "ghostty-web";
-export { installTerminalTheme } from "./terminal-renderer";
+export {
+  installTerminalPixelAlignment,
+  installTerminalTheme,
+} from "./terminal-renderer";
 
 // Fetch a local, content-hashed asset (browser-cacheable), never a CDN. Give
 // each session its own WASM memory: ghostty-web 0.4 can expose stale screen cells

@@ -233,6 +233,7 @@ export function TerminalPanel({
         };
         term.open(container.current);
         opening = false;
+        runtime.installTerminalPixelAlignment(term);
         container.current.setAttribute("aria-label", "Shell input");
         term.textarea?.setAttribute("aria-label", "Shell paste input");
         applyTheme.current = runtime.installTerminalTheme(
