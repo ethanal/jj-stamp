@@ -1625,6 +1625,11 @@ kbd {
   .file-bar-tools {
     margin-left: 0;
   }
+  .file-bar-title {
+    /* The desktop width basis must not become a 240px height in the column. */
+    flex: none;
+    width: 100%;
+  }
   .statusbar {
     grid-template-columns: minmax(0, 1fr);
     padding: 5px 9px;
