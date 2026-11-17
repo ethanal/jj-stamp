@@ -1007,7 +1007,7 @@ export function ReviewViewer({
                       </span>
                       <span>
                         {entry.hunks.length
-                          ? "Squashing selected edits also copies the full immediate-parent base into the selected destination. Remaining edits stay at the copied path. The original source is unchanged."
+                          ? "Squashing selected edits also copies the full parent-tree contents into the selected destination. Remaining edits stay at the copied path. The original source is unchanged."
                           : "Squashing this file copies it into the selected destination. The original source is unchanged."}
                       </span>
                     </div>

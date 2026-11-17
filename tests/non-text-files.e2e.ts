@@ -89,7 +89,7 @@ try {
   await expect(treeRow("removed.bin")).toContainText("D");
   await expect(treeRow("logo.png")).toContainText("M");
 
-  for (const name of ["mode.sh", "asset-link"]) {
+  for (const name of ["asset-link"]) {
     await expect(treeRow(name)).toContainText("Read-only");
     await treeRow(name).click();
     await expect(section(name).getByRole("heading")).toHaveText(
@@ -101,6 +101,15 @@ try {
     await expect(section(name).locator("details, summary, pre")).toHaveCount(0);
     await expect(section(name)).not.toContainText("diff --git");
   }
+  await treeRow("mode.sh").click();
+  await expect(treeRow("mode.sh")).not.toContainText("Read-only");
+  await expect(section("mode.sh").locator(".unsupported")).toHaveCount(0);
+  await expect(section("mode.sh").locator(".rename-notice")).toContainText(
+    "Make executable",
+  );
+  await expect(
+    page.getByRole("button", { name: "Squash file mode.sh", exact: true }),
+  ).toBeEnabled();
   await treeRow("notes.txt").click();
   await expect(treeRow("notes.txt")).toContainText("+1");
   await expect(treeRow("notes.txt")).not.toContainText("Read-only");
