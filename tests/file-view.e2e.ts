@@ -81,7 +81,7 @@ const unsupportedFile: DiffFile = {
   path: unsupportedPath,
   additions: 0,
   deletions: 0,
-  patch: "",
+  patch: `diff --git a/${unsupportedPath} b/${unsupportedPath}\nBinary files a/${unsupportedPath} and b/${unsupportedPath} differ\n`,
   hunks: [],
   unsupported: "Binary files cannot be reviewed line by line.",
 };
@@ -147,7 +147,7 @@ const selectedRows = (path: string) =>
 async function assertAdjacentFileActions(heading: Locator) {
   const gaps = await heading.evaluate((element) => {
     const filename = element.querySelector("h2, .file-bar-filename")!;
-    const counts = element.querySelector(".line-counts")!;
+    const counts = element.querySelector(".line-counts, .file-kind-label")!;
     const squash = element.querySelector(".squash-file")!;
     return [
       counts.getBoundingClientRect().left -
@@ -237,13 +237,15 @@ try {
   for (const [path, counts] of [
     [firstPath, "+10−10"],
     [secondPath, "+11−11"],
-    [unsupportedPath, "+0−0"],
+    [unsupportedPath, "Binary"],
   ] as const) {
     await expect(section(path).locator(".file-diff-heading h2")).toHaveText(
       path,
     );
     await expect(
-      section(path).locator(".file-diff-heading .line-counts"),
+      section(path).locator(
+        ".file-diff-heading .line-counts, .file-diff-heading .file-kind-label",
+      ),
     ).toHaveText(counts);
   }
   for (const width of [1440, 600]) {
@@ -253,7 +255,7 @@ try {
   }
   await page.setViewportSize({ width: 1440, height: 900 });
   await expect(section(unsupportedPath).locator(".unsupported")).toContainText(
-    "Binary files cannot be reviewed line by line.",
+    "This file has no text diff.",
   );
   await expect(section(unsupportedPath).locator("diffs-container")).toHaveCount(
     0,
@@ -364,7 +366,9 @@ try {
   await expect(section(unsupportedPath).locator(".unsupported")).toHaveCount(0);
   for (const path of [firstPath, secondPath, unsupportedPath]) {
     await expect(section(path).locator(".file-diff-heading")).toBeVisible();
-    await expect(section(path).locator(".line-counts")).toBeVisible();
+    await expect(
+      section(path).locator(".line-counts, .file-kind-label"),
+    ).toBeVisible();
     await expect(section(path).locator(".squash-file")).toBeVisible();
     const box = await section(path).boundingBox();
     assert(box && box.height < 70, "Collapsed files only occupy a heading");

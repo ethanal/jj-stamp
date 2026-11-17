@@ -17,6 +17,7 @@ import type { VimCursorRequest } from "./vim-navigation";
 import { CodeDiff } from "./CodeDiff";
 import { DiffRuntime, DiffViewport } from "./DiffRuntime";
 import { searchDiffRows } from "./diff-search";
+import { unsupportedFileLabel } from "./file-display";
 import { ChangeId } from "./ReviewToolbar";
 import { SidebarResize } from "./SidebarResize";
 import { SplitDiffLayout } from "./SplitDiffLayout";
@@ -58,6 +59,35 @@ export function LineCounts({
       <span className="added">+{additions}</span>
       <span className="removed">−{deletions}</span>
     </span>
+  );
+}
+
+function FileChangeSummary({ file }: { file: DiffFile }) {
+  const label = unsupportedFileLabel(file);
+  return label ? (
+    <span className="file-kind-label" title={file.unsupported}>
+      {label}
+    </span>
+  ) : (
+    <LineCounts additions={file.additions} deletions={file.deletions} />
+  );
+}
+
+function UnsupportedFile({ file }: { file: DiffFile }) {
+  const binary = unsupportedFileLabel(file) === "Binary";
+  return (
+    <div className="unsupported">
+      <h3>{binary ? "Binary file" : "Text diff unavailable"}</h3>
+      <p>
+        {binary
+          ? "This file has no text diff. Line selection and squashing are unavailable."
+          : file.unsupported}
+      </p>
+      <details>
+        <summary>View raw patch</summary>
+        <pre>{file.patch}</pre>
+      </details>
+    </div>
   );
 }
 
@@ -815,10 +845,7 @@ export function ReviewViewer({
           </span>
           {file && fileView === "single" && (
             <>
-              <LineCounts
-                additions={file.additions}
-                deletions={file.deletions}
-              />
+              <FileChangeSummary file={file} />
               <SquashFileButton
                 file={file}
                 disabled={squashDisabled}
@@ -950,10 +977,7 @@ export function ReviewViewer({
                   }}
                   actions={
                     <>
-                      <LineCounts
-                        additions={entry.additions}
-                        deletions={entry.deletions}
-                      />
+                      <FileChangeSummary file={entry} />
                       <SquashFileButton
                         file={entry}
                         disabled={squashDisabled}
@@ -979,10 +1003,7 @@ export function ReviewViewer({
                     </div>
                   )}
                   {entry.unsupported ? (
-                    <div className="unsupported">
-                      <p>{entry.unsupported}</p>
-                      <pre>{entry.patch}</pre>
-                    </div>
+                    <UnsupportedFile file={entry} />
                   ) : entry.hunks.length > 0 ? (
                     <CodeDiff
                       file={entry}

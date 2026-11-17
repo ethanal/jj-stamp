@@ -923,8 +923,13 @@ kbd {
   border-bottom: 1px solid var(--border);
 }
 .file-bar-title .line-counts,
+.file-kind-label,
 .file-bar-title .squash-file {
   flex-shrink: 0;
+}
+.file-kind-label {
+  color: var(--muted);
+  font-size: calc(var(--font-size) - 2px);
 }
 .file-bar-tools {
   flex-wrap: wrap;
@@ -1469,15 +1474,32 @@ kbd {
   font-size: calc(var(--font-size) - 1px);
 }
 .unsupported {
-  padding: 12px 16px;
+  padding: 24px 16px;
+}
+.unsupported h3 {
+  margin: 0 0 8px;
+  font-size: var(--font-size);
+  font-weight: 500;
 }
 .unsupported p {
-  color: var(--modified);
+  margin: 0 0 16px;
+  color: var(--muted);
   font-size: calc(var(--font-size) - 1px);
+}
+.unsupported summary {
+  width: fit-content;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: calc(var(--font-size) - 1px);
+}
+.unsupported summary:hover {
+  color: var(--fg);
 }
 .unsupported pre {
   color: var(--muted);
   line-height: 1.6;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 @media (max-width: 1100px) {
   .repo-path {

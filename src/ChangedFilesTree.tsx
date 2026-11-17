@@ -2,6 +2,7 @@ import { useLayoutEffect, useRef } from "react";
 import { FileTree, useFileTree } from "@pierre/trees/react";
 import type { GitStatusEntry } from "@pierre/trees";
 import type { DiffFile } from "./types";
+import { unsupportedFileLabel } from "./file-display";
 
 interface Props {
   focusRequest?: number;
@@ -71,16 +72,18 @@ export function ChangedFilesTree(props: Props) {
       const file = filesByPath.current.get(item.path);
       if (!file) return null;
       const label = file.oldPath ? `${file.oldPath} → ${file.path}` : file.path;
+      const unsupported = unsupportedFileLabel(file);
       return {
-        text: `+${file.additions}−${file.deletions}`,
+        text: unsupported ?? `+${file.additions}−${file.deletions}`,
         title: file.unsupported
-          ? `${label} — read-only: ${file.unsupported}`
+          ? `${label} — ${unsupported}, read-only: ${file.unsupported}`
           : `${label} — ${file.additions} additions, ${file.deletions} deletions${file.squashUnsupported ? ` — ${file.squashUnsupported}` : ""}`,
-        parts: [
-          { text: `+${file.additions}`, color: "var(--added)" },
-          { text: `−${file.deletions}`, color: "var(--removed)" },
-          ...(file.unsupported ? [{ text: " ·", color: "var(--muted)" }] : []),
-        ],
+        parts: unsupported
+          ? [{ text: unsupported, color: "var(--muted)" }]
+          : [
+              { text: `+${file.additions}`, color: "var(--added)" },
+              { text: `−${file.deletions}`, color: "var(--removed)" },
+            ],
       };
     },
   });
@@ -120,7 +123,6 @@ export function ChangedFilesTree(props: Props) {
       );
       model.setGitStatus(
         props.files.flatMap((file): GitStatusEntry[] => {
-          if (file.unsupported) return [];
           return [
             {
               path: file.path,
