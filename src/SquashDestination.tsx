@@ -219,7 +219,7 @@ export function SquashDestination({
           setOpen(true);
         }}
       >
-        <span>
+        <span className="squash-destination-trigger-label">
           {needsDestination ? (
             "Choose revision…"
           ) : (
@@ -233,7 +233,20 @@ export function SquashDestination({
             </>
           )}
         </span>
-        <span aria-hidden="true">⌄</span>
+        <svg
+          className="squash-destination-caret"
+          aria-hidden="true"
+          width="14"
+          height="14"
+          viewBox="0 0 16 16"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.5"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        >
+          <path d="m4 6 4 4 4-4" />
+        </svg>
       </button>
       {open &&
         !disabled &&
@@ -290,10 +303,24 @@ export function SquashDestination({
                 <SquashIcon />
               </span>
               <span className="squash-destination-option-label">
-                <strong>Parent · {parent?.changeId.slice(0, 8) ?? "—"}</strong>
+                <strong>Parent</strong>
               </span>
               <span className="squash-destination-check" aria-hidden="true">
-                {mode === "parent" ? "✓" : ""}
+                {mode === "parent" && (
+                  <svg
+                    aria-hidden="true"
+                    width="16"
+                    height="16"
+                    viewBox="0 0 16 16"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="1.5"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  >
+                    <path d="m3.5 8 3 3 6-6" />
+                  </svg>
+                )}
               </span>
             </button>
             <button
@@ -309,7 +336,19 @@ export function SquashDestination({
               onClick={() => choose(onPick, !canPick)}
             >
               <span className="squash-destination-icon" aria-hidden="true">
-                ↗
+                <svg
+                  aria-hidden="true"
+                  width="14"
+                  height="14"
+                  viewBox="0 0 16 16"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.5"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                >
+                  <path d="m4 12 8-8M4 4h8v8" />
+                </svg>
               </span>
               <span className="squash-destination-option-label">
                 <strong>Choose revision in log…</strong>

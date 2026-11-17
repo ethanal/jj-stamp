@@ -25,6 +25,13 @@
   white-space: normal;
   text-align: left;
 }
+.squash-destination-trigger-label {
+  min-width: 0;
+}
+.squash-destination-caret {
+  display: block;
+  flex: 0 0 14px;
+}
 .squash-destination-trigger:hover:not(:disabled) {
   background: var(--hover);
   border-color: var(--muted);
@@ -45,6 +52,7 @@
 .squash-destination-trigger code {
   font: inherit;
   color: var(--modified);
+  white-space: nowrap;
 }
 .squash-destination-menu {
   position: fixed;
@@ -103,16 +111,18 @@
   opacity: 0.5;
   cursor: not-allowed;
 }
-.squash-destination-icon {
+.squash-destination-icon,
+.squash-destination-check {
   display: flex;
   align-items: center;
   justify-content: center;
   flex: 0 0 16px;
+  height: 16px;
   color: var(--modified);
 }
-.squash-destination-check {
-  flex: 0 0 14px;
-  color: var(--modified);
+.squash-destination-icon svg,
+.squash-destination-check svg {
+  display: block;
 }
 
 .squash-destination-error {
@@ -165,7 +175,7 @@
   padding: 6px 10px;
   border-bottom: 1px solid var(--border);
   color: var(--modified);
-  font-size: calc(var(--font-size) - 3px);
+  font-size: var(--font-size);
   line-height: 1.5;
 }
 .destination-pick-help button {

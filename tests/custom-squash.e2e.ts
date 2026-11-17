@@ -121,24 +121,59 @@ async function openMenu() {
   await expect(menu).toBeVisible();
   await expect(menu.locator('[role^="menuitem"]')).toHaveCount(2);
   await expect(customOption()).toHaveCount(0);
-  await expect(parentOption()).toHaveAccessibleName(
-    `Parent · ${parent.slice(0, 8)}`,
-  );
-  await expect(parentOption().locator("svg")).toHaveAttribute(
-    "aria-hidden",
-    "true",
-  );
+  await expect(parentOption()).toHaveAccessibleName("Parent");
+  await expect(
+    parentOption().locator(".squash-destination-icon svg"),
+  ).toHaveAttribute("aria-hidden", "true");
   assert.equal(
-    await parentOption().locator("svg").innerHTML(),
+    await parentOption().locator(".squash-destination-icon svg").innerHTML(),
     await page
       .getByRole("button", { name: "Squash file review.txt", exact: true })
       .locator("svg")
       .innerHTML(),
     "Parent uses the same down-arrow-into-circle icon as file squash",
   );
-  await expect(parentOption().locator(".squash-destination-check")).toHaveText(
-    (await parentOption().getAttribute("aria-checked")) === "true" ? "✓" : "",
+  await expect(
+    parentOption().locator(".squash-destination-check svg"),
+  ).toHaveCount(
+    (await parentOption().getAttribute("aria-checked")) === "true" ? 1 : 0,
   );
+  // All menu icons share the parent's stroke and canvas, not font glyph metrics.
+  for (const icon of await menu.locator("svg").all()) {
+    await expect(icon).toHaveAttribute("aria-hidden", "true");
+    await expect(icon).toHaveAttribute("viewBox", "0 0 16 16");
+    await expect(icon).toHaveAttribute("stroke-width", "1.5");
+    await expect(icon).toHaveAttribute("stroke-linecap", "round");
+    await expect(icon).toHaveAttribute("stroke-linejoin", "round");
+    await expect(icon).toHaveAttribute("fill", "none");
+    const bounds = await icon.boundingBox();
+    const size = await icon.evaluate((element) =>
+      element.closest('[role="menuitem"]') ? 14 : 16,
+    );
+    assert(bounds && bounds.width === size && bounds.height === size);
+  }
+  await expect(chooseAction().locator("svg")).toHaveCount(1);
+  const alignment = await trigger.evaluate((button) => {
+    const caret = button.querySelector("svg")!;
+    const box = caret.getBoundingClientRect();
+    const path = caret.querySelector("path")!.getBoundingClientRect();
+    const trigger = button.getBoundingClientRect();
+    return {
+      vertical: box.y + box.height / 2 - (trigger.y + trigger.height / 2),
+      inkX: path.x + path.width / 2 - (box.x + box.width / 2),
+      inkY: path.y + path.height / 2 - (box.y + box.height / 2),
+      width: box.width,
+      height: box.height,
+    };
+  });
+  assert(Math.abs(alignment.vertical) < 0.5, "Caret is vertically centered");
+  assert(
+    Math.abs(alignment.inkX) < 0.5,
+    "Chevron ink is centered horizontally",
+  );
+  assert(Math.abs(alignment.inkY) < 0.5, "Chevron ink is centered vertically");
+  assert.equal(alignment.width, 14, "Caret must not shrink on narrow screens");
+  assert.equal(alignment.height, 14);
   await expect(chooseAction()).toHaveAccessibleName("Choose revision in log…");
   const copy = await menu.evaluate((element) => {
     const clone = element.cloneNode(true) as HTMLElement;
@@ -147,10 +182,7 @@ async function openMenu() {
       .forEach((node) => node.remove());
     return clone.textContent?.replace(/\s+/g, " ").trim();
   });
-  assert.equal(
-    copy?.replace(/\s/g, ""),
-    `Parent·${parent.slice(0, 8)}Chooserevisioninlog…`,
-  );
+  assert.equal(copy?.replace(/\s/g, ""), "ParentChooserevisioninlog…");
   assert.equal(
     await menu.locator("input, textarea").count(),
     0,
@@ -163,10 +195,24 @@ async function assertPickerHelp() {
     "Choose a revision",
   );
   const cancel = help.getByRole("button", { name: "Cancel", exact: true });
+  const fontSize = `${(await fixture.readConfig())["font-size"]}px`;
+  await expect(help.locator(":scope > span").first()).toHaveCSS(
+    "font-size",
+    fontSize,
+  );
+  await expect(cancel).toHaveCSS("font-size", fontSize);
+  const helpBounds = await help.boundingBox();
   const bounds = await cancel.boundingBox();
   assert(
-    bounds && bounds.width >= 64 && bounds.height === 28,
-    "Cancel keeps a wide target at a normal 28px height",
+    helpBounds &&
+      bounds &&
+      bounds.x >= helpBounds.x &&
+      bounds.x + bounds.width <= helpBounds.x + helpBounds.width,
+    "Cancel stays inside the picker header",
+  );
+  assert(
+    bounds && bounds.width >= 64 && bounds.height >= 28,
+    "Cancel keeps a wide target and grows with the UI font size",
   );
 }
 async function chooseInLog() {
@@ -214,7 +260,7 @@ try {
   await expect(destination).toBeVisible();
   await expect(destination.locator(".squash-destination-label")).toHaveCount(0);
   await expect(destination).not.toContainText("Squash into →");
-  await expect(trigger).toHaveText("Squash into parent⌄");
+  await expect(trigger).toHaveText("Squash into parent");
   await expect(trigger).toHaveAccessibleName("Squash into parent");
   await expect(trigger).toHaveAttribute(
     "title",
@@ -254,7 +300,7 @@ try {
   await chooseInLog();
   await expect(row(older)).toBeVisible();
   await row(older).hover();
-  await expect(trigger).toHaveText(`Squash into ${older.slice(0, 8)}⌄`);
+  await expect(trigger).toHaveText(`Squash into ${older.slice(0, 8)}`);
   assert.deepEqual(
     await fixture.readConfig(),
     hiddenLogConfig,
@@ -307,7 +353,7 @@ try {
   await expect(trigger).toHaveAccessibleName(
     `Squash into ${older.slice(0, 8)}`,
   );
-  await expect(trigger).toHaveText(`Squash into ${older.slice(0, 8)}⌄`);
+  await expect(trigger).toHaveText(`Squash into ${older.slice(0, 8)}`);
   await expect(trigger).toBeFocused();
   await expect(squash).toBeEnabled();
   await assertSourceAndSelection(selectionCount);
@@ -347,7 +393,7 @@ try {
   await expect(trigger).toHaveAccessibleName(
     `Squash into ${older.slice(0, 8)}`,
   );
-  await expect(trigger).toHaveText(`Squash into ${older.slice(0, 8)}⌄`);
+  await expect(trigger).toHaveText(`Squash into ${older.slice(0, 8)}`);
   await assertSourceAndSelection(selectionCount);
 
   // Canceling a replacement restores Custom, not Parent, and an explicitly
@@ -373,7 +419,7 @@ try {
   );
   await page.keyboard.press("ArrowDown");
   await expect(row(older)).toBeFocused();
-  await expect(trigger).toHaveText(`Squash into ${older.slice(0, 8)}⌄`);
+  await expect(trigger).toHaveText(`Squash into ${older.slice(0, 8)}`);
   await assertSourceAndSelection(selectionCount);
   await page.keyboard.press("Escape");
   await expect(graph).toBeVisible();
@@ -392,7 +438,7 @@ try {
   await expect(trigger).toHaveAccessibleName(
     `Squash into ${older.slice(0, 8)}`,
   );
-  await expect(trigger).toHaveText(`Squash into ${older.slice(0, 8)}⌄`);
+  await expect(trigger).toHaveText(`Squash into ${older.slice(0, 8)}`);
   await expect(trigger).toBeFocused();
   await assertSourceAndSelection(selectionCount);
   await chooseInLog();
@@ -408,7 +454,7 @@ try {
   // A filtered-out target stays authorized by state.targets, not graph rows.
   await applyFilter(`${source} | @`);
   await expect(row(older)).toHaveCount(0);
-  await expect(trigger).toHaveText(`Squash into ${older.slice(0, 8)}⌄`);
+  await expect(trigger).toHaveText(`Squash into ${older.slice(0, 8)}`);
   await expect(squash).toBeEnabled();
   await expect(selected()).toHaveCount(selectionCount);
   await page.getByRole("button", { name: "Collapse log sidebar" }).click();
@@ -616,6 +662,15 @@ try {
     await page.keyboard.press("Escape");
   }
   await page.setViewportSize({ width: 1440, height: 900 });
+  for (const size of [10, 24]) {
+    await setFontSize(size);
+    await chooseInLog();
+    await page.setViewportSize({ width: 390, height: 900 });
+    await assertPickerHelp();
+    await screenshot(`picker-font${size}-narrow`);
+    await page.keyboard.press("Escape");
+    await page.setViewportSize({ width: 1440, height: 900 });
+  }
   await setFontSize(13);
   assert.deepEqual(responsiveFailures, []);
   assert.deepEqual(errors, []);
