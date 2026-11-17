@@ -54,12 +54,26 @@
   color: var(--muted);
   padding: 4px 6px;
 }
-.terminal-surface {
+.terminal-viewport {
   position: relative;
   flex: 1;
   min-height: 0;
-  margin: 8px 12px;
+  margin: 8px 0 8px 12px;
+  overflow-x: hidden;
+  overflow-y: scroll;
+  overscroll-behavior: contain;
+  overflow-anchor: none;
+  scrollbar-color: var(--scrollbar) var(--bg);
+}
+.terminal-surface {
+  position: sticky;
+  top: 0;
+  height: 100%;
   overflow: hidden;
+  background: var(--bg);
+}
+.terminal-scrollback {
+  pointer-events: none;
 }
 /* Ghostty paints the only visible caret in its canvas. Its contenteditable
    input and hidden textarea must not add a second browser caret in the header. */

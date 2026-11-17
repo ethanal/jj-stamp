@@ -7,7 +7,8 @@ import {
   TerminalQueryResponder,
   type TerminalQuerySupport,
 } from "./terminal-queries";
-export { Terminal, FitAddon } from "ghostty-web";
+export { Terminal } from "ghostty-web";
+export { fitTerminal, installTerminalScroll } from "./terminal-scroll";
 export {
   installTerminalPixelAlignment,
   installTerminalTheme,

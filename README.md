@@ -221,6 +221,16 @@ Terminal background rectangles share device-pixel-aligned edges at fractional
 display scales, avoiding hairline seams in solid pager/diff colors without
 changing glyph metrics or text antialiasing.
 
+Terminal scrollback uses a browser-native scrollbar flush with the panel's right
+edge, with native wheel/trackpad scrolling and thumb dragging. The canvas fits
+the remaining client width without a second scrollbar gutter. Output follows
+the bottom; scrolling up holds your reading position while history grows, and
+typing returns to the prompt. Older lines can shift when Ghostty evicts retained
+history. Full-screen terminal programs keep their existing wheel-to-arrow-key
+handling. The scrolling adapter is audited against Ghostty Web 0.4.0 (including
+its private canvas-scrollbar hit handler); rerun the terminal browser suite when
+upgrading it.
+
 The published Ghostty WASM omits device-attribute replies required by fish's
 startup feature detection. A session-local compatibility parser supplies only
 the missing DA1/DA2 replies through the same bounded input queue; native
