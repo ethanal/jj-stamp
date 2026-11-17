@@ -255,7 +255,7 @@ try {
   }
   await page.setViewportSize({ width: 1440, height: 900 });
   await expect(section(unsupportedPath).locator(".unsupported")).toContainText(
-    "This file has no text diff.",
+    "Squashing is unavailable.",
   );
   await expect(section(unsupportedPath).locator("diffs-container")).toHaveCount(
     0,

@@ -70,6 +70,9 @@ try {
     await expect(treeRow(name)).not.toContainText("·");
     await treeRow(name).click();
     await expect(section(name).getByRole("heading")).toHaveText("Binary file");
+    await expect(section(name).locator(".unsupported p")).toHaveText(
+      "Squashing is unavailable.",
+    );
     await expect(section(name).locator(".code-surface")).toHaveCount(0);
     await expect(page.locator(".file-bar .line-counts")).toHaveCount(0);
     await expect(

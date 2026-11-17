@@ -78,11 +78,7 @@ function UnsupportedFile({ file }: { file: DiffFile }) {
   return (
     <div className="unsupported">
       <h3>{binary ? "Binary file" : "Text diff unavailable"}</h3>
-      <p>
-        {binary
-          ? "This file has no text diff. Line selection and squashing are unavailable."
-          : file.unsupported}
-      </p>
+      <p>{binary ? "Squashing is unavailable." : file.unsupported}</p>
     </div>
   );
 }
