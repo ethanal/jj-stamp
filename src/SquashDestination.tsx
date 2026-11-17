@@ -303,7 +303,7 @@ export function SquashDestination({
                 <SquashIcon />
               </span>
               <span className="squash-destination-option-label">
-                <strong>Parent · {parent?.changeId.slice(0, 8) ?? "—"}</strong>
+                <strong>Parent</strong>
               </span>
               <span className="squash-destination-check" aria-hidden="true">
                 {mode === "parent" && (
@@ -338,8 +338,8 @@ export function SquashDestination({
               <span className="squash-destination-icon" aria-hidden="true">
                 <svg
                   aria-hidden="true"
-                  width="16"
-                  height="16"
+                  width="14"
+                  height="14"
                   viewBox="0 0 16 16"
                   fill="none"
                   stroke="currentColor"

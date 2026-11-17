@@ -120,9 +120,7 @@ async function openMenu() {
   await expect(menu).toBeVisible();
   await expect(menu.locator('[role^="menuitem"]')).toHaveCount(2);
   await expect(customOption()).toHaveCount(0);
-  await expect(parentOption()).toHaveAccessibleName(
-    `Parent · ${parent.slice(0, 8)}`,
-  );
+  await expect(parentOption()).toHaveAccessibleName("Parent");
   await expect(
     parentOption().locator(".squash-destination-icon svg"),
   ).toHaveAttribute("aria-hidden", "true");
@@ -148,7 +146,10 @@ async function openMenu() {
     await expect(icon).toHaveAttribute("stroke-linejoin", "round");
     await expect(icon).toHaveAttribute("fill", "none");
     const bounds = await icon.boundingBox();
-    assert(bounds && bounds.width === 16 && bounds.height === 16);
+    const size = await icon.evaluate((element) =>
+      element.closest('[role="menuitem"]') ? 14 : 16,
+    );
+    assert(bounds && bounds.width === size && bounds.height === size);
   }
   await expect(chooseAction().locator("svg")).toHaveCount(1);
   const alignment = await trigger.evaluate((button) => {
@@ -180,10 +181,7 @@ async function openMenu() {
       .forEach((node) => node.remove());
     return clone.textContent?.replace(/\s+/g, " ").trim();
   });
-  assert.equal(
-    copy?.replace(/\s/g, ""),
-    `Parent·${parent.slice(0, 8)}Chooserevisioninlog…`,
-  );
+  assert.equal(copy?.replace(/\s/g, ""), "ParentChooserevisioninlog…");
   assert.equal(
     await menu.locator("input, textarea").count(),
     0,
@@ -196,10 +194,24 @@ async function assertPickerHelp() {
     "Choose a revision",
   );
   const cancel = help.getByRole("button", { name: "Cancel", exact: true });
+  const fontSize = `${(await fixture.readConfig())["font-size"]}px`;
+  await expect(help.locator(":scope > span").first()).toHaveCSS(
+    "font-size",
+    fontSize,
+  );
+  await expect(cancel).toHaveCSS("font-size", fontSize);
+  const helpBounds = await help.boundingBox();
   const bounds = await cancel.boundingBox();
   assert(
-    bounds && bounds.width >= 64 && bounds.height === 28,
-    "Cancel keeps a wide target at a normal 28px height",
+    helpBounds &&
+      bounds &&
+      bounds.x >= helpBounds.x &&
+      bounds.x + bounds.width <= helpBounds.x + helpBounds.width,
+    "Cancel stays inside the picker header",
+  );
+  assert(
+    bounds && bounds.width >= 64 && bounds.height >= 28,
+    "Cancel keeps a wide target and grows with the UI font size",
   );
 }
 async function chooseInLog() {
@@ -586,9 +598,15 @@ try {
     await page.keyboard.press("Escape");
   }
   await page.setViewportSize({ width: 1440, height: 900 });
-  await setFontSize(10);
-  await openMenu();
-  await page.keyboard.press("Escape");
+  for (const size of [10, 24]) {
+    await setFontSize(size);
+    await chooseInLog();
+    await page.setViewportSize({ width: 390, height: 900 });
+    await assertPickerHelp();
+    await screenshot(`picker-font${size}-narrow`);
+    await page.keyboard.press("Escape");
+    await page.setViewportSize({ width: 1440, height: 900 });
+  }
   await setFontSize(13);
   assert.deepEqual(responsiveFailures, []);
   assert.deepEqual(errors, []);

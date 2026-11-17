@@ -174,7 +174,7 @@
   padding: 6px 10px;
   border-bottom: 1px solid var(--border);
   color: var(--modified);
-  font-size: calc(var(--font-size) - 3px);
+  font-size: var(--font-size);
   line-height: 1.5;
 }
 .destination-pick-help button {
