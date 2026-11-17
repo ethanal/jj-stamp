@@ -8,11 +8,7 @@
   min-height: 26px;
   font-size: calc(var(--font-size) - 2px);
 }
-.squash-destination-label {
-  color: var(--muted);
-  white-space: nowrap;
-  font-size: calc(var(--font-size) - 3px);
-}
+
 .squash-destination-trigger {
   display: inline-flex;
   align-items: center;
@@ -43,9 +39,7 @@
   opacity: 0.4;
   cursor: not-allowed;
 }
-.squash-destination-dot {
-  color: var(--muted);
-}
+
 .squash-destination-trigger code {
   font: inherit;
   color: var(--modified);

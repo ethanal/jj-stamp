@@ -194,14 +194,13 @@ export function SquashDestination({
 
   return (
     <div className="squash-destination">
-      <span id={`${id}-label`} className="squash-destination-label">
-        Squash into →
-      </span>
       <button
         ref={triggerRef}
         type="button"
         className={`squash-destination-trigger${picking ? " is-picking" : ""}${error ? " has-error" : ""}`}
-        aria-labelledby={`${id}-label ${id}-value`}
+        aria-label={
+          needsDestination ? "Squash into: choose revision" : undefined
+        }
         aria-haspopup="menu"
         aria-expanded={open}
         aria-controls={open ? `${id}-menu` : undefined}
@@ -219,13 +218,17 @@ export function SquashDestination({
           setOpen(true);
         }}
       >
-        <span id={`${id}-value`}>
+        <span>
           {needsDestination ? (
             "Choose revision…"
           ) : (
             <>
-              {stateLabel} <span className="squash-destination-dot">·</span>{" "}
-              <code>{targetId}</code>
+              Squash into{" "}
+              {mode === "parent" && !picking ? (
+                "parent"
+              ) : (
+                <code>{targetId}</code>
+              )}
             </>
           )}
         </span>

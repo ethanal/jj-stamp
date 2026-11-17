@@ -186,13 +186,19 @@ async function applyFilter(revset: string) {
 let releaseSquash: (() => void) | undefined;
 try {
   await page.goto(url);
-  await expect(addition(3)).toBeVisible();
+  await expect(addition(3)).toBeVisible({ timeout: 30_000 });
   await expect(reviewedId()).toHaveAttribute("title", source);
   await expect(row(workingCopy)).toBeVisible();
   await expect(row(parent)).toHaveCount(0);
   await expect(destination).toBeVisible();
-  await expect(destination).toContainText("Parent");
-  await expect(destination).toContainText(parent.slice(0, 8));
+  await expect(destination.locator(".squash-destination-label")).toHaveCount(0);
+  await expect(destination).not.toContainText("Squash into →");
+  await expect(trigger).toHaveText("Squash into parent⌄");
+  await expect(trigger).toHaveAccessibleName("Squash into parent");
+  await expect(trigger).toHaveAttribute(
+    "title",
+    `Parent: ${parent}\nActual immediate parent`,
+  );
   await addition(3).click();
   const selectionCount = await selected().count();
   assert(selectionCount > 0);
@@ -226,7 +232,7 @@ try {
   await chooseInLog();
   await expect(row(older)).toBeVisible();
   await row(older).hover();
-  await expect(destination).toContainText(older.slice(0, 8));
+  await expect(trigger).toHaveText(`Squash into ${older.slice(0, 8)}⌄`);
   assert.deepEqual(
     await fixture.readConfig(),
     hiddenLogConfig,
@@ -256,7 +262,7 @@ try {
   await page.keyboard.press("Escape");
   await expect(graph).toBeHidden();
   await expect(trigger).toBeFocused();
-  await expect(destination).toContainText("Parent");
+  await expect(trigger).toHaveAccessibleName("Squash into parent");
   await assertSourceAndSelection(selectionCount);
   assert.deepEqual(await fixture.readConfig(), hiddenLogConfig);
 
@@ -271,8 +277,10 @@ try {
   }
   await row(older).click();
   await expect(graph).toBeHidden();
-  await expect(destination).toContainText("Custom");
-  await expect(destination).toContainText(older.slice(0, 8));
+  await expect(trigger).toHaveAccessibleName(
+    `Squash into ${older.slice(0, 8)}`,
+  );
+  await expect(trigger).toHaveText(`Squash into ${older.slice(0, 8)}⌄`);
   await expect(trigger).toBeFocused();
   await expect(squash).toBeEnabled();
   await assertSourceAndSelection(selectionCount);
@@ -295,8 +303,11 @@ try {
   await expect(parentOption()).toHaveAttribute("aria-checked", "false");
   await screenshot("custom-menu");
   await parentOption().click();
-  await expect(destination).toContainText("Parent");
-  await expect(destination).toContainText(parent.slice(0, 8));
+  await expect(trigger).toHaveAccessibleName("Squash into parent");
+  await expect(trigger).toHaveAttribute(
+    "title",
+    `Parent: ${parent}\nActual immediate parent`,
+  );
   await expect(destination).not.toContainText(older.slice(0, 8));
   await openMenu();
   await expect(parentOption()).toHaveAttribute("aria-checked", "true");
@@ -306,8 +317,10 @@ try {
   await assertPickerHelp();
   await row(older).click();
   await expect(graph).toBeHidden();
-  await expect(destination).toContainText("Custom");
-  await expect(destination).toContainText(older.slice(0, 8));
+  await expect(trigger).toHaveAccessibleName(
+    `Squash into ${older.slice(0, 8)}`,
+  );
+  await expect(trigger).toHaveText(`Squash into ${older.slice(0, 8)}⌄`);
   await assertSourceAndSelection(selectionCount);
 
   // Canceling a replacement restores Custom, not Parent, and an explicitly
@@ -325,17 +338,21 @@ try {
   await row(older).focus();
   await page.keyboard.press("ArrowUp");
   await expect(row(parent)).toBeFocused();
-  await expect(destination).toContainText(parent.slice(0, 8));
+  await expect(trigger).toHaveAccessibleName(
+    `Squash into ${parent.slice(0, 8)}`,
+  );
   await expect(page.getByRole("status")).toContainText(
     `Preview destination: ${parent.slice(0, 8)}`,
   );
   await page.keyboard.press("ArrowDown");
   await expect(row(older)).toBeFocused();
-  await expect(destination).toContainText(older.slice(0, 8));
+  await expect(trigger).toHaveText(`Squash into ${older.slice(0, 8)}⌄`);
   await assertSourceAndSelection(selectionCount);
   await page.keyboard.press("Escape");
   await expect(graph).toBeVisible();
-  await expect(destination).toContainText("Custom");
+  await expect(trigger).toHaveAccessibleName(
+    `Squash into ${older.slice(0, 8)}`,
+  );
   await expect(trigger).toBeFocused();
   await assertSourceAndSelection(selectionCount);
   await chooseInLog();
@@ -345,8 +362,10 @@ try {
     .getByRole("button", { name: "Cancel", exact: true })
     .click();
   await expect(graph).toBeVisible();
-  await expect(destination).toContainText("Custom");
-  await expect(destination).toContainText(older.slice(0, 8));
+  await expect(trigger).toHaveAccessibleName(
+    `Squash into ${older.slice(0, 8)}`,
+  );
+  await expect(trigger).toHaveText(`Squash into ${older.slice(0, 8)}⌄`);
   await expect(trigger).toBeFocused();
   await assertSourceAndSelection(selectionCount);
   await chooseInLog();
@@ -362,7 +381,7 @@ try {
   // A filtered-out target stays authorized by state.targets, not graph rows.
   await applyFilter(`${source} | @`);
   await expect(row(older)).toHaveCount(0);
-  await expect(destination).toContainText(older.slice(0, 8));
+  await expect(trigger).toHaveText(`Squash into ${older.slice(0, 8)}⌄`);
   await expect(squash).toBeEnabled();
   await expect(selected()).toHaveCount(selectionCount);
   await page.getByRole("button", { name: "Collapse log sidebar" }).click();

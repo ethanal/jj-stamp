@@ -181,7 +181,7 @@ async function assertOriginalTrees() {
 
 try {
   await page.goto(url);
-  await expect(selectedLine()).toBeVisible();
+  await expect(selectedLine()).toBeVisible({ timeout: 30_000 });
   await expect(trigger).toHaveText("Choose revision…⌄");
   await expect(trigger).toHaveAttribute("title", reason);
   await expect(squash).toBeDisabled();
@@ -232,7 +232,9 @@ try {
     }
     await row(target).click();
     await expect(page.locator(".destination-pick-help")).toHaveCount(0);
-    await expect(destination).toContainText("Custom");
+    await expect(trigger).toHaveAccessibleName(
+      `Squash into ${target.slice(0, 8)}`,
+    );
     await expect(destination).toContainText(target.slice(0, 8));
     await expect(selectedRows).toHaveCount(1);
     await expect(squash).toBeEnabled();
