@@ -239,6 +239,15 @@ try {
   await page.goto(url);
   await expect(added).toBeVisible();
   await expect(refresh).toBeEnabled();
+  await expect(refresh.locator("svg")).toHaveCSS("width", "14px");
+  await expect(refresh.locator("svg")).toHaveCSS("height", "14px");
+  await expect(refresh).toHaveCSS("width", "30px");
+  await expect(refresh).toHaveCSS("height", "28px");
+  await expect(refresh).toHaveAttribute("title", "Refresh repository");
+  const readsBeforeRefresh = stateReads;
+  await refresh.click();
+  await expect.poll(() => stateReads).toBeGreaterThan(readsBeforeRefresh);
+  await expect(refresh).toBeEnabled();
   await expect(page.locator(".topbar .commit-totals")).toHaveText("+1−1");
   const findButton = page.getByRole("button", { name: "Find in diff" });
   await expect(findButton).toHaveText("");
