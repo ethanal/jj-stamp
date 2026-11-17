@@ -98,6 +98,12 @@ try {
       await page.getByRole("button", { name: view, exact: true }).click();
       for (const width of [569, 320, 390, 600, 601, 850, 1280]) {
         await page.setViewportSize({ width, height: 900 });
+        for (const button of [
+          page.locator(".squash-destination-trigger"),
+          page.getByRole("button", { name: "Open revision", exact: true }),
+          page.getByRole("button", { name: "Settings", exact: true }),
+        ])
+          await expect(button).toHaveCSS("font-size", `${fontSize}px`);
         const geometry = await page.locator(".file-bar").evaluate((bar) => {
           const title = bar.querySelector(".file-bar-title")!;
           const tools = bar.querySelector(".file-bar-tools")!;

@@ -6,7 +6,7 @@
   min-width: 0;
   max-width: 100%;
   min-height: 26px;
-  font-size: calc(var(--font-size) - 2px);
+  font-size: var(--font-size);
 }
 
 .squash-destination-trigger {

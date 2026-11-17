@@ -627,6 +627,7 @@ kbd {
   margin-left: auto;
 }
 .refresh-trigger {
+  min-width: 30px;
   padding-inline: 6px;
 }
 .commit-totals {
