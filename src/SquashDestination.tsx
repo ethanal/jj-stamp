@@ -8,6 +8,7 @@ import {
   type RefObject,
 } from "react";
 import { createPortal } from "react-dom";
+import { SquashIcon } from "./SquashIcon";
 import type { Revision } from "./types";
 import "./squash-destination.css";
 
@@ -194,14 +195,13 @@ export function SquashDestination({
 
   return (
     <div className="squash-destination">
-      <span id={`${id}-label`} className="squash-destination-label">
-        Squash into →
-      </span>
       <button
         ref={triggerRef}
         type="button"
         className={`squash-destination-trigger${picking ? " is-picking" : ""}${error ? " has-error" : ""}`}
-        aria-labelledby={`${id}-label ${id}-value`}
+        aria-label={
+          needsDestination ? "Squash into: choose revision" : undefined
+        }
         aria-haspopup="menu"
         aria-expanded={open}
         aria-controls={open ? `${id}-menu` : undefined}
@@ -219,13 +219,17 @@ export function SquashDestination({
           setOpen(true);
         }}
       >
-        <span id={`${id}-value`}>
+        <span>
           {needsDestination ? (
             "Choose revision…"
           ) : (
             <>
-              {stateLabel} <span className="squash-destination-dot">·</span>{" "}
-              <code>{targetId}</code>
+              Squash into{" "}
+              {mode === "parent" && !picking ? (
+                "parent"
+              ) : (
+                <code>{targetId}</code>
+              )}
             </>
           )}
         </span>
@@ -282,11 +286,14 @@ export function SquashDestination({
               title={parentUnavailable || parent?.description}
               onClick={() => choose(onParent, !!parentUnavailable)}
             >
-              <span className="squash-destination-radio" aria-hidden="true">
-                {mode === "parent" ? "◉" : "○"}
+              <span className="squash-destination-icon" aria-hidden="true">
+                <SquashIcon />
               </span>
-              <span>
+              <span className="squash-destination-option-label">
                 <strong>Parent · {parent?.changeId.slice(0, 8) ?? "—"}</strong>
+              </span>
+              <span className="squash-destination-check" aria-hidden="true">
+                {mode === "parent" ? "✓" : ""}
               </span>
             </button>
             <button
@@ -301,10 +308,10 @@ export function SquashDestination({
               }
               onClick={() => choose(onPick, !canPick)}
             >
-              <span className="squash-destination-radio" aria-hidden="true">
+              <span className="squash-destination-icon" aria-hidden="true">
                 ↗
               </span>
-              <span>
+              <span className="squash-destination-option-label">
                 <strong>Choose revision in log…</strong>
               </span>
             </button>
