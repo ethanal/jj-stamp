@@ -9,10 +9,12 @@ export function parseRenderDiff(file: DiffFile, cacheKey?: string) {
   const patch = file.patch.endsWith("\n") ? file.patch : `${file.patch}\n`;
   const parsed = parsePatchFiles(patch, cacheKey, true)[0]?.files[0];
   if (!parsed) return;
-  // jj emits rename from/to without Git's optional similarity index, which
-  // Pierre otherwise uses to classify renames.
-  if (file.oldPath) {
-    parsed.prevName = file.oldPath;
+  // Pierre represents copies using its two-path rename rendering model. The
+  // application retains the distinct copy semantics in its labels and actions.
+  // jj omits Git's optional similarity index for both copies and renames.
+  const previousPath = file.oldPath ?? file.copyFrom;
+  if (previousPath !== undefined) {
+    parsed.prevName = previousPath;
     parsed.name = file.path;
     parsed.type = file.hunks.length ? "rename-changed" : "rename-pure";
   }

@@ -88,6 +88,7 @@ test(
       "package/README.md",
       "package/dist/cli.cjs",
       "package/dist/diff-editor.cjs",
+      "package/dist/diff-reader.cjs",
       "package/dist/client/index.html",
       "package/dist/licenses/ghostty-web.txt",
       "package/dist/licenses/ws.txt",

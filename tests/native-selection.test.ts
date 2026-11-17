@@ -250,6 +250,47 @@ test("full deletion removes the file, but partial deletion rewrites ordinary fil
   check(original, "one\ntwo\nthree\n", null, [], "one\ntwo\nthree\n");
 });
 
+test("addition and deletion previews preserve validated regular-file modes", () => {
+  for (const mode of ["100644", "100755"]) {
+    const addition = patch(hunk(["+one", "+two"], 0, 1), "new").replace(
+      "new file mode 100644",
+      `new file mode ${mode}`,
+    );
+    for (const selected of [[1], [1, 2]]) {
+      const preview = check(
+        addition,
+        null,
+        "one\ntwo\n",
+        [{ hunk: 0, lines: selected }],
+        selected.length === 1 ? "one\n" : "one\ntwo\n",
+      ).preview;
+      assert.ok(preview.includes(`new file mode ${mode}\n`));
+    }
+    const deletion = patch(hunk(["-one", "-two"], 1, 0), "delete").replace(
+      "deleted file mode 100644",
+      `deleted file mode ${mode}`,
+    );
+    assert.ok(
+      check(deletion, "one\ntwo\n", null, all(deletion), null).preview.includes(
+        `deleted file mode ${mode}\n`,
+      ),
+    );
+    const partial = check(
+      deletion,
+      "one\ntwo\n",
+      null,
+      [{ hunk: 0, lines: [1] }],
+      "two\n",
+    );
+    assert.doesNotMatch(partial.preview, /file mode /);
+    assert.equal(check(addition, null, "one\ntwo\n", [], null).preview, "");
+    assert.equal(
+      check(deletion, "one\ntwo\n", null, [], "one\ntwo\n").preview,
+      "",
+    );
+  }
+});
+
 test("empty regular files are distinct from absent files", () => {
   const addition = patch(hunk(["+new"], 0, 1));
   const deletion = patch(hunk(["-old"], 1, 0));
@@ -310,7 +351,6 @@ test("unsupported formats and incorrect EOF claims fail closed even with no sele
   const original = patch(hunk(["-old", "+new"]));
   for (const modified of [
     original + "\\ No newline at end of file\n",
-    original.replace("--- a/", "old mode 100644\nnew mode 100755\n--- a/"),
     original.replace(
       "--- a/",
       "rename from original\nrename to renamed\n--- a/",

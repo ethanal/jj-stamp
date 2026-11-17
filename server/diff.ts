@@ -16,22 +16,22 @@ export interface FileDiff {
   path: string;
   /** Validated rename source; path is always the destination. */
   oldPath?: string;
+  /** Copy source is retained; path identifies the new destination. */
+  copyFrom?: string;
+  oldMode?: "100644" | "100755";
+  newMode?: "100644" | "100755";
   hunks: Hunk[];
 }
-/** Native-editor scope: regular UTF-8 text only. */
+/** Selection scope: regular UTF-8 text only. */
 function assertSupported(patch: string): void {
-  if (
-    /^(?:copy (?:from|to)|(?:old|new) mode|dissimilarity index) /m.test(patch)
-  ) {
-    throw new Error(
-      "Copies and mode changes are not supported by the native diff editor.",
-    );
+  if (/^dissimilarity index /m.test(patch)) {
+    throw new Error("Dissimilarity metadata is not supported.");
   }
-  if (/^(?:new|deleted) file mode (?!100644$)/m.test(patch)) {
-    throw new Error("Only regular, non-executable text files are supported.");
+  if (/^(?:new|deleted) file mode (?!100(?:644|755)$)/m.test(patch)) {
+    throw new Error("Only regular text files are supported.");
   }
-  if (/^index [0-9a-f]+\.\.[0-9a-f]+ (?!100644$)\d+/m.test(patch)) {
-    throw new Error("Only regular, non-executable text files are supported.");
+  if (/^index [0-9a-f]+\.\.[0-9a-f]+ (?!100(?:644|755)$)\d+/m.test(patch)) {
+    throw new Error("Only regular text files are supported.");
   }
   if (/^(?:GIT binary patch|Binary files |@@@)/m.test(patch)) {
     throw new Error(
@@ -46,7 +46,7 @@ function readPath(header: string, prefix: string): string | null {
   if (value === "/dev/null") return null;
   if (!value.startsWith(prefix) || /[\s\x00-\x1f\x7f"\\]/.test(value)) {
     throw new Error(
-      "Whitespace, quoted, or control-character file paths are not supported safely by the native diff editor.",
+      "File paths containing whitespace, quotes, or control characters are not supported.",
     );
   }
   const relative = value.slice(prefix.length);
@@ -57,16 +57,20 @@ function readPath(header: string, prefix: string): string | null {
   return relative;
 }
 
-/** Validate the complete envelope, especially all independent rename path claims. */
+/** Validate all independent path, existence and executable-mode claims. */
 function readEnvelope(lines: string[], path: string) {
   let oldPath: string | null | undefined;
   let newPath: string | null | undefined;
-  let renameFrom: string | undefined;
-  let renameTo: string | undefined;
+  let moveFrom: string | undefined;
+  let moveTo: string | undefined;
+  let moveKind: "rename" | "copy" | undefined;
   let gitPaths: [string, string] | undefined;
   let similarity: number | undefined;
   let index: string | undefined;
-  let fileMode = false;
+  let indexMode: string | undefined;
+  let fileMode: "new" | "deleted" | undefined;
+  let oldMode: "100644" | "100755" | undefined;
+  let newMode: "100644" | "100755" | undefined;
   for (const line of lines) {
     if (line.startsWith("diff --git ")) {
       const match = /^diff --git a\/(\S+) b\/(\S+)$/.exec(line);
@@ -88,52 +92,90 @@ function readEnvelope(lines: string[], path: string) {
           "Duplicate new file header makes file existence ambiguous.",
         );
       newPath = readPath(line, "b/");
-    } else if (line.startsWith("rename from ")) {
-      if (renameFrom !== undefined) throw new Error("Duplicate rename source.");
-      renameFrom = readPath(`--- a/${line.slice(12)}`, "a/")!;
-    } else if (line.startsWith("rename to ")) {
-      if (renameTo !== undefined)
-        throw new Error("Duplicate rename destination.");
-      renameTo = readPath(`+++ b/${line.slice(10)}`, "b/")!;
+    } else if (/^(?:rename|copy) (?:from|to) /.test(line)) {
+      const match = /^(rename|copy) (from|to) (.*)$/.exec(line)!;
+      const kind = match[1] as "rename" | "copy";
+      if (moveKind !== undefined && moveKind !== kind)
+        throw new Error("Mixed copy and rename metadata.");
+      moveKind = kind;
+      const value = readPath(`--- a/${match[3]}`, "a/")!;
+      if (match[2] === "from") {
+        if (moveFrom !== undefined) throw new Error("Duplicate move source.");
+        moveFrom = value;
+      } else {
+        if (moveTo !== undefined)
+          throw new Error("Duplicate move destination.");
+        moveTo = value;
+      }
     } else if (/^similarity index (?:100|[1-9]?\d)%$/.test(line)) {
-      if (similarity !== undefined)
-        throw new Error("Duplicate rename similarity.");
+      if (similarity !== undefined) throw new Error("Duplicate similarity.");
       similarity = Number(line.slice(17, -1));
-    } else if (/^index [0-9a-f]+\.\.[0-9a-f]+(?: 100644)?$/.test(line)) {
+    } else if (
+      /^index [0-9a-f]+\.\.[0-9a-f]+(?: 100(?:644|755))?$/.test(line)
+    ) {
       if (index !== undefined) throw new Error("Duplicate file index.");
-      index = line.split(" ")[1];
-    } else if (/^(?:new|deleted) file mode 100644$/.test(line)) {
+      [, index, indexMode] = line.split(" ");
+    } else if (/^(?:new|deleted) file mode 100(?:644|755)$/.test(line)) {
       if (fileMode) throw new Error("Duplicate file mode.");
-      fileMode = true;
+      fileMode = line.startsWith("new") ? "new" : "deleted";
+    } else if (/^(?:old|new) mode 100(?:644|755)$/.test(line)) {
+      const mode = line.slice(-6) as "100644" | "100755";
+      if (line.startsWith("old")) {
+        if (oldMode !== undefined) throw new Error("Duplicate old mode.");
+        oldMode = mode;
+      } else {
+        if (newMode !== undefined) throw new Error("Duplicate new mode.");
+        newMode = mode;
+      }
     } else {
       throw new Error("Malformed or unsupported patch metadata.");
     }
   }
-  const renamed = renameFrom !== undefined || renameTo !== undefined;
-  if (renamed) {
+  if (oldMode !== undefined || newMode !== undefined) {
     if (
-      renameFrom === undefined ||
-      renameTo === undefined ||
-      renameFrom === renameTo ||
-      renameTo !== path ||
+      !oldMode ||
+      !newMode ||
+      oldMode === newMode ||
+      fileMode ||
+      indexMode ||
+      !gitPaths
+    )
+      throw new Error("Incomplete or contradictory executable mode metadata.");
+  }
+  if (moveKind) {
+    if (
+      !moveFrom ||
+      !moveTo ||
+      moveFrom === moveTo ||
+      moveTo !== path ||
       !gitPaths ||
-      gitPaths[0] !== renameFrom ||
-      gitPaths[1] !== renameTo ||
+      gitPaths[0] !== moveFrom ||
+      gitPaths[1] !== moveTo ||
       fileMode ||
       ((oldPath !== undefined || newPath !== undefined) &&
-        (oldPath !== renameFrom || newPath !== renameTo))
+        (oldPath !== moveFrom || newPath !== moveTo))
     )
-      throw new Error("Rename metadata and file headers do not match.");
+      throw new Error("Copy/rename metadata and file headers do not match.");
   } else if (
     similarity !== undefined ||
     (gitPaths && (gitPaths[0] !== path || gitPaths[1] !== path))
   ) {
-    throw new Error("Patch Git headers require matching rename metadata.");
+    throw new Error("Patch Git headers require matching copy/rename metadata.");
   }
+  if (
+    (fileMode === "new" && (oldPath !== null || newPath !== path)) ||
+    (fileMode === "deleted" && (newPath !== null || oldPath !== path)) ||
+    (oldMode !== undefined && (oldPath === null || newPath === null))
+  )
+    throw new Error("File modes disagree with file existence.");
   return {
     oldPath,
     newPath,
-    renameFrom,
+    metadata: {
+      ...(moveKind === "rename" ? { oldPath: moveFrom! } : {}),
+      ...(moveKind === "copy" ? { copyFrom: moveFrom! } : {}),
+      ...(oldMode === undefined ? {} : { oldMode, newMode: newMode! }),
+    },
     contentChanged:
       (similarity !== undefined && similarity !== 100) ||
       (index !== undefined && index.split("..")[0] !== index.split("..")[1]),
@@ -154,22 +196,24 @@ export function parseFile(patch: string, path: string): FileDiff {
     if (lines[cursor].startsWith("\\"))
       throw new Error("Misplaced or malformed no-newline marker.");
   }
-  const { oldPath, newPath, renameFrom, contentChanged } = readEnvelope(
+  const { oldPath, newPath, metadata, contentChanged } = readEnvelope(
     lines.slice(0, cursor),
     path,
   );
-  // jj emits just diff/rename headers for an unchanged move (no ---/+++).
+  // jj omits unified headers for metadata-only copies, moves and mode changes.
   if (
-    renameFrom !== undefined &&
+    (metadata.oldPath !== undefined ||
+      metadata.copyFrom !== undefined ||
+      metadata.oldMode !== undefined) &&
     oldPath === undefined &&
     newPath === undefined &&
     cursor === lines.length
   ) {
     if (contentChanged)
       throw new Error(
-        "A modified rename requires complete text file headers and hunks.",
+        "Modified file metadata requires complete text file headers and hunks.",
       );
-    return { path, oldPath: renameFrom, hunks };
+    return { path, ...metadata, hunks };
   }
   if (
     oldPath === undefined ||
@@ -182,7 +226,8 @@ export function parseFile(patch: string, path: string): FileDiff {
     oldPath !== null &&
     newPath !== null &&
     oldPath !== newPath &&
-    renameFrom === undefined
+    metadata.oldPath === undefined &&
+    metadata.copyFrom === undefined
   ) {
     throw new Error("Renamed file headers require matching rename metadata.");
   }
@@ -225,7 +270,7 @@ export function parseFile(patch: string, path: string): FileDiff {
       // Keep the existing conservative format boundary for this experiment.
       if (raw.startsWith("--- ") || raw.startsWith("+++ ")) {
         throw new Error(
-          "This patch contains header-like code lines that the native diff editor cannot parse safely.",
+          "This patch contains header-like code lines that cannot be parsed safely.",
         );
       }
       const row: Row = { raw, hunk: hunks.length, index: hunk.rows.length + 1 };
@@ -260,7 +305,7 @@ export function parseFile(patch: string, path: string): FileDiff {
   if (!hunks.length) throw new Error("No text hunks selected.");
   return {
     path,
-    ...(renameFrom === undefined ? {} : { oldPath: renameFrom }),
+    ...metadata,
     hunks,
   };
 }

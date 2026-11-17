@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { ConfigStore } from "../src/config-store.ts";
 import { defaultConfig, type Config } from "../src/config.ts";
+import { RequestError } from "../src/api.ts";
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -152,4 +153,40 @@ test("stream errors preserve the last valid settings and clear after reconnectio
   assert.equal(f.disconnects(), 0);
   unsubscribe2();
   assert.equal(f.disconnects(), 1);
+});
+
+test("repairing an invalid file clears the stale save failure without replaying the failed edit", async () => {
+  const f = fixture();
+  f.receive({ "font-size": 16 });
+  f.fail("Invalid config file.");
+  const started = f.nextRequest();
+  f.store.set("font-size", 22);
+  await started;
+  f.responses[0].reject(
+    new RequestError("Invalid config.", 409, "CONFIG_INVALID"),
+  );
+  await assert.rejects(f.responses[0].promise);
+  f.receive({ "font-size": 17 });
+  assert.equal(f.store.getSnapshot().error, "");
+  assert.equal(f.store.getSnapshot().config["font-size"], 17);
+  assert.equal(f.requests.length, 1);
+  f.unsubscribe();
+});
+
+test("late invalid-save rejection cannot resurrect an error after a healthy stream snapshot", async () => {
+  const f = fixture();
+  f.receive({ "font-size": 16 });
+  f.fail("Invalid config file.");
+  const started = f.nextRequest();
+  f.store.set("font-size", 22);
+  await started;
+  f.receive({ "font-size": 17 });
+  f.responses[0].reject(
+    new RequestError("Invalid config.", 409, "CONFIG_INVALID"),
+  );
+  await assert.rejects(f.responses[0].promise);
+  assert.equal(f.store.getSnapshot().config["font-size"], 17);
+  assert.equal(f.store.getSnapshot().error, "");
+  assert.equal(f.requests.length, 1);
+  f.unsubscribe();
 });

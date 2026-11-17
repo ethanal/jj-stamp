@@ -72,7 +72,7 @@ export function jjTimingName(args: string[]): string {
 }
 export function toolTimingName(args: string[]): string {
   // The only separately instrumented tool is jj's history-writing squash.
-  return args[0] === "squash" ? "jj squash (native editor)" : "jj";
+  return args[0] === "squash" ? "jj squash" : "jj";
 }
 
 /** Opt-in instrumentation, not a scheduler. The service must drain every

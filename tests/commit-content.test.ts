@@ -233,9 +233,17 @@ test("full IDs, exact changed paths, literal filesets, absent sides, unsupported
       "commit_id",
     ])
   ).stdout;
-  await assert.rejects(
-    service.getCommit({ commitId: merge }),
-    code("UNSUPPORTED_DIFF"),
+  const merged = await service.getCommit({ commitId: merge });
+  assert.equal(merged.commitId, merge);
+  assert.equal(
+    merged.baseCommitId,
+    null,
+    "a merged parent tree has no single commit ID",
+  );
+  assert.deepEqual(
+    merged.files,
+    [],
+    "an untouched merge has no source changes",
   );
 });
 

@@ -926,8 +926,13 @@ kbd {
   border-bottom: 1px solid var(--border);
 }
 .file-bar-title .line-counts,
+.file-kind-label,
 .file-bar-title .squash-file {
   flex-shrink: 0;
+}
+.file-kind-label {
+  color: var(--muted);
+  font-size: calc(var(--font-size) - 2px);
 }
 .file-bar-tools {
   flex-wrap: wrap;
@@ -1138,6 +1143,7 @@ kbd {
   color: var(--fg);
   font-size: calc(var(--font-size) + 2px);
   font-weight: 400;
+  overflow-wrap: anywhere;
 }
 .settings-checkbox input {
   width: 20px;
@@ -1472,20 +1478,23 @@ kbd {
   font-size: calc(var(--font-size) - 1px);
 }
 .unsupported {
-  padding: 12px 16px;
+  padding: 24px 16px;
+}
+.unsupported h3 {
+  margin: 0 0 8px;
+  font-size: var(--font-size);
+  font-weight: 500;
 }
 .unsupported p {
-  color: var(--modified);
-  font-size: calc(var(--font-size) - 1px);
-}
-.unsupported pre {
+  margin: 0;
   color: var(--muted);
-  line-height: 1.6;
+  font-size: calc(var(--font-size) - 1px);
 }
 @media (max-width: 1100px) {
   .repo-path {
     max-width: 18%;
   }
+
   .file-bar-tools {
     gap: 10px;
   }
@@ -1494,6 +1503,16 @@ kbd {
   }
   .revision-info {
     gap: 9px;
+  }
+}
+@media (min-width: 851px) and (max-width: 1200px) {
+  .repo-path {
+    display: none;
+  }
+}
+@media (min-width: 851px) and (max-width: 1100px) {
+  .revision-info .commit-id {
+    display: none;
   }
 }
 @media (max-width: 850px) {
@@ -1564,6 +1583,10 @@ kbd {
   }
 }
 @media (max-width: 600px) {
+  .toolbar-actions {
+    max-width: 100%;
+    flex-wrap: wrap;
+  }
   .workspace {
     --log-height: 150px;
   }
@@ -1627,6 +1650,11 @@ kbd {
   }
   .file-bar-tools > * {
     flex-shrink: 0;
+  }
+  .file-bar-title {
+    /* The desktop width basis must not become a 240px height in the column. */
+    flex: none;
+    width: 100%;
   }
   .statusbar {
     grid-template-columns: minmax(0, 1fr);

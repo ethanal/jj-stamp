@@ -9,6 +9,7 @@ import { z } from "zod";
 import { shellExecutable } from "./shell.ts";
 import {
   configPatchSchema,
+  configSchema,
   defaultConfig,
   type Config,
 } from "../src/config.ts";
@@ -45,12 +46,22 @@ function ioError(error: unknown): ConfigError {
   );
 }
 
-async function load(file: string): Promise<Config> {
-  let text: string;
+function invalid(message: string): ConfigError {
+  return new ConfigError(
+    `${message} Manually repair or remove config.json to resume shared preferences.`,
+    "CONFIG_INVALID",
+    409,
+  );
+}
+
+async function readBytes(file: string): Promise<Buffer | undefined> {
   try {
     // O_NONBLOCK prevents an accidentally configured FIFO from hanging even
-    // before fstat can reject it. Never read devices, directories or sockets.
-    const handle = await open(file, constants.O_RDONLY | constants.O_NONBLOCK);
+    // before fstat can reject it. Never read devices, directories or symlinks.
+    const handle = await open(
+      file,
+      constants.O_RDONLY | constants.O_NONBLOCK | constants.O_NOFOLLOW,
+    );
     try {
       const metadata = await handle.stat();
       if (!metadata.isFile())
@@ -82,24 +93,154 @@ async function load(file: string): Promise<Config> {
           "CONFIG_INVALID",
           409,
         );
-      text = bytes.subarray(0, length).toString("utf8");
+      return bytes.subarray(0, length);
     } finally {
       await handle.close();
     }
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT")
-      return { ...defaultConfig };
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
     throw ioError(error);
   }
+}
+
+interface ConfigDocument {
+  config: Config;
+  values: Record<string, unknown>;
+  text?: string;
+}
+
+function parseBytes(bytes: Buffer): ConfigDocument {
+  let text: string;
   try {
-    const partial = configPatchSchema.parse(JSON.parse(text));
-    return { ...defaultConfig, ...partial };
-  } catch {
-    throw new ConfigError(
-      "Shared preferences contain invalid JSON or unsupported values. Repair or remove config.json before saving preferences.",
-      "CONFIG_INVALID",
-      409,
+    text = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(
+      bytes,
     );
+  } catch {
+    throw invalid("Shared preferences are not valid UTF-8.");
+  }
+  let value: unknown;
+  try {
+    value = JSON.parse(text);
+  } catch {
+    throw invalid("Shared preferences contain invalid JSON syntax.");
+  }
+  if (typeof value !== "object" || value === null || Array.isArray(value))
+    throw invalid("Shared preferences must be a JSON object.");
+  const values = value as Record<string, unknown>;
+  const config = { ...defaultConfig };
+  // A newer release or another tool may understand keys/values we do not.
+  // Validate fields independently so one unsupported value cannot block the
+  // remaining settings, and never send unknown data to browser consumers.
+  for (const key of Object.keys(defaultConfig) as (keyof Config)[]) {
+    if (!Object.hasOwn(values, key)) continue;
+    const result = configSchema.shape[key].safeParse(values[key]);
+    if (result.success) Object.assign(config, { [key]: result.data });
+  }
+  return { config, values, text };
+}
+
+async function load(file: string): Promise<ConfigDocument> {
+  const bytes = await readBytes(file);
+  return bytes === undefined
+    ? { config: { ...defaultConfig }, values: {} }
+    : parseBytes(bytes);
+}
+
+function serializePatch(
+  current: ConfigDocument,
+  patch: Partial<Config>,
+): string {
+  const entries =
+    current.text === undefined
+      ? new Map(
+          Object.entries(defaultConfig).map(([key, value]) => [
+            key,
+            JSON.stringify(value),
+          ]),
+        )
+      : rawEntries(current.text);
+  for (const [key, value] of Object.entries(patch))
+    entries.set(key, JSON.stringify(value));
+  const fields = [...entries].map(
+    ([key, value]) => `${JSON.stringify(key)}: ${value}`,
+  );
+  const formatted = `{\n  ${fields.join(",\n  ")}\n}\n`;
+  // Keep unknown values as raw slices, without a recursive reviver/stringifier.
+  // This preserves large numeric literals and deeply nested future settings,
+  // and cannot expand their formatting quadratically before checking the cap.
+  return Buffer.byteLength(formatted) <= MAX_CONFIG_BYTES
+    ? formatted
+    : `{${[...entries].map(([key, value]) => `${JSON.stringify(key)}:${value}`).join(",")}}\n`;
+}
+
+/** Extract values only after JSON.parse has validated a complete root object. */
+function rawEntries(text: string): Map<string, string> {
+  const entries = new Map<string, string>();
+  // Keys and string values share this escape-aware scanner. No string decoding
+  // is needed except for keys, to match JSON.parse's last-duplicate-key rules.
+  function stringEnd(start: number): number {
+    let end = start + 1;
+    while (end < text.length) {
+      if (text[end] === "\\") end += 2;
+      else if (text[end++] === '"') break;
+    }
+    return end;
+  }
+  function whitespace(start: number): number {
+    while (
+      text[start] === " " ||
+      text[start] === "\t" ||
+      text[start] === "\r" ||
+      text[start] === "\n"
+    )
+      start++;
+    return start;
+  }
+  let index = whitespace(text.indexOf("{") + 1);
+  while (text[index] !== "}") {
+    const end = stringEnd(index);
+    const key: string = JSON.parse(text.slice(index, end));
+    index = whitespace(end);
+    // The colon is guaranteed by the preceding full-object JSON validation.
+    const start = whitespace(index + 1);
+    index = start;
+    let depth = 0;
+    while (index < text.length) {
+      const char = text[index];
+      if (char === '"') {
+        index = stringEnd(index);
+        continue;
+      }
+      if (char === "{" || char === "[") depth++;
+      else if (char === "}" || char === "]") {
+        if (depth === 0) break;
+        depth--;
+      } else if (char === "," && depth === 0) break;
+      index++;
+    }
+    entries.set(key, text.slice(start, index).trimEnd());
+    if (text[index] !== ",") break;
+    index = whitespace(index + 1);
+  }
+  return entries;
+}
+
+/** Never truncate an existing file; remove only our own incomplete creation. */
+async function writePrivate(
+  file: string,
+  bytes: Buffer | string,
+): Promise<void> {
+  const handle = await open(file, "wx", 0o600);
+  try {
+    try {
+      await handle.writeFile(bytes);
+      await handle.sync();
+    } finally {
+      await handle.close();
+    }
+  } catch (error) {
+    await unlink(file).catch(() => {});
+    throw error;
   }
 }
 
@@ -127,7 +268,7 @@ export class ConfigStore {
   private polling = false;
   private heartbeat = 0;
   private snapshot: Config = { ...defaultConfig };
-  private failure?: string;
+  private failure?: ConfigError;
 
   constructor(
     readonly file = resolveConfigPath(),
@@ -160,90 +301,121 @@ export class ConfigStore {
     return task;
   }
 
-  private async observe(): Promise<Config> {
+  private async observe(): Promise<ConfigDocument> {
     try {
-      const config = await load(this.file);
+      const document = await load(this.file);
+      const config = document.config;
       const changed =
         this.failure !== undefined ||
         JSON.stringify(config) !== JSON.stringify(this.snapshot);
       this.snapshot = config;
       this.failure = undefined;
       if (changed) this.broadcast(frame("config", config));
-      return { ...config };
+      return { ...document, config: { ...config } };
     } catch (error) {
       const safe = ioError(error);
-      if (this.failure !== safe.message) {
-        this.failure = safe.message;
-        this.broadcast(frame("config-error", { error: safe.message }));
+      if (
+        this.failure?.message !== safe.message ||
+        this.failure?.code !== safe.code
+      ) {
+        this.failure = safe;
+        this.broadcast(
+          frame("config-error", { error: safe.message, code: safe.code }),
+        );
       }
       throw safe;
     }
   }
 
   read(): Promise<Config> {
-    return this.enqueue(() => this.observe());
+    return this.enqueue(async () => (await this.observe()).config);
   }
 
   patch(value: unknown): Promise<Config> {
-    const patch = configPatchSchema.parse(value);
+    // Direct embedders can supply optional undefined fields even though JSON
+    // clients cannot. Treat those as omitted, never serialize them as values.
+    const patch = Object.fromEntries(
+      Object.entries(configPatchSchema.parse(value)).filter(
+        ([, value]) => value !== undefined,
+      ),
+    ) as Partial<Config>;
     return this.enqueue(async () => {
-      if (Object.keys(patch).length === 0) return this.observe();
-      // Locking the read/merge/write (not just rename) preserves disjoint
-      // patches from separate windows, server instances and processes.
-      const lockPath = `${this.file}.lock`;
-      let lock: Awaited<ReturnType<typeof open>> | undefined;
-      let temporary: string | undefined;
-      try {
-        await mkdir(path.dirname(this.file), { recursive: true, mode: 0o700 });
-        const deadline = Date.now() + 3000;
-        while (!lock) {
-          try {
-            lock = await open(lockPath, "wx", 0o600);
-          } catch (error) {
-            if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-            if (Date.now() >= deadline)
-              throw new ConfigError(
-                "Shared preferences are locked by another writer. Retry after it finishes; if a process crashed, remove config.json.lock only after all jj-stamp processes have stopped.",
-                "CONFIG_BUSY",
-                503,
-              );
-            await delay(25);
-          }
-        }
+      if (Object.keys(patch).length === 0) return (await this.observe()).config;
+      return this.withLock(async () => {
         const current = await this.observe();
-        const next = { ...current, ...patch };
-        if (JSON.stringify(current) === JSON.stringify(next)) return current;
-        temporary = `${this.file}.${randomUUID()}.tmp`;
-        const handle = await open(temporary, "wx", 0o600);
+        if (
+          Object.entries(patch).every(
+            ([key, value]) =>
+              (Object.hasOwn(current.values, key)
+                ? current.values[key]
+                : defaultConfig[key as keyof Config]) === value,
+          )
+        )
+          return current.config;
+        const next = { ...current.config, ...patch };
+        return this.replace(next, serializePatch(current, patch));
+      });
+    });
+  }
+
+  /** Lock the entire save read/validate/write across cooperating processes. */
+  private async withLock<T>(work: () => Promise<T>): Promise<T> {
+    const lockPath = `${this.file}.lock`;
+    let lock: Awaited<ReturnType<typeof open>> | undefined;
+    try {
+      await mkdir(path.dirname(this.file), { recursive: true, mode: 0o700 });
+      const deadline = Date.now() + 3000;
+      while (!lock) {
         try {
-          await handle.writeFile(`${JSON.stringify(next, null, 2)}\n`, "utf8");
-          await handle.sync();
-        } finally {
-          await handle.close();
-        }
-        await rename(temporary, this.file);
-        temporary = undefined;
-        this.snapshot = next;
-        this.failure = undefined;
-        this.broadcast(frame("config", next));
-        return { ...next };
-      } catch (error) {
-        throw ioError(error);
-      } finally {
-        if (temporary) await unlink(temporary).catch(() => {});
-        if (lock) {
-          try {
-            try {
-              await lock.close();
-            } finally {
-              await unlink(lockPath);
-            }
-          } catch (error) {
-            throw ioError(error);
-          }
+          lock = await open(lockPath, "wx", 0o600);
+        } catch (error) {
+          const code = (error as NodeJS.ErrnoException).code;
+          if (code !== "EEXIST") throw error;
+          if (Date.now() >= deadline)
+            throw new ConfigError(
+              "Shared preferences are locked by another writer. Retry after it finishes; if a process crashed, remove config.json.lock only after all jj-stamp processes have stopped.",
+              "CONFIG_BUSY",
+              503,
+            );
+          await delay(25);
         }
       }
-    });
+      return await work();
+    } catch (error) {
+      throw ioError(error);
+    } finally {
+      if (lock) {
+        try {
+          try {
+            await lock.close();
+          } finally {
+            await unlink(lockPath);
+          }
+        } catch (error) {
+          throw ioError(error);
+        }
+      }
+    }
+  }
+
+  private async replace(config: Config, text: string): Promise<Config> {
+    if (Buffer.byteLength(text) > MAX_CONFIG_BYTES)
+      throw new ConfigError(
+        "Saving these preferences would exceed the 64 KiB limit. Reduce config.json before saving preferences.",
+        "CONFIG_TOO_LARGE",
+        409,
+      );
+    const temporary = `${this.file}.${randomUUID()}.tmp`;
+    await writePrivate(temporary, text);
+    try {
+      await rename(temporary, this.file);
+    } finally {
+      await unlink(temporary).catch(() => {});
+    }
+    this.snapshot = config;
+    this.failure = undefined;
+    this.broadcast(frame("config", config));
+    return { ...config };
   }
 
   connect(request: Request, response: Response): void {
@@ -288,7 +460,13 @@ export class ConfigStore {
       client.initialized = true;
       this.send(client, frame("config", this.snapshot));
       if (this.failure)
-        this.send(client, frame("config-error", { error: this.failure }));
+        this.send(
+          client,
+          frame("config-error", {
+            error: this.failure.message,
+            code: this.failure.code,
+          }),
+        );
     }).catch(() => {
       this.remove(client);
       response.destroy();

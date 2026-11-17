@@ -73,12 +73,21 @@ try {
   const settings = page.getByRole("dialog", { name: "Settings", exact: true });
   const revsetForm = settings.locator(".log-revset-settings");
   const input = settings.getByLabel("jj log revset", { exact: true });
+  await expect(
+    settings.getByRole("button", {
+      name: /reset|back.?up/i,
+      includeHidden: true,
+    }),
+  ).toHaveCount(0);
   await expect(input).toHaveValue(defaultLogRevset);
   await expect(settings).toHaveCSS("width", "720px");
   for (const width of [600, 390, 320]) {
     await page.setViewportSize({ width, height: 900 });
     const box = await settings.boundingBox();
     assert(box && box.x >= 16 && box.x + box.width <= width - 16);
+    await expect(
+      revsetForm.getByRole("button", { name: "Save", exact: true }),
+    ).toBeInViewport();
   }
   await page.setViewportSize({ width: 1440, height: 900 });
   await input.fill("broken(");
@@ -104,14 +113,14 @@ try {
   await expect.poll(() => graphQueries.at(-1)).toBe("none()");
   await page.keyboard.press("c");
   const goto = page.getByRole("textbox", {
-    name: "ID or revset",
+    name: "Revision",
     exact: true,
   });
   await expect(goto).toBeFocused();
   await goto.fill("bad");
-  const gotoDialog = page.getByRole("dialog", { name: "View commit" });
+  const gotoDialog = page.getByRole("dialog", { name: "Open revision" });
   // Mouse submission must return focus to the invalid field, too.
-  await gotoDialog.getByRole("button", { name: "View", exact: true }).click();
+  await gotoDialog.getByRole("button", { name: "Open", exact: true }).click();
   await expect(gotoDialog.getByRole("alert")).toHaveText(
     "No matching revision",
   );
@@ -141,13 +150,16 @@ try {
   assert.deepEqual(revisions, ["bad", "bbbb"]);
   await page.getByRole("button", { name: "Settings", exact: true }).click();
   await expect(input).toHaveValue("none()");
-  await revsetForm.getByRole("button", { name: "Reset to default" }).click();
+  await input.fill(defaultLogRevset);
   await expect(input).toHaveValue(defaultLogRevset);
   await revsetForm.getByRole("button", { name: "Save", exact: true }).click();
   await expect(page.locator(".log-row")).toHaveCount(2);
   await expect(
     page.getByLabel("Current change ID", { exact: true }),
   ).toHaveText(second.changeId);
+  await expect
+    .poll(async () => (await fixture.readConfig())["log-revset"])
+    .toBe(defaultLogRevset);
   assert.deepEqual(errors, []);
   console.log("Revision lookup and log settings browser checks passed.");
 } finally {

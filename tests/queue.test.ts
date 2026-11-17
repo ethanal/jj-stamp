@@ -10,7 +10,7 @@ import {
 } from "../src/optimistic.ts";
 import { RequestError } from "../src/api.ts";
 import { SquashQueue, type SquashTransport } from "../src/squash-queue.ts";
-import type { RepoState } from "../src/types.ts";
+import type { DiffFile, RepoState } from "../src/types.ts";
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -22,6 +22,9 @@ function deferred<T>() {
   return { promise, resolve, reject };
 }
 const tick = () => new Promise<void>((resolve) => setImmediate(resolve));
+const PARENT = "pppppppppppppppppppppppppppppppp";
+const OLDER = "oooooooooooooooooooooooooooooooo";
+
 function initial(): RepoState {
   const patch =
     "diff --git a/a b/a\n--- a/a\n+++ b/a\n@@ -1,4 +1,4 @@\n before\n-old1\n-old2\n+new1\n+new2\n after\n";
@@ -30,8 +33,11 @@ function initial(): RepoState {
     repo: { name: "test", path: "/test" },
     version: "v0",
     source: { changeId: "source", commitId: "c0", description: "source" },
-    parent: null,
-    targets: [],
+    parent: { changeId: PARENT, commitId: "parent-c0", description: "Parent" },
+    targets: [
+      { changeId: PARENT, commitId: "parent-c0", description: "Parent" },
+      { changeId: OLDER, commitId: "older-c0", description: "Older ancestor" },
+    ],
     operation: "op0",
     canUndo: false,
     files: [
@@ -59,6 +65,9 @@ function acknowledge(
   next.operation = `op-${version}`;
   next.canUndo = true;
   next.source.commitId = `commit-${version}`;
+  if (next.parent) next.parent.commitId = `parent-${version}`;
+  for (const target of next.targets)
+    target.commitId = `target-${target.changeId}-${version}`;
   for (const file of next.files)
     for (const hunk of file.hunks) {
       hunk.id = `authoritative-${version}`;
@@ -129,10 +138,12 @@ test("projection is synchronous and enqueues continue during one in-flight mutat
   await tick();
   assert.equal(posts.length, 2);
   assert.deepEqual(posts[0].input, {
+    target: PARENT,
     version: "v0",
     selections: [{ id: "original", lines: [2] }],
   });
   assert.deepEqual(posts[1].input, {
+    target: PARENT,
     version: "v1",
     selections: [{ id: "authoritative-v1", lines: [2] }],
   });
@@ -202,6 +213,7 @@ test("normal acknowledgements preserve speculative file identity, hunk IDs, and 
   assert.equal(queue.getSnapshot().view!.canUndo, true);
   queue.enqueue(selectionNotYetEnqueued);
   assert.deepEqual(posts[1].input, {
+    target: PARENT,
     version: "v1",
     selections: [{ id: "authoritative-v1", lines: [2] }],
   });
@@ -251,6 +263,7 @@ test("a waiting renamed-file batch compacts edits selected before and after the 
   assert.deepEqual(posts[1].input, {
     version: "v1",
     selections: [{ id: "authoritative-v1", lines: [2, 3] }],
+    target: PARENT,
   });
   posts[1].result.resolve({
     state: acknowledge(authoritative1, refs(authoritative1, 2, 3), "v2"),
@@ -375,6 +388,7 @@ test("definite stale rejection cancels queued selections and resumes only after 
   queue.enqueue(explicit);
   assert.equal(posts.length, 2);
   assert.deepEqual(posts[1].input, {
+    target: PARENT,
     version: "external",
     selections: [{ id: "fresh-hunk", lines: [4] }],
   });
@@ -667,6 +681,7 @@ test("queued deletion coordinates track earlier moved rows and independent files
   posts[0].result.resolve({ state: actual });
   await tick();
   assert.deepEqual(posts[1].input, {
+    target: PARENT,
     version: "v1",
     selections: [
       { id: "authoritative-v1", lines: [2] },
@@ -783,6 +798,7 @@ for (const order of [
     await tick();
     assert.equal(posts.length, 2);
     assert.deepEqual(posts[1].input, {
+      target: PARENT,
       version: afterFirst.version,
       selections: [
         {
@@ -914,6 +930,7 @@ test("whole-file squash queues only remaining rows behind an in-flight partial s
   await tick();
   assert.equal(posts.length, 2);
   assert.deepEqual(posts[1].input, {
+    target: PARENT,
     version: "v1",
     selections: [{ id: "authoritative-v1", lines: [1, 2, 3] }],
   });
@@ -946,6 +963,7 @@ test("pure rename squashes project immediately and compact with waiting text sel
   assert.deepEqual(posts[0].input, {
     version: "v0",
     selections: [{ id: 'rename:["old.ts","new.ts"]', lines: [] }],
+    target: PARENT,
   });
   assert.deepEqual(
     queue.getSnapshot().view!.files.map((file) => file.path),
@@ -969,6 +987,7 @@ test("pure rename squashes project immediately and compact with waiting text sel
       { id: "authoritative-v1", lines: [2, 3, 4, 5] },
       { id: 'rename:["before.ts","after.ts"]', lines: [] },
     ],
+    target: PARENT,
   });
   const final = acknowledge(
     acknowledge(firstAck, second, "intermediate"),
@@ -987,31 +1006,33 @@ test("pure rename squashes project immediately and compact with waiting text sel
   assert.equal(posts.length, 2);
 });
 
-test("a pure rename acknowledgement reports a rename, never a fake squashed line", async () => {
-  const { queue, posts, reads, state } = setup();
-  state.files = [
-    {
-      oldPath: "old.ts",
-      path: "new.ts",
-      patch:
-        "diff --git a/old.ts b/new.ts\nrename from old.ts\nrename to new.ts\n",
-      hunks: [],
-      additions: 0,
-      deletions: 0,
-    },
-  ];
-  queue.replace(state);
-  const selected = refsFromFile(state, "new.ts");
-  queue.enqueue(selected);
-  assert.deepEqual(queue.getSnapshot().view!.files, []);
-  posts[0].result.resolve({ state: acknowledge(state, selected, "v1") });
-  await tick();
-  assert.equal(queue.getSnapshot().pending, 0);
-  assert.equal(queue.getSnapshot().halted, false);
-  assert.equal(queue.getSnapshot().notice, "1 rename squashed.");
-  assert.equal(posts.length, 1);
-  assert.equal(reads.length, 0);
-});
+for (const target of [undefined, OLDER])
+  test(`a ${target ? "custom" : "Parent"} pure rename acknowledgement reports a rename, never a fake squashed line`, async () => {
+    const { queue, posts, reads, state } = setup();
+    state.files = [
+      {
+        oldPath: "old.ts",
+        path: "new.ts",
+        patch:
+          "diff --git a/old.ts b/new.ts\nrename from old.ts\nrename to new.ts\n",
+        hunks: [],
+        additions: 0,
+        deletions: 0,
+      },
+    ];
+    queue.replace(state);
+    const selected = refsFromFile(state, "new.ts");
+    queue.enqueue(selected, target);
+    assert.equal(posts[0].input.target, target ?? PARENT);
+    assert.deepEqual(queue.getSnapshot().view!.files, []);
+    posts[0].result.resolve({ state: acknowledge(state, selected, "v1") });
+    await tick();
+    assert.equal(queue.getSnapshot().pending, 0);
+    assert.equal(queue.getSnapshot().halted, false);
+    assert.equal(queue.getSnapshot().notice, "1 rename squashed.");
+    assert.equal(posts.length, 1);
+    assert.equal(reads.length, 0);
+  });
 
 test("a successful response that retains the pure rename halts instead of masking a projection mismatch", async () => {
   const { queue, posts, reads, state } = setup();
@@ -1066,3 +1087,370 @@ test("unexpected rename metadata in a text-squash acknowledgement cancels waitin
   assert.equal(posts.length, 1);
   assert.equal(reads.length, 0);
 });
+
+test("older ancestor batches pin full change IDs through rewritten revisions", async () => {
+  const { queue, posts, reads, state } = setup();
+  const first = refs(state, 4);
+  queue.enqueue(first, OLDER);
+  const second = refs(queue.getSnapshot().view!, 2);
+  queue.enqueue(second, OLDER);
+  const third = refs(queue.getSnapshot().view!, 2);
+  queue.enqueue(third, OLDER);
+  assert.equal(posts.length, 1);
+  assert.equal(queue.getSnapshot().pending, 2);
+  const actual1 = acknowledge(state, first, "v1", true);
+  assert.notEqual(actual1.source.commitId, state.source.commitId);
+  assert.notEqual(
+    actual1.targets.find((target) => target.changeId === OLDER)!.commitId,
+    state.targets.find((target) => target.changeId === OLDER)!.commitId,
+  );
+  posts[0].result.resolve({ state: actual1 });
+  await tick();
+  assert.equal(posts.length, 2);
+  assert.deepEqual(posts[0].input, {
+    version: "v0",
+    target: OLDER,
+    selections: [{ id: "original", lines: [4] }],
+  });
+  assert.deepEqual(posts[1].input, {
+    version: "v1",
+    target: OLDER,
+    selections: [{ id: "authoritative-v1", lines: [1, 2] }],
+  });
+  posts[1].result.resolve({
+    state: acknowledge(
+      acknowledge(acknowledge(state, first, "v1"), second, "intermediate"),
+      third,
+      "v2",
+    ),
+  });
+  await tick();
+  assert.equal(queue.getSnapshot().pending, 0);
+  assert.equal(queue.getSnapshot().halted, false);
+  assert.equal(reads.length, 0);
+});
+
+test("default Parent is resolved at enqueue, not again when a waiting batch dispatches", async () => {
+  const { queue, posts, state } = setup();
+  const first = refs(state, 2);
+  queue.enqueue(first);
+  const second = refs(queue.getSnapshot().view!, 2);
+  queue.enqueue(second);
+  const actual1 = acknowledge(state, first, "v1");
+  actual1.parent = actual1.targets.find((target) => target.changeId === OLDER)!;
+  posts[0].result.resolve({ state: actual1 });
+  await tick();
+  assert.equal(posts.length, 2);
+  assert.equal(posts[0].input.target, PARENT);
+  assert.equal(posts[1].input.target, PARENT);
+  posts[1].result.resolve({ state: acknowledge(actual1, second, "v2") });
+  await tick();
+  assert.equal(queue.getSnapshot().halted, false);
+  // A new batch may use the newly authoritative Parent after the queue is idle.
+  const third = refs(queue.getSnapshot().view!, 2);
+  queue.enqueue(third);
+  assert.equal(posts[2].input.target, OLDER);
+  posts[2].result.resolve({
+    state: acknowledge(acknowledge(actual1, second, "v2"), third, "v3"),
+  });
+  await tick();
+});
+
+for (const destination of [PARENT, OLDER]) {
+  test(`pending batches reject destination changes atomically: ${destination}`, async () => {
+    const { queue, posts, state } = setup();
+    let publications = 0;
+    queue.subscribe(() => publications++);
+    const first = refs(state, 4);
+    queue.enqueue(first, destination);
+    for (const hasWaitingBatch of [false, true]) {
+      if (hasWaitingBatch)
+        queue.enqueue(refs(queue.getSnapshot().view!, 2), destination);
+      const before = queue.getSnapshot();
+      const beforePublications = publications;
+      const selected = refs(before.view!, 2);
+      const other = destination === PARENT ? OLDER : undefined;
+      assert.throws(
+        () => queue.enqueue(selected, other),
+        /pending squashes before changing the destination revision/,
+      );
+      assert.throws(
+        () => queue.enqueue(selected, destination.slice(0, 8)),
+        /pending squashes before changing the destination revision/,
+      );
+      assert.equal(queue.getSnapshot(), before);
+      assert.equal(publications, beforePublications);
+      assert.equal(posts.length, 1);
+    }
+    const actual1 = acknowledge(state, first, "v1");
+    posts[0].result.resolve({ state: actual1 });
+    await tick();
+    assert.equal(posts.length, 2);
+    assert.equal(posts[1].input.target, destination);
+    assert.deepEqual(posts[1].input.selections, [
+      { id: "authoritative-v1", lines: [2] },
+    ]);
+    posts[1].result.resolve({
+      state: acknowledge(actual1, refs(actual1, 2), "v2"),
+    });
+    await tick();
+    assert.equal(queue.getSnapshot().halted, false);
+  });
+}
+
+test("destination eligibility is validated before any optimistic mutation", async () => {
+  const { queue, posts, state } = setup();
+  for (const target of [
+    "",
+    "missing",
+    OLDER.slice(0, 8),
+    state.source.changeId,
+  ]) {
+    const before = queue.getSnapshot();
+    assert.throws(() => queue.enqueue(refs(state, 2), target), /revision/);
+    assert.equal(queue.getSnapshot(), before);
+    assert.equal(posts.length, 0);
+  }
+  const unavailable = {
+    ...state,
+    squashUnavailable: "This source revision cannot be squashed.",
+  };
+  queue.replace(unavailable);
+  const blocked = queue.getSnapshot();
+  assert.throws(
+    () => queue.enqueue(refs(unavailable, 2), OLDER),
+    /This source revision cannot be squashed/,
+  );
+  assert.equal(queue.getSnapshot(), blocked);
+  assert.equal(posts.length, 0);
+  const noParent = { ...state, parent: null };
+  queue.replace(noParent);
+  const before = queue.getSnapshot();
+  assert.throws(() => queue.enqueue(refs(noParent, 2)), /No Parent revision/);
+  assert.equal(queue.getSnapshot(), before);
+  const selected = refs(noParent, 2);
+  queue.enqueue(selected, OLDER);
+  assert.equal(posts[0].input.target, OLDER);
+  posts[0].result.resolve({ state: acknowledge(noParent, selected, "v1") });
+  await tick();
+  assert.equal(queue.getSnapshot().halted, false);
+});
+
+test("a changed source revision with identical projected changes cancels waiting batches", async () => {
+  const { queue, posts, reads, state } = setup();
+  const first = refs(state, 2);
+  queue.enqueue(first, OLDER);
+  queue.enqueue(refs(queue.getSnapshot().view!, 2), OLDER);
+  const actual = acknowledge(state, first, "v1");
+  actual.source.changeId = "different-source-revision";
+  assert.equal(
+    changeSignature(actual),
+    changeSignature(projectSquash(state, first)),
+  );
+  posts[0].result.resolve({ state: actual });
+  await tick();
+  assert.equal(posts.length, 1);
+  assert.equal(reads.length, 0);
+  assert.equal(queue.getSnapshot().view, actual);
+  assert.equal(queue.getSnapshot().confirmed, actual);
+  assert.equal(queue.getSnapshot().pending, 0);
+  assert.equal(queue.getSnapshot().halted, true);
+  assert.match(queue.getSnapshot().error, /source revision changed/);
+});
+
+test("source identity is checked again before a waiting batch dispatches", async () => {
+  const { queue, posts, reads, state } = setup();
+  const first = refs(state, 2);
+  queue.enqueue(first);
+  queue.enqueue(refs(queue.getSnapshot().view!, 2));
+  const internals = queue as unknown as {
+    jobs: { sourceChangeId: string }[];
+  };
+  internals.jobs[1].sourceChangeId = "another-source-with-identical-changes";
+  const actual = acknowledge(state, first, "v1");
+  posts[0].result.resolve({ state: actual });
+  await tick();
+  assert.equal(posts.length, 1);
+  assert.equal(reads.length, 1);
+  assert.match(queue.getSnapshot().error, /source revision no longer matches/);
+  reads[0].resolve(actual);
+  await tick();
+  assert.equal(queue.getSnapshot().halted, true);
+  assert.equal(queue.getSnapshot().pending, 0);
+});
+
+for (const unavailable of [false, true]) {
+  test(`a ${unavailable ? "blocked" : "missing"} pinned destination halts without falling back to Parent`, async () => {
+    const { queue, posts, reads, state } = setup();
+    const first = refs(state, 2);
+    queue.enqueue(first, OLDER);
+    queue.enqueue(refs(queue.getSnapshot().view!, 2), OLDER);
+    const actual = acknowledge(state, first, "v1");
+    if (unavailable)
+      actual.squashUnavailable = "Revision is no longer mutable.";
+    else
+      actual.targets = actual.targets.filter(
+        (target) => target.changeId !== OLDER,
+      );
+    assert.equal(actual.parent!.changeId, PARENT);
+    posts[0].result.resolve({ state: actual });
+    await tick();
+    assert.equal(posts.length, 1);
+    assert.equal(reads.length, 0);
+    assert.equal(queue.getSnapshot().view, actual);
+    assert.equal(queue.getSnapshot().pending, 0);
+    assert.equal(queue.getSnapshot().halted, true);
+    assert.match(
+      queue.getSnapshot().error,
+      /destination revision is no longer eligible/,
+    );
+    queue.clearError();
+    assert.throws(() => queue.enqueue(refs(actual, 2)), /paused/);
+    assert.equal(posts.length, 1);
+  });
+}
+
+test("destination eligibility is checked again before a waiting batch dispatches", async () => {
+  const { queue, posts, reads, state } = setup();
+  const first = refs(state, 2);
+  queue.enqueue(first, OLDER);
+  queue.enqueue(refs(queue.getSnapshot().view!, 2), OLDER);
+  const actual = acknowledge(state, first, "v1");
+  const stop = queue.subscribe(() => {
+    if (queue.getSnapshot().confirmed === actual) {
+      stop();
+      actual.targets = actual.targets.filter(
+        (target) => target.changeId !== OLDER,
+      );
+    }
+  });
+  posts[0].result.resolve({ state: actual });
+  await tick();
+  assert.equal(posts.length, 1);
+  assert.equal(reads.length, 1);
+  assert.match(
+    queue.getSnapshot().error,
+    /destination revision is no longer eligible/,
+  );
+  reads[0].resolve(actual);
+  await tick();
+  assert.equal(queue.getSnapshot().view, actual);
+  assert.equal(queue.getSnapshot().halted, true);
+  assert.equal(queue.getSnapshot().pending, 0);
+});
+
+function metadataOnly(kind: "copy" | "mode" | "rename"): DiffFile {
+  return {
+    path: `${kind}.sh`,
+    ...(kind === "copy" ? { copyFrom: "source.sh" } : {}),
+    ...(kind === "rename" ? { oldPath: "old.sh" } : {}),
+    oldMode: "100644",
+    newMode: "100755",
+    patch: `diff --git a/${kind}.sh b/${kind}.sh\nold mode 100644\nnew mode 100755\n`,
+    additions: 0,
+    deletions: 0,
+    hunks: [],
+  };
+}
+
+for (const target of [undefined, OLDER]) {
+  test(`metadata-only copies and executable changes compact with text and report metadata labels for ${target ? "custom destination" : "Parent"}`, async () => {
+    const { queue, posts, reads, state } = setup();
+    state.files.push(
+      metadataOnly("copy"),
+      metadataOnly("mode"),
+      metadataOnly("rename"),
+    );
+    queue.replace(state);
+    const first = refsFromFile(state, "a");
+    queue.enqueue(first, target);
+    const copy = refsFromFile(queue.getSnapshot().view!, "copy.sh");
+    queue.enqueue(copy, target);
+    const mode = refsFromFile(queue.getSnapshot().view!, "mode.sh");
+    queue.enqueue(mode, target);
+    const rename = refsFromFile(queue.getSnapshot().view!, "rename.sh");
+    queue.enqueue(rename, target);
+    assert.deepEqual(queue.getSnapshot().view!.files, []);
+    assert.equal(queue.getSnapshot().pending, 2);
+    const firstAck = acknowledge(state, first, "v1");
+    posts[0].result.resolve({ state: firstAck });
+    await tick();
+    assert.equal(posts.length, 2);
+    assert.equal(posts[0].input.target, target ?? PARENT);
+    assert.equal(posts[1].input.target, target ?? PARENT);
+    assert.deepEqual(posts[1].input.selections, [
+      { id: 'copy:["source.sh","copy.sh"]', lines: [] },
+      { id: 'mode:["mode.sh","100644","100755"]', lines: [] },
+      { id: 'rename:["old.sh","rename.sh"]', lines: [] },
+    ]);
+    posts[1].result.resolve({
+      state: acknowledge(firstAck, [...copy, ...mode, ...rename], "v2"),
+    });
+    await tick();
+    assert.equal(
+      queue.getSnapshot().notice,
+      "1 rename and 1 copy and 1 mode change squashed.",
+    );
+    assert.equal(queue.getSnapshot().halted, false);
+    assert.equal(reads.length, 0);
+  });
+
+  test(`copy and mode transitions move with first text edits, while waiting edits remap normally for ${target ? "custom destination" : "Parent"}`, async () => {
+    const { queue, posts, reads, state } = setup();
+    state.files[0].copyFrom = "source";
+    state.files[0].oldMode = "100644";
+    state.files[0].newMode = "100755";
+    state.files[0].patch = state.files[0].patch.replace(
+      "\n",
+      "\ncopy from source\ncopy to a\nold mode 100644\nnew mode 100755\n",
+    );
+    queue.replace(state);
+    const first = refs(state, 2);
+    queue.enqueue(first, target);
+    const partial = queue.getSnapshot().view!;
+    assert.equal(partial.files[0].copyFrom, undefined);
+    assert.equal(partial.files[0].newMode, undefined);
+    const second = refsFromFile(partial, "a");
+    queue.enqueue(second, target);
+    const firstAck = acknowledge(state, first, "v1", true);
+    posts[0].result.resolve({ state: firstAck });
+    await tick();
+    assert.equal(posts.length, 2);
+    assert.deepEqual(posts[1].input, {
+      target: target ?? PARENT,
+      version: "v1",
+      selections: [{ id: "authoritative-v1", lines: [1, 2, 3] }],
+    });
+    posts[1].result.resolve({ state: acknowledge(firstAck, second, "v2") });
+    await tick();
+    assert.equal(queue.getSnapshot().halted, false);
+    assert.equal(queue.getSnapshot().pending, 0);
+    assert.deepEqual(queue.getSnapshot().confirmed!.files, []);
+    assert.equal(state.files[0].copyFrom, "source");
+    assert.equal(reads.length, 0);
+  });
+}
+
+for (const metadata of [
+  { copyFrom: "unexpected-source" },
+  { oldMode: "100644", newMode: "100755" },
+] as const) {
+  test(`unexpected ${"copyFrom" in metadata ? "copy" : "mode"} metadata in text acknowledgement cancels waiting squashes`, async () => {
+    const { queue, posts, reads, state } = setup();
+    state.files.push(metadataOnly("copy"));
+    queue.replace(state);
+    const selected = refs(state, 2);
+    queue.enqueue(selected);
+    queue.enqueue(refsFromFile(queue.getSnapshot().view!, "copy.sh"));
+    const unexpected = acknowledge(state, selected, "v1");
+    Object.assign(unexpected.files[0], metadata);
+    posts[0].result.resolve({ state: unexpected });
+    await tick();
+    assert.equal(queue.getSnapshot().halted, true);
+    assert.equal(queue.getSnapshot().pending, 0);
+    assert.equal(queue.getSnapshot().confirmed, unexpected);
+    assert.match(queue.getSnapshot().error, /differed from the projected/);
+    assert.equal(posts.length, 1);
+    assert.equal(reads.length, 0);
+  });
+}

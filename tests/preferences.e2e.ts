@@ -127,6 +127,12 @@ async function assertPeekAnimation(
   );
 }
 async function assertSettingsLayout(dialog: Locator) {
+  await expect(
+    dialog.getByRole("button", {
+      name: /reset|back.?up/i,
+      includeHidden: true,
+    }),
+  ).toHaveCount(0);
   await expect(dialog).toHaveCSS("padding", "24px");
   await expect(dialog).toHaveCSS("gap", "24px");
   await expect(dialog.locator("h2")).toHaveCSS("font-size", "23px");
@@ -398,16 +404,14 @@ try {
   await expect(
     dialog.getByLabel("jj log revset", { exact: true }),
   ).toBeFocused();
-  await page.keyboard.press("Tab");
   await expect(
-    revsetForm.getByRole("button", { name: "Reset to default" }),
-  ).toBeFocused();
+    revsetForm.getByRole("button", { name: "Save", exact: true }),
+  ).toBeDisabled();
   await page.keyboard.press("Tab");
   await expect(shellInput).toBeFocused();
-  await page.keyboard.press("Tab");
   await expect(
-    shellForm.getByRole("button", { name: "Reset to default" }),
-  ).toBeFocused();
+    shellForm.getByRole("button", { name: "Save", exact: true }),
+  ).toBeDisabled();
   await page.keyboard.press("Tab");
   await expect(hoverSetting).toBeFocused();
   await expect(hoverSetting).not.toBeChecked();
@@ -426,14 +430,13 @@ try {
   await expect(
     page.getByRole("button", { name: "Collapse log sidebar" }),
   ).toHaveCount(1);
-  // Saving is explicit; resetting edits the draft rather than the shared file.
+  // Saving is explicit; clearing the shell restores the backend default only
+  // after Save, without a reset or backup control.
   const saveShell = shellForm.getByRole("button", {
     name: "Save",
     exact: true,
   });
-  const resetShell = shellForm.getByRole("button", {
-    name: "Reset to default",
-  });
+
   await shellInput.fill(" /bin/sh ");
   assert.equal((await fixture.readConfig()).shell, "");
   await expect(saveShell).toBeEnabled();
@@ -444,7 +447,7 @@ try {
   await expect(shellInput).toHaveValue("/bin/sh");
   await expect(saveShell).toBeDisabled();
   await shellInput.fill("/unsaved/shell");
-  await resetShell.click();
+  await shellInput.fill("");
   await expect(shellInput).toHaveValue("");
   assert.equal((await fixture.readConfig()).shell, "/bin/sh");
   await expect(saveShell).toBeEnabled();

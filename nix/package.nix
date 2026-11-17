@@ -54,6 +54,7 @@ buildNpmPackage {
     runHook preInstall
     mkdir -p "$out/lib/jj-stamp" "$out/bin"
     cp dist/cli.cjs dist/diff-editor.cjs "$out/lib/jj-stamp/"
+    cp dist/diff-reader.cjs "$out/lib/jj-stamp/"
     cp -R dist/client "$out/lib/jj-stamp/client"
     cp -R dist/node_modules "$out/lib/jj-stamp/node_modules"
     cp -R dist/licenses "$out/lib/jj-stamp/licenses"

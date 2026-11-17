@@ -51,6 +51,14 @@ test("rename envelopes validate every path claim and retain ordinary exact rows"
     ).hunks.length,
     1,
   );
+  for (const mode of ["100644", "100755"])
+    assert.deepEqual(
+      parseFile(
+        renamePatch().replace("--- a/", `index abc..def ${mode}\n--- a/`),
+        "new/file.txt",
+      ),
+      parsed,
+    );
   for (const broken of [
     renamePatch().replace("rename from old/file.txt\n", ""),
     renamePatch().replace("rename to new/file.txt\n", ""),
@@ -74,14 +82,12 @@ test("rename envelopes validate every path claim and retain ordinary exact rows"
     renamePatch().replace("+++ b/new/file.txt", "+++ /dev/null"),
     renamePatch().replace("--- a/", "new file mode 100644\n--- a/"),
     renamePatch().replace("--- a/", "deleted file mode 100644\n--- a/"),
-    renamePatch().replace("--- a/", "old mode 100644\nnew mode 100755\n--- a/"),
-    renamePatch().replace("--- a/", "index abc..def 100755\n--- a/"),
+
     renamePatch().replace("--- a/", "index abc..def 120000\n--- a/"),
     renamePatch().replace(
       "--- a/",
       "Binary files a/old and b/new differ\n--- a/",
     ),
-    renamePatch().replaceAll("rename", "copy"),
     pure + "similarity index 101%\n",
     pure + "similarity index 90%\n",
     pure + "index abc..def 100644\n",
@@ -421,9 +427,10 @@ test("real jj renames support live and immutable review, literal old/new side re
     const args = liveReads[index];
     assert.equal(args.at(-1), `root-file:${JSON.stringify(name)}`);
     assert.ok(args.indexOf("--ignore-working-copy") < args.indexOf("--"));
+    // Even full hexadecimal IDs must not resolve through same-named bookmarks.
     assert.equal(
       args[args.indexOf("-r") + 1],
-      index ? state.source.commitId : state.parent!.commitId,
+      `commit_id("${index ? state.source.commitId : state.parent!.commitId}")`,
     );
   }
   const commitId = state.source.commitId;

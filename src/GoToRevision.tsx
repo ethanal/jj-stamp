@@ -181,7 +181,7 @@ export function GoToRevision({ disabled, onSubmit }: GoToRevisionProps) {
         setError(
           cause instanceof Error
             ? cause.message
-            : "Unable to view commit. Try again.",
+            : "Unable to open revision. Try again.",
         );
         input.current?.focus({ preventScroll: true });
       }
@@ -198,21 +198,21 @@ export function GoToRevision({ disabled, onSubmit }: GoToRevisionProps) {
       <button
         type="button"
         className="action-button goto-revision-trigger"
-        title="View a commit by ID or revset (c)"
+        title="Open a revision by ID or revset (c)"
         aria-haspopup="dialog"
         aria-expanded={open}
         aria-controls={open ? id : undefined}
         disabled={disabled}
         onClick={() => (open ? close() : show())}
       >
-        View commit
+        Open revision
       </button>
       {open && (
         <form
           ref={popover}
           id={id}
           role="dialog"
-          aria-label="View commit"
+          aria-label="Open revision"
           aria-busy={busy}
           className="goto-revision-popover"
           onSubmit={(event) => {
@@ -240,13 +240,13 @@ export function GoToRevision({ disabled, onSubmit }: GoToRevisionProps) {
           }}
           onKeyUp={(event) => event.stopPropagation()}
         >
-          <label htmlFor={`${id}-input`}>ID or revset</label>
+          <label htmlFor={`${id}-input`}>Revision</label>
           <div className="goto-revision-entry">
             <input
               ref={input}
               id={`${id}-input`}
               value={value}
-              placeholder="Enter an ID or revset"
+              placeholder="Enter a revision"
               autoComplete="off"
               autoCapitalize="off"
               spellCheck={false}
@@ -264,7 +264,7 @@ export function GoToRevision({ disabled, onSubmit }: GoToRevisionProps) {
               type="submit"
               disabled={disabled || busy || !value.trim()}
             >
-              {busy ? "Loading…" : "View"}
+              {busy ? "Loading…" : "Open"}
             </button>
           </div>
           {error && (

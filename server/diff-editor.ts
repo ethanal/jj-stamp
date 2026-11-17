@@ -28,11 +28,14 @@ export type DiffEditorPlan = {
     base: string | null;
     source: string | null;
     result: string | null;
+    baseMode?: 0o644 | 0o755 | null;
+    sourceMode?: 0o644 | 0o755 | null;
+    resultMode?: 0o644 | 0o755 | null;
   }>;
 };
 
 function fail(message: string): never {
-  throw new Error(`Native diff editor: ${message}`);
+  throw new Error(`Cannot squash selected changes: ${message}`);
 }
 
 function objectWithKeys(
@@ -68,8 +71,18 @@ export function validateDiffEditorPlan(value: unknown): DiffEditorPlan {
   }
   const paths = new Set<string>();
   for (const file of value.files) {
+    const explicitModes = objectWithKeys(file, [
+      "path",
+      "base",
+      "source",
+      "result",
+      "baseMode",
+      "sourceMode",
+      "resultMode",
+    ]);
     if (
-      !objectWithKeys(file, ["path", "base", "source", "result"]) ||
+      (!explicitModes &&
+        !objectWithKeys(file, ["path", "base", "source", "result"])) ||
       typeof file.path !== "string" ||
       file.path.includes("\\") ||
       file.path.includes("\0") ||
@@ -82,7 +95,7 @@ export function validateDiffEditorPlan(value: unknown): DiffEditorPlan {
       fail("invalid or duplicate selected path");
     }
     paths.add(file.path);
-    for (const key of ["base", "source", "result"]) {
+    for (const key of ["base", "source", "result"] as const) {
       const bytes = file[key];
       if (
         bytes !== null &&
@@ -91,8 +104,16 @@ export function validateDiffEditorPlan(value: unknown): DiffEditorPlan {
       ) {
         fail(`invalid canonical base64 for ${file.path}`);
       }
+      if (explicitModes) {
+        const mode = file[`${key}Mode`];
+        if (bytes === null ? mode !== null : mode !== 0o644 && mode !== 0o755)
+          fail(`invalid ${key} mode for ${file.path}`);
+      }
     }
-    if (file.base === file.source)
+    if (
+      file.base === file.source &&
+      (!explicitModes || file.baseMode === file.sourceMode)
+    )
       fail(`selected file is unchanged: ${file.path}`);
   }
   for (const name of paths) {
@@ -153,14 +174,14 @@ function canonicalScratchRoot(
 async function readRegular(
   filename: string,
   manifest = false,
-): Promise<Buffer> {
+): Promise<{ bytes: Buffer; mode: number }> {
   const before = await lstat(filename);
-  // jj can make non-executable inputs read-only. Never chmod an input inode.
+  // jj can make inputs read-only. Never chmod an input inode.
   const mode = before.mode & 0o7777;
   if (
     !before.isFile() ||
     before.nlink !== 1 ||
-    (manifest ? mode !== 0o600 : mode !== 0o644 && mode !== 0o444)
+    (manifest ? mode !== 0o600 : ![0o644, 0o444, 0o755, 0o555].includes(mode))
   ) {
     fail(`unsafe regular file or mode: ${filename}`);
   }
@@ -178,7 +199,11 @@ async function readRegular(
       after.mode !== before.mode
     )
       fail(`file changed while opening: ${filename}`);
-    return await handle.readFile();
+    return {
+      bytes: await handle.readFile(),
+      // Preserve the executable bit, not jj's temporary read-only permissions.
+      mode: mode & 0o111 ? 0o755 : 0o644,
+    };
   } finally {
     await handle.close();
   }
@@ -188,11 +213,13 @@ async function verifySide(
   root: string,
   plan: DiffEditorPlan,
   side: "base" | "source",
-): Promise<void> {
+): Promise<Map<string, number>> {
+  const modes = new Map<string, number>();
+  const modeKey = `${side}Mode` as const;
   const expected = new Map(
     plan.files
       .filter((file) => file[side] !== null)
-      .map((file) => [file.path, file[side]!]),
+      .map((file) => [file.path, file]),
   );
   const directories = new Set<string>();
   for (const name of expected.keys()) {
@@ -213,10 +240,14 @@ async function verifySide(
           fail(`unexpected ${side} directory: ${entry}`);
         await walk(entry);
       } else {
-        const bytes = expected.get(entry);
-        if (bytes === undefined) fail(`unexpected ${side} file: ${entry}`);
-        if (!(await readRegular(absolute)).equals(Buffer.from(bytes, "base64")))
+        const file = expected.get(entry);
+        if (file === undefined) fail(`unexpected ${side} file: ${entry}`);
+        const input = await readRegular(absolute);
+        if (!input.bytes.equals(Buffer.from(file[side]!, "base64")))
           fail(`${side} bytes mismatch: ${entry}`);
+        if (file[modeKey] !== undefined && input.mode !== file[modeKey])
+          fail(`${side} mode mismatch: ${entry}`);
+        modes.set(entry, input.mode);
         expected.delete(entry);
       }
     }
@@ -224,6 +255,7 @@ async function verifySide(
   await walk("");
   if (expected.size)
     fail(`missing ${side} file: ${expected.keys().next().value}`);
+  return modes;
 }
 
 /** Validate both entire restricted inventories before changing any right-side file.
@@ -238,7 +270,7 @@ export async function applyDiffEditor(
     fail("manifest path must be absolute and canonical");
   await directory(path.dirname(planPath));
   const plan = validateDiffEditorPlan(
-    JSON.parse((await readRegular(planPath, true)).toString("utf8")),
+    JSON.parse((await readRegular(planPath, true)).bytes.toString("utf8")),
   );
   await directory(plan.repository);
   const tempPrefix = path.resolve(os.tmpdir());
@@ -255,13 +287,23 @@ export async function applyDiffEditor(
     if (overlaps(a, b) || overlaps(b, a))
       fail("scratch roots must be distinct and cannot overlap the repository");
   }
-  await verifySide(left, plan, "base");
-  await verifySide(right, plan, "source");
+  const baseModes = await verifySide(left, plan, "base");
+  const sourceModes = await verifySide(right, plan, "source");
+  for (const file of plan.files) {
+    if (
+      file.baseMode === undefined &&
+      baseModes.has(file.path) &&
+      sourceModes.has(file.path) &&
+      sourceModes.get(file.path) !== baseModes.get(file.path)
+    )
+      fail(`mode changes require explicit manifest mode claims: ${file.path}`);
+  }
 
   const created: string[] = [];
   try {
     for (const file of plan.files) {
-      if (file.result === file.source) continue;
+      if (file.result === file.source && file.resultMode === file.sourceMode)
+        continue;
       let parent = right;
       const parts = file.path.split("/");
       parts.pop();
@@ -277,11 +319,17 @@ export async function applyDiffEditor(
       }
       await directory(parent);
       const destination = path.join(right, file.path);
+      // Legacy partial deletions inherit the base mode; explicit plans choose it.
+      const mode =
+        file.resultMode ??
+        sourceModes.get(file.path) ??
+        baseModes.get(file.path) ??
+        0o644;
       if (file.source !== null) {
+        const input = await readRegular(destination);
         if (
-          !(await readRegular(destination)).equals(
-            Buffer.from(file.source, "base64"),
-          )
+          !input.bytes.equals(Buffer.from(file.source, "base64")) ||
+          input.mode !== sourceModes.get(file.path)
         )
           fail(`source changed before write: ${file.path}`);
       } else {
@@ -308,7 +356,7 @@ export async function applyDiffEditor(
         );
         try {
           await handle.writeFile(Buffer.from(file.result, "base64"));
-          await handle.chmod(0o644);
+          await handle.chmod(mode);
         } finally {
           await handle.close();
         }

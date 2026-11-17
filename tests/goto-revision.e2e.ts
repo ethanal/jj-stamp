@@ -17,9 +17,12 @@ const fixture = await createBrowserFixture({
   entry: "/tests/goto-revision.fixture.tsx",
 });
 const { page, url, errors } = fixture;
-const trigger = page.getByRole("button", { name: "View commit", exact: true });
-const dialog = page.getByRole("dialog", { name: "View commit" });
-const input = page.getByRole("textbox", { name: "ID or revset" });
+const trigger = page.getByRole("button", {
+  name: "Open revision",
+  exact: true,
+});
+const dialog = page.getByRole("dialog", { name: "Open revision" });
+const input = page.getByRole("textbox", { name: "Revision" });
 const previous = page.locator("#previous");
 const surface = page.locator(".code-surface");
 const cursor = page.locator("[data-line][data-fold-vim-cursor]");
@@ -27,10 +30,19 @@ const cursor = page.locator("[data-line][data-fold-vim-cursor]");
 try {
   await page.goto(url);
   await expect(page.locator("[data-line]").first()).toBeVisible();
+  await expect(trigger).toHaveText("Open revision");
+  await expect(trigger).toHaveAttribute(
+    "title",
+    "Open a revision by ID or revset (c)",
+  );
   await previous.focus();
   await page.keyboard.press("c");
+  await expect(dialog.locator("label")).toHaveText("Revision");
+  await expect(
+    dialog.getByRole("button", { name: "Open", exact: true }),
+  ).toBeVisible();
   await expect(input).toBeFocused();
-  await expect(input).toHaveAttribute("placeholder", "Enter an ID or revset");
+  await expect(input).toHaveAttribute("placeholder", "Enter a revision");
   await input.fill("  abc123  ");
   await input.press("Enter");
   await expect(page.locator("#requests")).toHaveText('["abc123"]');
@@ -209,7 +221,7 @@ try {
   await expect(trigger).toBeEnabled();
   await expect(trigger).toBeFocused();
   assert.deepEqual(errors, []);
-  console.log("View commit component keyboard and async regressions passed");
+  console.log("Open revision component keyboard and async regressions passed");
 } finally {
   await fixture.close();
 }

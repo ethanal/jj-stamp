@@ -11,6 +11,8 @@ import { createDemo } from "./fixtures.ts";
 
 const stage = process.argv[2] ?? "after";
 assert.ok(stage === "before" || stage === "after");
+const screenshotPrefix =
+  process.env.TERMINAL_CHROME_SCREENSHOT_PREFIX ?? "terminal-narrow";
 await using resources = new AsyncDisposableStack();
 const directory = await mkdtemp(
   path.join(tmpdir(), "jj-stamp-terminal-chrome-"),
@@ -78,7 +80,7 @@ await files.evaluate((element) =>
 );
 await mkdir(path.resolve(".planka-artifacts"), { recursive: true });
 await page.screenshot({
-  path: path.resolve(`.planka-artifacts/terminal-narrow-${stage}.png`),
+  path: path.resolve(`.planka-artifacts/${screenshotPrefix}-${stage}.png`),
   caret: "initial",
 });
 console.log(
@@ -170,11 +172,33 @@ if (stage === "after") {
   }
   await page.setViewportSize({ width: 650, height: 960 });
   await setPinned("files", false);
+  await setPinned("log", false);
+  await setTerminal(true);
+  await page.locator(".squash-destination-trigger").click();
+  await page.getByRole("menuitem", { name: "Choose revision in log…" }).click();
+  await expect(workspace).not.toHaveClass(/log-collapsed/);
+  await expect(terminalButton).toBeDisabled();
+  await expectNarrowGeometry("destination picker temporarily opens the log");
+  await page.keyboard.press("t");
+  await expect(input).not.toBeFocused();
+  await page.screenshot({
+    path: path.resolve(
+      `.planka-artifacts/${screenshotPrefix}-destination-after.png`,
+    ),
+    caret: "initial",
+  });
+  await page.keyboard.press("Escape");
+  await expect(workspace).toHaveClass(/log-collapsed/);
+  await expect(terminalButton).toBeEnabled();
+  await expectNarrowGeometry("cancel restores the collapsed log with terminal");
+  await setTerminal(false);
   await setPinned("log", true);
   await files.hover();
   await finishPeek(files);
   await page.screenshot({
-    path: path.resolve(".planka-artifacts/terminal-narrow-closed-after.png"),
+    path: path.resolve(
+      `.planka-artifacts/${screenshotPrefix}-closed-after.png`,
+    ),
     caret: "initial",
   });
 

@@ -381,7 +381,7 @@ await expect(page.locator(".workspace")).toHaveAttribute(
 );
 await expect(shortcuts).not.toBeVisible();
 await expect(
-  page.getByRole("textbox", { name: "ID or revset" }),
+  page.getByRole("textbox", { name: "Revision", exact: true }),
 ).not.toBeVisible();
 assert.deepEqual(reviewActions, []);
 assert.equal(sent.filter((frame) => frame.type === "input").length, 0);

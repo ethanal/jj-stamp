@@ -22,13 +22,13 @@ const selectionSchema = z.union([
       lines: z.array(z.number().int().positive()).min(1).max(100000),
     })
     .strict(),
-  // Exact paths and pure-rename eligibility are checked against the pinned diff.
+  // Exact paths and metadata-only eligibility are checked against the pinned diff.
   z
     .object({
       id: z
         .string()
         .max(16384)
-        .regex(/^rename:\[.*\]$/),
+        .regex(/^(?:rename|copy|mode):\[.*\]$/),
       lines: z.array(z.number()).length(0),
     })
     .strict(),
@@ -432,7 +432,7 @@ export function createApi(
   router.post("/squash-lines", async (req, res) => {
     res.json(
       await service.squashLines(
-        previewSchema.omit({ target: true }).parse(req.body),
+        previewSchema.partial({ target: true }).parse(req.body),
       ),
     );
   });
@@ -468,7 +468,7 @@ export function createApi(
     if (error instanceof z.ZodError) {
       res.status(400).json({
         error:
-          "Invalid request. Supply the current version and valid changed-line or rename selections.",
+          "Invalid request. Supply the current version and valid changed-line or metadata selections.",
         code: "INVALID_REQUEST",
       });
       return;

@@ -40,14 +40,14 @@ export function materializeSelection(
   if (Buffer.from(input.patch, "utf8").toString("utf8") !== input.patch)
     throw new Error("Patch is not lossless UTF-8 text.");
   const file = parseFile(input.patch, input.path);
-  // Selecting any edits in a rename also moves the file into the parent.
-  // The caller must account for BOTH paths in the scratch inventories.
-  const oldPath = file.oldPath ?? input.path;
+  // Selecting edits also carries copy/rename metadata and executable modes.
+  // The caller accounts for rename paths or the new copy destination in jj.
+  const oldPath = file.oldPath ?? file.copyFrom ?? input.path;
   const baseLines = textLines(base, "Base file");
   const sourceLines = textLines(source, "Source file");
-  if (file.oldPath !== undefined && file.hunks.length === 0) {
-    // No unified file headers or rows exist for a metadata-only rename. Both
-    // pinned sides must still be present, lossless text and byte-identical.
+  if (file.hunks.length === 0) {
+    // Metadata-only changes have no text rows to validate. Both pinned sides
+    // must still be present, lossless text and byte-identical.
     if (
       input.selections.length ||
       base === null ||
@@ -55,7 +55,7 @@ export function materializeSelection(
       !base.equals(source)
     )
       throw new Error(
-        "Pure rename disagrees with pinned file bytes or selections.",
+        "Metadata-only change disagrees with pinned file bytes or selections.",
       );
     return { result: Buffer.from(source), preview: input.patch };
   }
@@ -205,17 +205,27 @@ export function materializeSelection(
       ? null
       : encode(output);
   if (!previewHunks.length) return { result, preview: "" };
+  // Preserve the mode from the already-validated envelope. Headerless text
+  // patches retain the ordinary-file default; previews never drive writes.
+  const fileMode =
+    /^(?:new|deleted) file mode (100(?:644|755))$/m.exec(
+      headerLines.join("\n"),
+    )?.[1] ?? "100644";
   const mode =
     base === null
-      ? "new file mode 100644\n"
+      ? `new file mode ${fileMode}\n`
       : result === null
-        ? "deleted file mode 100644\n"
-        : "";
+        ? `deleted file mode ${fileMode}\n`
+        : file.oldMode !== undefined
+          ? `old mode ${file.oldMode}\nnew mode ${file.newMode}\n`
+          : "";
   const preview =
     `diff --git a/${oldPath} b/${input.path}\n${mode}` +
-    (file.oldPath === undefined
-      ? ""
-      : `rename from ${oldPath}\nrename to ${input.path}\n`) +
+    (file.oldPath !== undefined
+      ? `rename from ${oldPath}\nrename to ${input.path}\n`
+      : file.copyFrom !== undefined
+        ? `copy from ${oldPath}\ncopy to ${input.path}\n`
+        : "") +
     `--- ${base === null ? "/dev/null" : `a/${oldPath}`}\n` +
     `+++ ${result === null ? "/dev/null" : `b/${input.path}`}\n` +
     previewHunks.join("");

@@ -5,21 +5,33 @@ import test from "node:test";
 const source = (name: string) =>
   readFile(new URL(`../${name}`, import.meta.url), "utf8");
 
-const [launcher, flake, build, cli, editor, runner] = await Promise.all([
-  source("nix/package.nix"),
-  source("flake.nix"),
-  source("scripts/build.mjs"),
-  source("cli.ts"),
-  source("server/diff-editor.ts"),
-  source("server/process.ts"),
-]);
+const [launcher, flake, build, cli, editor, runner, reader] = await Promise.all(
+  [
+    source("nix/package.nix"),
+    source("flake.nix"),
+    source("scripts/build.mjs"),
+    source("cli.ts"),
+    source("server/diff-editor.ts"),
+    source("server/process.ts"),
+    source("server/diff-reader.ts"),
+  ],
+);
 
 test("runtime packaging does not depend on jj-hunk-tool or GNU patch", () => {
-  for (const text of [launcher, flake, build, cli, editor, runner]) {
+  for (const text of [launcher, flake, build, cli, editor, runner, reader]) {
     assert.doesNotMatch(text, /jj-hunk-tool|JJ_STAMP_HUNK_TOOL|gnupatch/);
   }
   assert.match(cli, /for \(const command of \["jj"\]\)/);
   assert.doesNotMatch(editor, /(?:spawn|execFile|run)\(\s*["']patch["']/);
+});
+
+test("build and Nix installation include the read-only merged-parent callback", () => {
+  assert.match(build, /entryPoints: \["server\/diff-reader-cli\.ts"\]/);
+  assert.match(build, /outfile: "dist\/diff-reader\.cjs"/);
+  assert.match(launcher, /cp dist\/diff-reader\.cjs "\$out\/lib\/jj-stamp\/"/);
+  assert.match(reader, /path\.join\(__dirname, "diff-reader\.cjs"\)/);
+  assert.match(reader, /commit_id\(/);
+  assert.match(reader, /"--ignore-working-copy"/);
 });
 
 test("Nix launcher pins jj for execution and error diagnostics", () => {

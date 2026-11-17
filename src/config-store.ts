@@ -1,4 +1,4 @@
-import { api, errorMessage } from "./api.ts";
+import { api, errorMessage, RequestError } from "./api.ts";
 import { configSchema, defaultConfig, type Config } from "./config.ts";
 
 interface ConfigTransport {
@@ -22,7 +22,8 @@ const browserTransport: ConfigTransport = {
     });
     events.addEventListener("config-error", (event) => {
       try {
-        fail(String(JSON.parse((event as MessageEvent).data).error));
+        const payload = JSON.parse((event as MessageEvent).data);
+        fail(String(payload.error));
       } catch {
         fail("Could not read the settings file.");
       }
@@ -51,6 +52,7 @@ export class ConfigStore {
   private loaded = false;
   private syncError = "";
   private saveError = "";
+  private saveErrorCode?: string;
   private generation = 0;
   private snapshot = initialSnapshot;
 
@@ -70,6 +72,12 @@ export class ConfigStore {
           this.generation++;
           this.confirmed = config;
           this.syncError = "";
+          // A repaired file must also dismiss a previous invalid-file save
+          // failure. The failed edit itself is never replayed.
+          if (this.saveErrorCode === "CONFIG_INVALID") {
+            this.saveError = "";
+            this.saveErrorCode = undefined;
+          }
           this.loaded = true;
           this.publish();
         },
@@ -97,6 +105,7 @@ export class ConfigStore {
     if (value === previous) return;
     this.pending[key] = value;
     this.saveError = "";
+    this.saveErrorCode = undefined;
     this.publish();
     if (this.timer) clearTimeout(this.timer);
     this.timer = setTimeout(() => {
@@ -128,10 +137,19 @@ export class ConfigStore {
       // response. Never replace it with an older full-document response.
       if (this.generation === generation) this.confirmed = config;
       this.saveError = "";
+      this.saveErrorCode = undefined;
     } catch (error) {
       // A failed write is not replayed. Revert just its optimistic overlay and
       // leave any newer, explicit edits queued independently.
-      this.saveError = `Settings save could not be confirmed: ${errorMessage(error)}`;
+      const code = error instanceof RequestError ? error.code : undefined;
+      const alreadyRepaired =
+        code === "CONFIG_INVALID" &&
+        this.generation !== generation &&
+        !this.syncError;
+      this.saveError = alreadyRepaired
+        ? ""
+        : `Settings save could not be confirmed: ${errorMessage(error)}`;
+      this.saveErrorCode = alreadyRepaired ? undefined : code;
     } finally {
       this.inFlight = {};
       this.syncing = false;

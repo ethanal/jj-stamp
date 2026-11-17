@@ -22,6 +22,7 @@ import { fileURLToPath } from "node:url";
 import { build } from "esbuild";
 import {
   applyDiffEditor,
+  validateDiffEditorPlan,
   withDiffEditor,
   type DiffEditorPlan,
 } from "../server/diff-editor.ts";
@@ -34,6 +35,12 @@ const edit = (name = "a.txt"): DiffEditorPlan["files"][number] => ({
   base: b64("base\n"),
   source: b64("source\n"),
   result: b64("selected\n"),
+});
+
+test("validation failures explain the attempted action without editor terminology", () => {
+  assert.throws(() => validateDiffEditorPlan({}), {
+    message: "Cannot squash selected changes: invalid manifest",
+  });
 });
 
 async function fixture(t: TestContext, files = [edit()]) {
@@ -49,17 +56,17 @@ async function fixture(t: TestContext, files = [edit()]) {
   const plan: DiffEditorPlan = { version: 1, repository, files };
   await writeFile(manifest, JSON.stringify(plan), { mode: 0o600 });
   for (const file of files) {
-    for (const [side, bytes] of [
-      [left, file.base],
-      [right, file.source],
-    ]) {
+    for (const [side, bytes, mode] of [
+      [left, file.base, file.baseMode],
+      [right, file.source, file.sourceMode],
+    ] as const) {
       if (bytes === null) continue;
       const target = path.join(side!, file.path);
       await mkdir(path.dirname(target), { recursive: true });
       await writeFile(target, Buffer.from(bytes, "base64"), { mode: 0o644 });
       // Creation modes are filtered by umask; model jj's exact scratch-file
       // permissions even when the test runner inherits a restrictive mask.
-      await chmod(target, 0o644);
+      await chmod(target, mode ?? 0o644);
     }
   }
   return {
@@ -138,6 +145,290 @@ test("creates missing parents, removes files, and preserves absent and empty-fil
     await assert.rejects(lstat(path.join(f.right, name)), { code: "ENOENT" });
   assert.equal((await readFile(path.join(f.right, "empty"))).length, 0);
   assert.equal(await readFile(path.join(f.right, "new"), "utf8"), "new");
+});
+
+for (const mode of [0o755, 0o555]) {
+  test(`preserves executable scripts with ${mode.toString(8)} scratch permissions`, async (t) => {
+    const f = await fixture(t, [
+      edit("modified.sh"),
+      { ...edit("added.sh"), base: null },
+      { ...edit("deleted.sh"), source: null },
+    ]);
+    for (const file of f.plan.files) {
+      if (file.base !== null) await chmod(path.join(f.left, file.path), mode);
+      if (file.source !== null)
+        await chmod(path.join(f.right, file.path), mode);
+    }
+    await f.apply();
+    for (const file of f.plan.files) {
+      assert.equal(
+        await readFile(path.join(f.right, file.path), "utf8"),
+        "selected\n",
+      );
+      assert.equal(
+        (await stat(path.join(f.right, file.path))).mode & 0o777,
+        0o755,
+      );
+      if (file.base !== null)
+        assert.equal(
+          (await stat(path.join(f.left, file.path))).mode & 0o777,
+          mode,
+        );
+    }
+  });
+}
+
+test("requires explicit mode claims for executable-bit changes before writing any file", async (t) => {
+  for (const side of ["left", "right"] as const) {
+    const f = await fixture(t, [edit("first"), edit("changed-mode")]);
+    await chmod(path.join(f[side], "changed-mode"), 0o755);
+    await assert.rejects(
+      f.apply(),
+      /mode changes require explicit manifest mode claims/,
+    );
+    assert.equal(
+      await readFile(path.join(f.right, "first"), "utf8"),
+      "source\n",
+    );
+  }
+});
+
+for (const [baseMode, sourceMode] of [
+  [0o644, 0o755],
+  [0o755, 0o644],
+] as const) {
+  for (const readOnly of [false, true]) {
+    test(`explicit ${baseMode.toString(8)} to ${sourceMode.toString(8)} modes support content and mode-only results (${readOnly ? "read-only" : "writable"} scratch)`, async (t) => {
+      const modes = { baseMode, sourceMode, resultMode: sourceMode };
+      const unchangedBytes = b64("unchanged\n");
+      const f = await fixture(t, [
+        { ...edit("content-selected"), ...modes },
+        {
+          ...edit("content-base-mode"),
+          ...modes,
+          resultMode: baseMode,
+        },
+        {
+          path: "mode-selected",
+          base: unchangedBytes,
+          source: unchangedBytes,
+          result: unchangedBytes,
+          ...modes,
+        },
+        {
+          path: "mode-restored",
+          base: unchangedBytes,
+          source: unchangedBytes,
+          result: unchangedBytes,
+          ...modes,
+          resultMode: baseMode,
+        },
+        // Absent mode keys remain backwards-compatible in a mixed manifest.
+        edit("legacy"),
+      ]);
+      if (readOnly) {
+        for (const file of f.plan.files) {
+          await chmod(
+            path.join(f.left, file.path),
+            (file.baseMode ?? 0o644) & ~0o222,
+          );
+          await chmod(
+            path.join(f.right, file.path),
+            (file.sourceMode ?? 0o644) & ~0o222,
+          );
+        }
+      }
+      const before = new Map(
+        await Promise.all(
+          f.plan.files.map(
+            async (file) =>
+              [file.path, await stat(path.join(f.right, file.path))] as const,
+          ),
+        ),
+      );
+      await withDiffEditor(f.plan, async (config) => {
+        const [script, manifest] = editArgs(config);
+        await execute(process.execPath, [script, manifest, f.left, f.right]);
+      });
+      for (const file of f.plan.files) {
+        const output = await stat(path.join(f.right, file.path));
+        assert.equal(
+          await readFile(path.join(f.right, file.path), "base64"),
+          file.result,
+        );
+        assert.equal(
+          await readFile(path.join(f.left, file.path), "base64"),
+          file.base,
+        );
+        assert.equal(
+          (await stat(path.join(f.left, file.path))).mode & 0o777,
+          readOnly
+            ? (file.baseMode ?? 0o644) & ~0o222
+            : (file.baseMode ?? 0o644),
+        );
+        if (file.path === "mode-selected") {
+          assert.equal(output.ino, before.get(file.path)!.ino);
+          assert.equal(
+            output.mode & 0o777,
+            readOnly ? sourceMode & ~0o222 : sourceMode,
+          );
+        } else {
+          assert.notEqual(output.ino, before.get(file.path)!.ino);
+          assert.equal(output.mode & 0o777, file.resultMode ?? 0o644);
+        }
+      }
+    });
+  }
+}
+
+test("explicit result modes handle additions, deletions, restorations and empty bytes", async (t) => {
+  const f = await fixture(t, [
+    {
+      ...edit("restored"),
+      source: null,
+      baseMode: 0o755,
+      sourceMode: null,
+      resultMode: 0o644,
+    },
+    {
+      ...edit("added"),
+      base: null,
+      baseMode: null,
+      sourceMode: 0o755,
+      resultMode: 0o644,
+    },
+    {
+      ...edit("deleted"),
+      result: null,
+      baseMode: 0o644,
+      sourceMode: 0o755,
+      resultMode: null,
+    },
+    {
+      ...edit("absent"),
+      source: null,
+      result: null,
+      baseMode: 0o755,
+      sourceMode: null,
+      resultMode: null,
+    },
+    {
+      path: "empty",
+      base: null,
+      source: "",
+      result: "",
+      baseMode: null,
+      sourceMode: 0o755,
+      resultMode: 0o644,
+    },
+  ]);
+  await f.apply();
+  for (const name of ["restored", "added", "empty"])
+    assert.equal((await stat(path.join(f.right, name))).mode & 0o777, 0o644);
+  assert.equal(
+    await readFile(path.join(f.right, "restored"), "utf8"),
+    "selected\n",
+  );
+  assert.equal(
+    await readFile(path.join(f.right, "added"), "utf8"),
+    "selected\n",
+  );
+  assert.equal((await readFile(path.join(f.right, "empty"))).length, 0);
+  for (const name of ["deleted", "absent"])
+    await assert.rejects(lstat(path.join(f.right, name)), { code: "ENOENT" });
+});
+
+for (const side of ["left", "right"] as const) {
+  for (const sameBytes of [false, true]) {
+    test(`explicit ${side} mode mismatch in later ${sameBytes ? "mode-only" : "content"} file fails before any write`, async (t) => {
+      const f = await fixture(t, [
+        edit("first"),
+        {
+          ...edit("later"),
+          ...(sameBytes
+            ? { base: b64("source\n"), result: b64("source\n") }
+            : {}),
+          baseMode: 0o644,
+          sourceMode: 0o755,
+          resultMode: 0o755,
+        },
+      ]);
+      const first = await stat(path.join(f.right, "first"));
+      const actualMode = side === "left" ? 0o755 : 0o644;
+      await chmod(path.join(f[side], "later"), actualMode);
+      await assert.rejects(
+        f.apply(),
+        new RegExp(`${side === "left" ? "base" : "source"} mode mismatch`),
+      );
+      assert.equal(
+        await readFile(path.join(f.right, "first"), "utf8"),
+        "source\n",
+      );
+      assert.equal((await stat(path.join(f.right, "first"))).ino, first.ino);
+      assert.equal(
+        (await stat(path.join(f[side], "later"))).mode & 0o777,
+        actualMode,
+      );
+      assert.deepEqual(await readdir(f.right), ["first", "later"]);
+    });
+  }
+}
+
+test("explicit manifest modes require all keys, canonical numeric values and matching existence", async (t) => {
+  const f = await fixture(t);
+  const file = {
+    ...edit(),
+    baseMode: 0o644,
+    sourceMode: 0o755,
+    resultMode: 0o755,
+  };
+  const invalid: unknown[] = [];
+  const keys = ["baseMode", "sourceMode", "resultMode"] as const;
+  for (let mask = 1; mask < 7; mask++) {
+    invalid.push({
+      ...edit(),
+      ...Object.fromEntries(
+        keys
+          .filter((_, index) => mask & (1 << index))
+          .map((key) => [key, 0o644]),
+      ),
+    });
+  }
+  for (const key of keys) {
+    for (const mode of [
+      null,
+      undefined,
+      "100644",
+      "755",
+      755,
+      0o444,
+      0o555,
+      0o4755,
+      0,
+      false,
+    ]) {
+      invalid.push({ ...file, [key]: mode });
+    }
+  }
+  for (const key of ["base", "source", "result"] as const) {
+    invalid.push({ ...file, [key]: null });
+    invalid.push({ ...file, [`${key}Mode`]: null });
+  }
+  invalid.push(
+    { ...file, extraMode: 0o644 },
+    { ...file, base: file.source, baseMode: file.sourceMode },
+    { ...file, base: null, source: null, baseMode: null, sourceMode: null },
+  );
+  for (const entry of invalid) {
+    const plan = { ...f.plan, files: [entry] };
+    assert.throws(
+      () => validateDiffEditorPlan(plan),
+      /Cannot squash selected changes/,
+    );
+    await writeFile(f.manifest, JSON.stringify(plan));
+    await assert.rejects(f.apply(), /Cannot squash selected changes/);
+  }
+  assert.equal(await readFile(path.join(f.right, "a.txt"), "utf8"), "source\n");
 });
 
 const renameEdits = (): DiffEditorPlan["files"] => [
@@ -253,7 +544,7 @@ test("strict manifest schema, paths and canonical base64 fail closed", async (t)
   ];
   for (const value of invalid) {
     await writeFile(f.manifest, JSON.stringify(value));
-    await assert.rejects(f.apply(), /Native diff editor/);
+    await assert.rejects(f.apply(), /Cannot squash selected changes/);
   }
   await writeFile(f.manifest, "{");
   await assert.rejects(f.apply(), SyntaxError);
@@ -267,7 +558,7 @@ for (const side of ["left", "right"] as const) {
     "nested",
     "file",
     "hardlink",
-    "executable",
+    "special-mode",
     "fifo",
   ]) {
     test(`${side} rejects ${kind} without touching outside files`, async (t) => {
@@ -291,7 +582,7 @@ for (const side of ["left", "right"] as const) {
         await symlink(f.repository, path.join(f[side], "dir"));
       } else {
         const target = path.join(f[side], "dir/a");
-        if (kind === "executable") await chmod(target, 0o755);
+        if (kind === "special-mode") await chmod(target, 0o4755);
         else {
           await rm(target);
           if (kind === "file") await symlink(outside, target);
@@ -301,7 +592,7 @@ for (const side of ["left", "right"] as const) {
       }
       await assert.rejects(
         applyDiffEditor(f.manifest, left, right),
-        /Native diff editor/,
+        /Cannot squash selected changes/,
       );
       assert.equal(await readFile(outside, "utf8"), "source\n");
     });
@@ -628,4 +919,99 @@ test("temp-prefix canonicalization still rejects scratch symlinks, traversal and
     /unexpected source file/,
   );
   assert.equal(await readFile(path.join(f.left, "dir/a"), "utf8"), "base\n");
+});
+
+test("older-ancestor jj scratch trees remain source-parent/source and preserve intervening edits", async (t) => {
+  const f = await fixture(t);
+  const jj = (args: string[]) =>
+    execute("jj", ["--no-pager", ...args], {
+      cwd: f.repository,
+      env: {
+        ...process.env,
+        JJ_CONFIG: "",
+        JJ_USER: "Native Test",
+        JJ_EMAIL: "native@example.com",
+      },
+    });
+  await jj(["git", "init", "--no-colocate"]);
+  await jj([
+    "config",
+    "set",
+    "--repo",
+    'revset-aliases."immutable_heads()"',
+    "root()",
+  ]);
+  const base = Array.from({ length: 40 }, (_, i) => `line ${i + 1}\n`).join("");
+  const middle = base.replace("line 20\n", "intermediate revision\n");
+  const source = middle.replace("line 1\n", "line 1\nselected\nunselected\n");
+  const selected = middle.replace("line 1\n", "line 1\nselected\n");
+  await writeFile(path.join(f.repository, "a.txt"), base);
+  await jj(["commit", "-m", "destination"]);
+  await writeFile(path.join(f.repository, "a.txt"), middle);
+  await jj(["commit", "-m", "intermediate"]);
+  await writeFile(path.join(f.repository, "a.txt"), source);
+  await jj(["describe", "-m", "source"]);
+  const plan: DiffEditorPlan = {
+    version: 1,
+    repository: f.repository,
+    files: [
+      {
+        path: "a.txt",
+        base: b64(middle),
+        source: b64(source),
+        result: b64(selected),
+      },
+    ],
+  };
+  const squash = (value: DiffEditorPlan) =>
+    withDiffEditor(value, (config) =>
+      jj([
+        "squash",
+        "--tool",
+        "jj-stamp",
+        "--from",
+        "@",
+        "--into",
+        "@--",
+        "--keep-emptied",
+        "--use-destination-message",
+        ...config,
+        "--",
+        'root-file:"a.txt"',
+      ]),
+    );
+  const operation = (
+    await jj(["op", "log", "--no-graph", "-n", "1", "-T", "id"])
+  ).stdout;
+  // Destination bytes are deliberately wrong for the left scratch inventory.
+  // Reject them before any write, without weakening callback byte validation.
+  await assert.rejects(
+    squash({ ...plan, files: [{ ...plan.files[0], base: b64(base) }] }),
+    (error) => {
+      assert.match((error as { stderr: string }).stderr, /base bytes mismatch/);
+      return true;
+    },
+  );
+  assert.equal(
+    (await jj(["op", "log", "--no-graph", "-n", "1", "-T", "id"])).stdout,
+    operation,
+  );
+  assert.equal(
+    await readFile(path.join(f.repository, "a.txt"), "utf8"),
+    source,
+  );
+  await squash(plan);
+  assert.equal(
+    (await jj(["file", "show", "-r", "@--", "a.txt"])).stdout,
+    base.replace("line 1\n", "line 1\nselected\n"),
+  );
+  assert.equal(
+    (await jj(["file", "show", "-r", "@-", "a.txt"])).stdout,
+    selected,
+  );
+  assert.equal((await jj(["file", "show", "-r", "@", "a.txt"])).stdout, source);
+  assert.equal(
+    await readFile(path.join(f.repository, "a.txt"), "utf8"),
+    source,
+  );
 });
