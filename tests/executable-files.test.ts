@@ -149,18 +149,31 @@ for (const api of ["direct", "legacy"] as const) {
         selections.push({ id: hunk.id, lines: rows.map((row) => row.index) });
       }
     }
-    const result =
-      api === "direct"
-        ? await service.squashLines({ version: state.version, selections })
-        : await service.squash(
-            (
-              await service.preview({
-                version: state.version,
-                target: state.parent!.changeId,
-                selections,
-              })
-            ).token,
-          );
+    const preview =
+      api === "legacy"
+        ? await service.preview({
+            version: state.version,
+            target: state.parent!.changeId,
+            selections,
+          })
+        : null;
+    if (preview) {
+      assert.match(
+        preview.patch,
+        /diff --git a\/added\.sh b\/added\.sh\nnew file mode 100755\n/,
+      );
+      assert.match(
+        preview.patch,
+        /diff --git a\/removed\.sh b\/removed\.sh\ndeleted file mode 100755\n/,
+      );
+      assert.match(
+        preview.patch,
+        /diff --git a\/deleted\.sh b\/deleted\.sh\n--- a\/deleted\.sh\n/,
+      );
+    }
+    const result = preview
+      ? await service.squash(preview.token)
+      : await service.squashLines({ version: state.version, selections });
     assert.equal(result.warning, undefined);
     assert.equal(result.state.canUndo, true);
     assert.equal(

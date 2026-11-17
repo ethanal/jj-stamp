@@ -205,11 +205,17 @@ export function materializeSelection(
       ? null
       : encode(output);
   if (!previewHunks.length) return { result, preview: "" };
+  // Preserve the mode from the already-validated envelope. Headerless text
+  // patches retain the ordinary-file default; previews never drive writes.
+  const fileMode =
+    /^(?:new|deleted) file mode (100(?:644|755))$/m.exec(
+      headerLines.join("\n"),
+    )?.[1] ?? "100644";
   const mode =
     base === null
-      ? "new file mode 100644\n"
+      ? `new file mode ${fileMode}\n`
       : result === null
-        ? "deleted file mode 100644\n"
+        ? `deleted file mode ${fileMode}\n`
         : "";
   const preview =
     `diff --git a/${oldPath} b/${input.path}\n${mode}` +
