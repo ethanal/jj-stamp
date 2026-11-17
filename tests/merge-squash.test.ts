@@ -1,10 +1,12 @@
 import assert from "node:assert/strict";
 import {
+  chmod,
   mkdtemp,
   readFile,
   readdir,
   rename,
   rm,
+  stat,
   writeFile,
 } from "node:fs/promises";
 import os from "node:os";
@@ -66,7 +68,7 @@ async function workspaceAt(root: string) {
   );
 }
 
-async function fixture(t: TestContext) {
+async function fixture(t: TestContext, executable = false) {
   const root = await mkdtemp(path.join(os.tmpdir(), "jj-stamp-merge-squash-"));
   t.after(() => rm(root, { recursive: true, force: true }));
   await jj(root, ["git", "init", "--no-colocate"]);
@@ -87,6 +89,7 @@ async function fixture(t: TestContext) {
   ]);
   const base = Array.from({ length: 60 }, (_, i) => `line ${i + 1}\n`).join("");
   await writeFile(path.join(root, "shared.txt"), base);
+  if (executable) await chmod(path.join(root, "shared.txt"), 0o755);
   await writeFile(path.join(root, "delete.txt"), "delete me\n");
   await writeFile(path.join(root, "old.txt"), "rename me\n");
   await jj(root, ["commit", "-m", "Common mutable ancestor"]);
@@ -161,8 +164,9 @@ function rejectsCode(promise: Promise<unknown>, code: string, reason?: RegExp) {
 
 for (const api of ["direct", "legacy"] as const) {
   for (const side of ["left", "right"] as const) {
-    test(`${api} merge squash into ${side}: merged baseline, exact selected delta, pinned single mutation and undo`, async (t) => {
-      const data = await fixture(t);
+    test(`${api} merge squash into ${side}${side === "left" ? " (executable)" : ""}: merged baseline, exact selected delta, pinned single mutation and undo`, async (t) => {
+      const executable = side === "left";
+      const data = await fixture(t, executable);
       const { root } = data;
       const calls: string[][] = [];
       const reads: string[][] = [];
@@ -271,6 +275,31 @@ for (const api of ["direct", "legacy"] as const) {
       const rewrittenTarget = result.state.targets.find(
         (revision) => revision.changeId === target.changeId,
       )!;
+      if (executable) {
+        for (const commitId of [
+          rewrittenTarget.commitId,
+          result.state.source.commitId,
+        ]) {
+          const modePatch = (
+            await jj(root, [
+              "diff",
+              "--git",
+              "--from",
+              "root()",
+              "--to",
+              pinned(commitId),
+              "--ignore-working-copy",
+              "--",
+              'root-file:"shared.txt"',
+            ])
+          ).stdout;
+          assert.match(modePatch, /^new file mode 100755$/m);
+        }
+        assert.equal(
+          (await stat(path.join(root, "shared.txt"))).mode & 0o777,
+          0o755,
+        );
+      }
       assert.deepEqual(await treeAt(root, pinned(rewrittenTarget.commitId)), {
         ...targetTree,
         "shared.txt": targetTree["shared.txt"].replace(
