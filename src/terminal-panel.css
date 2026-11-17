@@ -39,6 +39,8 @@
   background: var(--panel);
 }
 .terminal-heading h2 {
+  display: flex;
+  align-items: center;
   font-size: calc(var(--font-size) - 2px);
   font-weight: 500;
   margin: 0;
@@ -53,10 +55,20 @@
   padding: 4px 6px;
 }
 .terminal-surface {
+  position: relative;
   flex: 1;
   min-height: 0;
   margin: 8px 12px;
   overflow: hidden;
+}
+/* Ghostty paints the only visible caret in its canvas. Its contenteditable
+   input and hidden textarea must not add a second browser caret in the header. */
+.terminal-surface,
+.terminal-surface textarea {
+  caret-color: transparent;
+}
+.terminal-trigger {
+  padding-inline: 6px;
 }
 .terminal-notice {
   display: flex;

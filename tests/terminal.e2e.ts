@@ -144,7 +144,55 @@ async function capture(name: string) {
   if (!process.env.TERMINAL_SCREENSHOTS) return;
   const artifacts = path.resolve(".planka-artifacts");
   await mkdir(artifacts, { recursive: true });
-  await page.screenshot({ path: path.join(artifacts, name) });
+  await page.screenshot({ path: path.join(artifacts, name), caret: "initial" });
+}
+async function expectNativeCursorOnly() {
+  // Do not let screenshot's default caret hiding mask the browser's extra
+  // contenteditable caret. Ghostty's own blinking canvas cursor must survive.
+  await expect(input).toHaveCSS("caret-color", "rgba(0, 0, 0, 0)");
+  await expect(input.locator("textarea")).toHaveCSS(
+    "caret-color",
+    "rgba(0, 0, 0, 0)",
+  );
+  const bounds = await input.evaluate((surface) => {
+    const body = surface.getBoundingClientRect();
+    const sink = surface.querySelector("textarea")!.getBoundingClientRect();
+    return {
+      contained:
+        sink.x >= body.x &&
+        sink.y >= body.y &&
+        sink.right <= body.right &&
+        sink.bottom <= body.bottom,
+    };
+  });
+  assert.ok(
+    bounds.contained,
+    "hidden input is anchored in the body, not the header",
+  );
+  const heading = panel.locator(".terminal-heading");
+  const before = await heading.screenshot({ caret: "initial" });
+  const fingerprint = () =>
+    input.locator("canvas").evaluate((element) => {
+      const canvas = element as HTMLCanvasElement;
+      const pixels = canvas
+        .getContext("2d")!
+        .getImageData(
+          0,
+          0,
+          Math.min(128, canvas.width),
+          Math.min(32, canvas.height),
+        ).data;
+      let hash = 0;
+      for (const value of pixels) hash = (Math.imul(hash, 31) + value) | 0;
+      return hash;
+    });
+  const initial = await fingerprint();
+  await expect.poll(fingerprint, { timeout: 3000 }).not.toBe(initial);
+  assert.deepEqual(
+    await heading.screenshot({ caret: "initial" }),
+    before,
+    "terminal header stays still while the native canvas cursor blinks",
+  );
 }
 async function expectCleanCanvas() {
   // A new Ghostty instance must not reuse cells/WASM memory from its predecessor.
@@ -278,6 +326,10 @@ assert.equal(connections, 0, "a shell must not start until opened");
 await expect(
   page.getByRole("button", { name: "Terminal", exact: true }),
 ).toHaveAttribute("title", "Open terminal (t)");
+await expect(
+  page.getByRole("button", { name: "Terminal", exact: true }),
+).toHaveText("");
+await expect(page.locator(".terminal-trigger svg")).toBeVisible();
 await page.keyboard.press("x");
 await expect(panel).not.toBeVisible();
 assert.equal(connections, 0);
@@ -344,6 +396,11 @@ await page.keyboard.press("t");
 await expect(input).toBeFocused();
 assert.equal(connections, 1);
 await expectBarePrompt();
+await expect(
+  panel.getByRole("heading", { name: "Terminal", exact: true }),
+).toHaveText("");
+await expect(panel.locator(".terminal-heading svg")).toBeVisible();
+await expectNativeCursorOnly();
 await expect(
   page.getByRole("dialog", { name: "Terminal", exact: true }),
 ).toHaveCount(0);
@@ -656,7 +713,8 @@ await settings
   .getByRole("textbox", { name: "Terminal shell", exact: true })
   .fill(customShell);
 await settings
-  .getByRole("button", { name: "Apply shell", exact: true })
+  .locator(".shell-settings")
+  .getByRole("button", { name: "Save", exact: true })
   .click();
 await expect
   .poll(async () => JSON.parse(await readFile(configPath, "utf8")).shell)

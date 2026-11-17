@@ -1667,10 +1667,11 @@ kbd {
   flex-shrink: 0;
 }
 
-.log-revset-settings textarea {
+.log-revset-settings textarea,
+.shell-settings input {
   width: 100%;
   min-width: 0;
-  resize: vertical;
+
   padding: 8px;
   font: inherit;
   font-size: var(--font-size);
@@ -1679,17 +1680,35 @@ kbd {
   border: 1px solid var(--border);
   border-radius: 4px;
 }
-.log-revset-settings p {
+.log-revset-settings textarea {
+  resize: vertical;
+}
+.log-revset-settings p,
+.shell-settings p {
   margin: 0;
 }
 .revset-actions {
   display: flex;
-  justify-content: space-between;
+  justify-content: flex-end;
   gap: 12px;
 }
 .revset-actions button {
-  padding: 6px 10px;
+  padding: 8px 14px;
+  border: 1px solid var(--button-border);
+  border-radius: 4px;
+  background: var(--button-bg);
+  color: var(--button-fg);
   font-size: var(--font-size);
+}
+.revset-actions button:not(:disabled):hover {
+  background: var(--hover);
+}
+.revset-actions button:disabled {
+  opacity: 0.45;
+}
+.revset-actions button:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
 }
 .revset-error {
   color: var(--error-fg);

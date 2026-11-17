@@ -91,7 +91,17 @@ async function assertPeekAnimation(
   direction: "left" | "right" | "bottom",
 ) {
   const positions = await panel.evaluate((element) => {
-    const animation = element.getAnimations()[0];
+    let animation = element.getAnimations()[0];
+    // A CDP round trip can outlast the real 100ms peek. Replay the configured
+    // CSS animation for sampling if it already finished; do not change its
+    // keyframes, duration, or production behavior just to slow it for the test.
+    if (!animation) {
+      const inline = element.style.animation;
+      element.style.animation = "none";
+      element.getBoundingClientRect();
+      element.style.animation = inline;
+      animation = element.getAnimations()[0];
+    }
     if (!animation) throw new Error("Expected a slide-in animation");
     animation.pause();
     const duration = Number(animation.effect!.getTiming().duration);
@@ -134,10 +144,19 @@ async function assertSettingsLayout(dialog: Locator) {
   );
   const layout = await dialog.evaluate((element) => {
     const bounds = element.getBoundingClientRect();
-    const [header, appearance, logSettings, behavior, picker, rows] = [
+    const [
+      header,
+      appearance,
+      logSettings,
+      shellSettings,
+      behavior,
+      picker,
+      rows,
+    ] = [
       ".settings-heading",
       ".settings-section",
       ".log-revset-settings",
+      ".shell-settings",
       ".settings-section:last-child",
       "select",
       ".settings-rows",
@@ -156,17 +175,23 @@ async function assertSettingsLayout(dialog: Locator) {
       gaps: [
         appearance.top - header.bottom,
         logSettings.top - appearance.bottom,
-        behavior.top - logSettings.bottom,
+        shellSettings.top - logSettings.bottom,
+        behavior.top - shellSettings.bottom,
       ],
-      aligned: [appearance, logSettings, behavior, picker, rows].every(
-        (box) => box.left === header.left && box.right === header.right,
-      ),
+      aligned: [
+        appearance,
+        logSettings,
+        shellSettings,
+        behavior,
+        picker,
+        rows,
+      ].every((box) => box.left === header.left && box.right === header.right),
     };
   });
   assert(layout.inViewport && layout.noOverflow);
   assert(layout.aligned, "headings, controls, and rows share the same edges");
   assert.deepEqual(layout.padding, [24, 24, 24, 24]);
-  assert.deepEqual(layout.gaps, [24, 24, 24]);
+  assert.deepEqual(layout.gaps, [24, 24, 24, 24]);
 }
 async function assertConnectedGraph() {
   await expect(page.locator(".log-row")).toHaveCount(graphRows.length);
@@ -222,9 +247,7 @@ try {
     "font-family",
     '"Source Code Pro", monospace',
   );
-  await expect(page).toHaveTitle(
-    `${source.description} (abcdefgh /home/reviewer/full/path/example)`,
-  );
+  await expect(page).toHaveTitle("jj-stamp: example");
   await expect(
     page.getByLabel("Current change ID").locator("strong"),
   ).toHaveCount(0);
@@ -286,11 +309,58 @@ try {
     name: "Reveal sidebars on hover",
   });
   const vimSetting = page.getByRole("checkbox", { name: "Vim mode" });
+  const revsetForm = dialog.locator(".log-revset-settings");
+  const shellForm = dialog.locator(".shell-settings");
+  const shellInput = shellForm.getByRole("textbox", { name: "Terminal shell" });
   await expect(dialog).not.toBeVisible();
   await expect(picker).not.toBeVisible();
   await settings.click();
   await expect(dialog).toBeVisible();
   await assertSettingsLayout(dialog);
+  const defaultShellResponse = await page.request.get(
+    `${url}/api/config/default-shell`,
+  );
+  const { shell: defaultShell } = await defaultShellResponse.json();
+  await expect(shellInput).toHaveAttribute(
+    "placeholder",
+    `Default: ${defaultShell}`,
+  );
+  await expect(dialog).not.toContainText("Filters the graph only");
+  await expect(dialog).not.toContainText("Saved in the shared config file.");
+  await expect(dialog).not.toContainText("Executable name or absolute path");
+  await expect(dialog).not.toContainText("Applies to new sessions");
+  await expect(shellInput).not.toHaveAttribute("aria-describedby");
+  await expect(revsetForm.locator("textarea")).not.toHaveAttribute(
+    "aria-describedby",
+  );
+  for (const form of [revsetForm, shellForm]) {
+    await expect(
+      form.getByRole("button", { name: "Save", exact: true }),
+    ).toBeDisabled();
+    const actionLayout = await form
+      .locator(".revset-actions")
+      .evaluate((row) => {
+        const bounds = row.getBoundingClientRect();
+        const buttons = [...row.querySelectorAll("button")];
+        const last = buttons.at(-1)!.getBoundingClientRect();
+        return {
+          rightAligned: Math.abs(last.right - bounds.right) < 1,
+          styled: buttons.every((button) => {
+            const style = getComputedStyle(button);
+            return (
+              style.borderStyle === "solid" &&
+              parseFloat(style.borderWidth) > 0 &&
+              parseFloat(style.paddingInlineStart) >= 10 &&
+              style.backgroundColor !== "rgba(0, 0, 0, 0)"
+            );
+          }),
+        };
+      });
+    assert(
+      actionLayout.rightAligned && actionLayout.styled,
+      "settings actions are right-aligned styled buttons",
+    );
+  }
   await expect(
     dialog.getByRole("region", { name: "Appearance" }),
   ).toBeVisible();
@@ -330,7 +400,13 @@ try {
   ).toBeFocused();
   await page.keyboard.press("Tab");
   await expect(
-    dialog.getByRole("button", { name: "Reset to default" }),
+    revsetForm.getByRole("button", { name: "Reset to default" }),
+  ).toBeFocused();
+  await page.keyboard.press("Tab");
+  await expect(shellInput).toBeFocused();
+  await page.keyboard.press("Tab");
+  await expect(
+    shellForm.getByRole("button", { name: "Reset to default" }),
   ).toBeFocused();
   await page.keyboard.press("Tab");
   await expect(hoverSetting).toBeFocused();
@@ -350,6 +426,31 @@ try {
   await expect(
     page.getByRole("button", { name: "Collapse log sidebar" }),
   ).toHaveCount(1);
+  // Saving is explicit; resetting edits the draft rather than the shared file.
+  const saveShell = shellForm.getByRole("button", {
+    name: "Save",
+    exact: true,
+  });
+  const resetShell = shellForm.getByRole("button", {
+    name: "Reset to default",
+  });
+  await shellInput.fill(" /bin/sh ");
+  assert.equal((await fixture.readConfig()).shell, "");
+  await expect(saveShell).toBeEnabled();
+  await saveShell.click();
+  await expect
+    .poll(async () => (await fixture.readConfig()).shell)
+    .toBe("/bin/sh");
+  await expect(shellInput).toHaveValue("/bin/sh");
+  await expect(saveShell).toBeDisabled();
+  await shellInput.fill("/unsaved/shell");
+  await resetShell.click();
+  await expect(shellInput).toHaveValue("");
+  assert.equal((await fixture.readConfig()).shell, "/bin/sh");
+  await expect(saveShell).toBeEnabled();
+  await saveShell.click();
+  await expect.poll(async () => (await fixture.readConfig()).shell).toBe("");
+  await expect(saveShell).toBeDisabled();
   await page.keyboard.press("Escape");
   await expect(dialog).not.toBeVisible();
   await expect(settings).toBeFocused();
@@ -917,6 +1018,39 @@ try {
       "color-scheme": "light",
     });
   await noStorage.close();
+  // Metadata failures must be explicit, without inventing a browser shell or
+  // preventing users from saving an explicit backend executable.
+  const invalidDefault = await browser.newPage();
+  invalidDefault.on("pageerror", (error) => errors.push(error.message));
+  await invalidDefault.route("**/api/config/default-shell", (route) =>
+    route.fulfill({
+      status: 500,
+      contentType: "application/json",
+      body: JSON.stringify({
+        error:
+          "The backend default shell is invalid. Set a terminal shell explicitly.",
+        code: "INVALID_DEFAULT_SHELL",
+      }),
+    }),
+  );
+  await invalidDefault.goto(url);
+  await invalidDefault
+    .getByRole("button", { name: "Settings", exact: true })
+    .click();
+  const invalidForm = invalidDefault.locator(".shell-settings");
+  await expect(invalidForm.getByRole("status")).toContainText(
+    "backend default shell is invalid",
+  );
+  await expect(invalidForm.getByRole("textbox")).toHaveAttribute(
+    "placeholder",
+    "Default shell unavailable",
+  );
+  await invalidForm.getByRole("textbox").fill("/bin/sh");
+  await invalidForm.getByRole("button", { name: "Save", exact: true }).click();
+  await expect
+    .poll(async () => (await fixture.readConfig()).shell)
+    .toBe("/bin/sh");
+  await invalidDefault.close();
   assert.deepEqual(errors, []);
   console.log(
     "Preference browser checks passed: drag/keyboard resize, persistence, themes, title/header, graph highlight/connected strokes, accessible settings, mobile, unavailable storage.",

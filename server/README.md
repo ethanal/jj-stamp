@@ -199,6 +199,11 @@ defaults for omitted keys. See the root README for an example and supported
 values. Browser storage is neither read nor migrated.
 
 - `GET /config` returns the full effective config with `Cache-Control: no-store`.
+- `GET /config/default-shell` returns `{shell}` from the same native-default
+  selection used by the PTY (`$SHELL`, account shell, then `/bin/sh`), with
+  `Cache-Control: no-store`. This is read-only runtime metadata, never a stored
+  preference or SSE config key. An invalid default returns
+  `500 INVALID_DEFAULT_SHELL` rather than silently selecting another shell.
 - `POST /config` accepts a strict partial typed config, merges against a fresh
   validated file, and returns the full effective config. It retains the HTTP
   server's same-origin, JSON and `X-Fold-Request: 1` protections.

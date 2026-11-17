@@ -449,8 +449,45 @@ test("empty shell preference uses the service user's SHELL without changing argv
     if (previous === undefined) delete process.env.SHELL;
     else process.env.SHELL = previous;
   });
+  const metadata = await fetch(new URL("api/config/default-shell", local.url));
+  assert.deepEqual(await metadata.json(), { shell: "/bin/sh" });
   const c = client(t, local.url);
   assert.equal((await c.frame("ready")).shell, "/bin/sh");
+});
+
+test("empty shell preference and metadata share the backend account fallback", async (t) => {
+  const local = await fixture(t, "");
+  const previous = process.env.SHELL;
+  delete process.env.SHELL;
+  t.after(() => {
+    if (previous === undefined) delete process.env.SHELL;
+    else process.env.SHELL = previous;
+  });
+  t.mock.method(os, "userInfo", () => ({ shell: "/bin/sh" }));
+  const metadata = await fetch(new URL("api/config/default-shell", local.url));
+  assert.deepEqual(await metadata.json(), { shell: "/bin/sh" });
+  const c = client(t, local.url);
+  assert.equal((await c.frame("ready")).shell, "/bin/sh");
+});
+
+test("invalid backend SHELL fails metadata and native startup instead of using the account shell", async (t) => {
+  const local = await fixture(t, "");
+  const previous = process.env.SHELL;
+  process.env.SHELL = "invalid\nshell";
+  t.after(() => {
+    if (previous === undefined) delete process.env.SHELL;
+    else process.env.SHELL = previous;
+  });
+  t.mock.method(os, "userInfo", () => ({ shell: "/bin/sh" }));
+  const metadata = await fetch(new URL("api/config/default-shell", local.url));
+  assert.equal(metadata.status, 500);
+  const c = client(t, local.url);
+  assert.match((await c.frame("error")).message!, /Could not start terminal/);
+  assert.equal(await c.closed, 1011);
+  assert.equal(
+    c.frames.some((frame) => frame.type === "ready"),
+    false,
+  );
 });
 
 test("shutdown during pending startup waits for initialization but never spawns an abandoned shell", async (t) => {

@@ -1,6 +1,5 @@
 import type { IncomingMessage, Server } from "node:http";
 import type { Duplex } from "node:stream";
-import os from "node:os";
 import path from "node:path";
 import { constants } from "node:fs";
 import { access, readdir, readFile, stat } from "node:fs/promises";
@@ -8,6 +7,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import * as pty from "node-pty";
 import { WebSocket, WebSocketServer } from "ws";
 import { ConfigStore } from "./config.ts";
+import { shellExecutable } from "./shell.ts";
 import type { ReviewService } from "./service.ts";
 import {
   BoundedPtyInput,
@@ -47,22 +47,6 @@ function reject(socket: Duplex, status: number, reason: string): void {
   const timer = setTimeout(() => socket.destroy(), 250);
   timer.unref();
   socket.once("close", () => clearTimeout(timer));
-}
-
-function shellExecutable(configured: string): string {
-  let shell = configured || process.env.SHELL;
-  if (!shell) {
-    try {
-      shell = os.userInfo().shell || undefined;
-    } catch {
-      // A system without a passwd entry can still provide /bin/sh.
-    }
-  }
-  shell ||= "/bin/sh";
-  if (shell.length > 4096 || /[\0\r\n]/.test(shell))
-    throw new Error("Invalid shell executable.");
-  // One literal executable, never shell text, expansion or split arguments.
-  return shell;
 }
 
 async function executablePath(shell: string, cwd: string): Promise<string> {

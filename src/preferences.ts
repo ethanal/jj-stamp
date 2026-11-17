@@ -2,8 +2,10 @@ import {
   useCallback,
   useEffect,
   useLayoutEffect,
+  useState,
   useSyncExternalStore,
 } from "react";
+import { api, errorMessage } from "./api.ts";
 import type { Config } from "./config.ts";
 import { configStore } from "./config-store.ts";
 export * from "./preference-values.ts";
@@ -14,6 +16,29 @@ export function useConfigStatus() {
     configStore.getSnapshot,
     configStore.getServerSnapshot,
   );
+}
+
+/** Backend runtime metadata is deliberately separate from shared preferences. */
+export function useDefaultShell() {
+  const [metadata, setMetadata] = useState<{
+    shell?: string;
+    error?: string;
+  }>({});
+  useEffect(() => {
+    let active = true;
+    void api<{ shell: string }>("config/default-shell").then(
+      ({ shell }) => {
+        if (active) setMetadata({ shell });
+      },
+      (error: unknown) => {
+        if (active) setMetadata({ error: errorMessage(error) });
+      },
+    );
+    return () => {
+      active = false;
+    };
+  }, []);
+  return metadata;
 }
 
 export function usePreference<K extends keyof Config>(key: K) {

@@ -37,6 +37,7 @@ import {
   useAppearancePreferences,
   usePreference,
   useConfigStatus,
+  useDefaultShell,
 } from "./preferences";
 import {
   FilesSidebar,
@@ -64,6 +65,7 @@ function retainActivePath(files: RepoState["files"], current: string): string {
 }
 
 function App() {
+  const defaultShell = useDefaultShell();
   const [terminalSlot, setTerminalSlot] = useState<HTMLDivElement | null>(null);
   const [terminalOpen, setTerminalOpen] = useState(false);
   const {
@@ -1121,6 +1123,8 @@ function App() {
             vimMode={vimMode}
             onVimModeChange={setVimMode}
             shell={shell}
+            defaultShell={defaultShell.shell}
+            defaultShellError={defaultShell.error}
             onShellChange={setShell}
             persistenceError={configStatus.error}
             disabled={dragging}

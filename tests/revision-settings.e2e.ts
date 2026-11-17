@@ -71,6 +71,7 @@ try {
   assert.equal(graphQueries.at(-1), undefined);
   await page.getByRole("button", { name: "Settings", exact: true }).click();
   const settings = page.getByRole("dialog", { name: "Settings", exact: true });
+  const revsetForm = settings.locator(".log-revset-settings");
   const input = settings.getByLabel("jj log revset", { exact: true });
   await expect(input).toHaveValue(defaultLogRevset);
   await expect(settings).toHaveCSS("width", "720px");
@@ -81,12 +82,12 @@ try {
   }
   await page.setViewportSize({ width: 1440, height: 900 });
   await input.fill("broken(");
-  await settings.getByRole("button", { name: "Apply", exact: true }).click();
+  await revsetForm.getByRole("button", { name: "Save", exact: true }).click();
   await expect(settings.getByRole("alert")).toHaveText("Invalid revset");
   await expect(page.locator(".log-row")).toHaveCount(2);
   assert.equal((await fixture.readConfig())["log-revset"], defaultLogRevset);
   await input.fill("none()");
-  await settings.getByRole("button", { name: "Apply", exact: true }).click();
+  await revsetForm.getByRole("button", { name: "Save", exact: true }).click();
   await expect(page.locator(".log-row")).toHaveCount(0);
   await expect(
     page.getByLabel("Current change ID", { exact: true }),
@@ -140,9 +141,9 @@ try {
   assert.deepEqual(revisions, ["bad", "bbbb"]);
   await page.getByRole("button", { name: "Settings", exact: true }).click();
   await expect(input).toHaveValue("none()");
-  await settings.getByRole("button", { name: "Reset to default" }).click();
+  await revsetForm.getByRole("button", { name: "Reset to default" }).click();
   await expect(input).toHaveValue(defaultLogRevset);
-  await settings.getByRole("button", { name: "Apply", exact: true }).click();
+  await revsetForm.getByRole("button", { name: "Save", exact: true }).click();
   await expect(page.locator(".log-row")).toHaveCount(2);
   await expect(
     page.getByLabel("Current change ID", { exact: true }),

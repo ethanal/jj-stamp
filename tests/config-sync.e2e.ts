@@ -145,6 +145,7 @@ await writeFile(
     "diff-style": "split",
     "files-expanded": false,
     "log-revset": "all()",
+    shell: "/external/shell",
   }),
 );
 await rename(path.join(root, "replacement.json"), configPath);
@@ -155,21 +156,34 @@ for (const page of pages) {
   await expect(
     page.getByRole("textbox", { name: "jj log revset" }),
   ).toHaveValue("all()");
+  await expect(
+    page.getByRole("textbox", { name: "Terminal shell" }),
+  ).toHaveValue("/external/shell");
 }
 
 // Preserve an actively edited revset draft, but still apply disk config to the
 // actual graph and every other control.
 const thirdDraft = third.getByRole("textbox", { name: "jj log revset" });
+const thirdShellDraft = third.getByRole("textbox", { name: "Terminal shell" });
 await thirdDraft.fill("mine()");
+await thirdShellDraft.fill("/mine/shell");
 await writeFile(
   configPath,
-  JSON.stringify({ "color-scheme": "dim", "log-revset": "none()" }),
+  JSON.stringify({
+    "color-scheme": "dim",
+    "log-revset": "none()",
+    shell: "/updated/shell",
+  }),
 );
 await scheme("dim");
 await expect(
   first.page.getByRole("textbox", { name: "jj log revset" }),
 ).toHaveValue("none()");
 await expect(thirdDraft).toHaveValue("mine()");
+await expect(
+  first.page.getByRole("textbox", { name: "Terminal shell" }),
+).toHaveValue("/updated/shell");
+await expect(thirdShellDraft).toHaveValue("/mine/shell");
 
 // Malformed edits retain the last good view, surface an error, and recover.
 await writeFile(configPath, "{ broken JSON");

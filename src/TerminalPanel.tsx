@@ -12,6 +12,7 @@ import type { ColorScheme } from "./preference-values";
 import { terminalNativeTheme, terminalTheme } from "./terminal-theme";
 import { TerminalInputQueue } from "./terminal-input";
 import { TerminalResize } from "./TerminalResize";
+import { TerminalIcon } from "./TerminalIcon";
 import {
   clampTerminalHeight,
   TerminalExitPolicy,
@@ -375,14 +376,16 @@ export function TerminalPanel({
   return (
     <>
       <button
+        type="button"
         className="action-button terminal-trigger"
         disabled={disabled || !mount || (!activated && settingsSaving)}
         aria-controls={id}
         aria-expanded={open}
+        aria-label="Terminal"
         title="Open terminal (t)"
         onClick={show}
       >
-        Terminal
+        <TerminalIcon />
       </button>
       {mount &&
         createPortal(
@@ -419,7 +422,9 @@ export function TerminalPanel({
               controls={`${id}-surface`}
             />
             <header className="terminal-heading">
-              <h2 id={`${id}-title`}>Terminal</h2>
+              <h2 id={`${id}-title`} aria-label="Terminal">
+                <TerminalIcon />
+              </h2>
               <button
                 type="button"
                 className="terminal-close"
