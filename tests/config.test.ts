@@ -4,6 +4,7 @@ import { spawn } from "node:child_process";
 import { EventEmitter, once } from "node:events";
 import type { Request, Response } from "express";
 import {
+  chmod,
   mkdir,
   mkdtemp,
   open,
@@ -12,6 +13,7 @@ import {
   rename,
   rm,
   stat,
+  symlink,
   writeFile,
 } from "node:fs/promises";
 import { request } from "node:http";
@@ -50,6 +52,22 @@ async function serverFixture(t: TestContext) {
 
 function post(url: string, value: unknown, extra: Record<string, string> = {}) {
   return fetch(new URL("api/config", url), {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Fold-Request": "1",
+      ...extra,
+    },
+    body: JSON.stringify(value),
+  });
+}
+
+function reset(
+  url: string,
+  value: unknown = { confirm: true },
+  extra: Record<string, string> = {},
+) {
+  return fetch(new URL("api/config/reset-invalid", url), {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -192,6 +210,273 @@ test("partial disk files use defaults, but invalid files are never silently repl
   }
 });
 
+test("invalid diagnostics distinguish syntax, UTF-8, known field validation and unknown keys without leaking input", async (t) => {
+  const { local, configPath } = await serverFixture(t);
+  await mkdir(path.dirname(configPath));
+  for (const [bytes, reason] of [
+    [Buffer.from('{"secret-path-/private":'), /JSON syntax/],
+    [Buffer.from([0x7b, 0xff, 0x7d]), /UTF-8/],
+    [Buffer.from('{"font-size":"secret-value-/private"}'), /font-size/],
+    [
+      Buffer.from('{"secret-key-/private":"secret-value-/private"}'),
+      /unknown keys/,
+    ],
+    [Buffer.from("[]"), /JSON object/],
+  ] as const) {
+    await writeFile(configPath, bytes);
+    const result = await fetch(new URL("api/config", local.url));
+    assert.equal(result.status, 409);
+    const error = await result.json();
+    assert.equal(error.code, "CONFIG_INVALID");
+    assert.match(error.error, reason);
+    assert.match(error.error, /Repair.*reset/);
+    assert.doesNotMatch(error.error, /secret|\/private/);
+    assert.ok(!error.error.includes(configPath));
+    assert.equal((await post(local.url, { "vim-mode": true })).status, 409);
+    assert.deepEqual(await readFile(configPath), bytes);
+    assert.deepEqual(await readdir(path.dirname(configPath)), ["config.json"]);
+  }
+});
+
+test("explicit reset backs up exact invalid bytes privately, atomically installs defaults and broadcasts recovery", async (t) => {
+  const { local, configPath } = await serverFixture(t);
+  await mkdir(path.dirname(configPath));
+  const original = Buffer.from(' \r\n{"font-size":"unsupported"}\r\n');
+  await writeFile(configPath, original, { mode: 0o644 });
+  const oldReader = await open(configPath, "r");
+  t.after(() => oldReader.close());
+  const events = await stream(local.url, t);
+  assert.deepEqual(await events.next(), {
+    event: "config",
+    data: defaultConfig,
+  });
+  const failure = await events.next();
+  assert.equal(failure.event, "config-error");
+  assert.equal(failure.data.code, "CONFIG_INVALID");
+  const response = await reset(local.url);
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get("cache-control"), "no-store");
+  const recovered = await response.json();
+  assert.deepEqual(recovered.config, defaultConfig);
+  assert.match(
+    recovered.backup,
+    /^config\.json\.[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.invalid\.bak$/,
+  );
+  assert.equal(path.basename(recovered.backup), recovered.backup);
+  const backupPath = path.join(path.dirname(configPath), recovered.backup);
+  assert.deepEqual(await readFile(backupPath), original);
+  assert.equal((await stat(backupPath)).mode & 0o777, 0o600);
+  assert.equal((await stat(configPath)).mode & 0o777, 0o600);
+  assert.deepEqual(
+    JSON.parse(await readFile(configPath, "utf8")),
+    defaultConfig,
+  );
+  assert.deepEqual(await oldReader.readFile(), original);
+  assert.notEqual((await oldReader.stat()).ino, (await stat(configPath)).ino);
+  assert.deepEqual(await events.next(), {
+    event: "config",
+    data: defaultConfig,
+  });
+  const saved = await post(local.url, { "font-size": 18 });
+  assert.equal(saved.status, 200);
+  assert.deepEqual(await saved.json(), { ...defaultConfig, "font-size": 18 });
+  assert.deepEqual(await events.next(), {
+    event: "config",
+    data: { ...defaultConfig, "font-size": 18 },
+  });
+  assert.deepEqual(await readFile(backupPath), original);
+  assert.deepEqual(
+    (await readdir(path.dirname(configPath))).sort(),
+    ["config.json", recovered.backup].sort(),
+  );
+});
+
+test("syntax and invalid UTF-8 recovery preserve all original bytes and never reuse backups", async (t) => {
+  const { local, configPath } = await serverFixture(t);
+  await mkdir(path.dirname(configPath));
+  const backups = new Set<string>();
+  for (const original of [
+    Buffer.from("{broken\r\n"),
+    Buffer.from([0xff, 0xfe, 0x00, 0x7b]),
+    Buffer.from('{"unknown":"private-value"}'),
+    Buffer.from(`${" ".repeat(64 * 1024 - 1)}{`),
+  ]) {
+    await writeFile(configPath, original);
+    const response = await reset(local.url);
+    assert.equal(response.status, 200);
+    const result = await response.json();
+    assert.deepEqual(result.config, defaultConfig);
+    assert.equal(backups.has(result.backup), false);
+    backups.add(result.backup);
+    assert.deepEqual(
+      await readFile(path.join(path.dirname(configPath), result.backup)),
+      original,
+    );
+  }
+  assert.equal((await readdir(path.dirname(configPath))).length, 5);
+});
+
+test("reset refuses missing and currently valid files without changing disk", async (t) => {
+  const { local, configPath, root } = await serverFixture(t);
+  let result = await reset(local.url);
+  assert.equal(result.status, 409);
+  assert.equal((await result.json()).code, "CONFIG_NOT_INVALID");
+  assert.deepEqual(await readdir(root), []);
+  await mkdir(path.dirname(configPath));
+  result = await reset(local.url);
+  assert.equal(result.status, 409);
+  assert.equal((await result.json()).code, "CONFIG_NOT_INVALID");
+  assert.deepEqual(await readdir(path.dirname(configPath)), []);
+  for (const valid of [
+    "{}",
+    '{"font-size":19}',
+    JSON.stringify(defaultConfig),
+  ]) {
+    await writeFile(configPath, valid);
+    result = await reset(local.url);
+    assert.equal(result.status, 409);
+    assert.equal((await result.json()).code, "CONFIG_NOT_INVALID");
+    assert.equal(await readFile(configPath, "utf8"), valid);
+    assert.deepEqual(await readdir(path.dirname(configPath)), ["config.json"]);
+  }
+});
+
+test("reset refuses oversized, unreadable and nonregular entries without backup or replacement", async (t) => {
+  const { local, configPath, root } = await serverFixture(t);
+  await mkdir(path.dirname(configPath));
+  const oversized = Buffer.alloc(64 * 1024 + 1, 0x78);
+  await writeFile(configPath, oversized);
+  const tooLarge = await reset(local.url);
+  assert.equal(tooLarge.status, 409);
+  const error = await tooLarge.json();
+  assert.equal(error.code, "CONFIG_INVALID");
+  assert.match(error.error, /64 KiB.*Reduce/);
+  assert.deepEqual(await readFile(configPath), oversized);
+  assert.deepEqual(await readdir(path.dirname(configPath)), ["config.json"]);
+  await rm(configPath);
+  await mkdir(configPath);
+  let result = await reset(local.url);
+  assert.equal(result.status, 500);
+  assert.equal((await result.json()).code, "CONFIG_IO");
+  assert.equal((await stat(configPath)).isDirectory(), true);
+  assert.deepEqual(await readdir(path.dirname(configPath)), ["config.json"]);
+  await rm(configPath, { recursive: true });
+  if (process.platform !== "win32") {
+    const fifo = spawn("mkfifo", [configPath]);
+    assert.equal((await once(fifo, "exit"))[0], 0);
+    result = await reset(local.url);
+    assert.equal(result.status, 500);
+    assert.equal((await result.json()).code, "CONFIG_IO");
+    assert.equal((await stat(configPath)).isFIFO(), true);
+    assert.deepEqual(await readdir(path.dirname(configPath)), ["config.json"]);
+    await rm(configPath);
+    const target = path.join(root, "original");
+    await writeFile(target, "{broken");
+    await symlink(target, configPath);
+    result = await reset(local.url);
+    assert.equal(result.status, 500);
+    assert.equal((await result.json()).code, "CONFIG_IO");
+    assert.equal(await readFile(target, "utf8"), "{broken");
+    assert.deepEqual(await readdir(path.dirname(configPath)), ["config.json"]);
+    await rm(configPath);
+    if (process.getuid?.() !== 0) {
+      await writeFile(configPath, "{unreadable", { mode: 0o000 });
+      try {
+        result = await reset(local.url);
+        assert.equal(result.status, 500);
+        assert.equal((await result.json()).code, "CONFIG_IO");
+        assert.equal((await stat(configPath)).mode & 0o777, 0);
+        assert.deepEqual(await readdir(path.dirname(configPath)), [
+          "config.json",
+        ]);
+      } finally {
+        await chmod(configPath, 0o600);
+      }
+      assert.equal(await readFile(configPath, "utf8"), "{unreadable");
+    }
+  }
+});
+
+test("reset requires exactly confirm:true and errors never mutate invalid preferences", async (t) => {
+  const { local, configPath } = await serverFixture(t);
+  await mkdir(path.dirname(configPath));
+  const original = "{broken";
+  await writeFile(configPath, original);
+  for (const value of [
+    {},
+    { confirm: false },
+    { confirm: "true" },
+    { confirm: 1 },
+    { confirm: true, extra: true },
+    null,
+    [],
+    true,
+  ]) {
+    const result = await reset(local.url, value);
+    assert.equal(result.status, 400, JSON.stringify(value));
+    assert.equal((await result.json()).code, "INVALID_REQUEST");
+    assert.equal(await readFile(configPath, "utf8"), original);
+    assert.deepEqual(await readdir(path.dirname(configPath)), ["config.json"]);
+  }
+  for (const body of ["{", ""]) {
+    const malformed = await fetch(
+      new URL("api/config/reset-invalid", local.url),
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-Fold-Request": "1" },
+        body,
+      },
+    );
+    assert.equal(malformed.status, 400);
+    assert.equal((await malformed.json()).code, "INVALID_REQUEST");
+  }
+  assert.equal(await readFile(configPath, "utf8"), original);
+  assert.deepEqual(await readdir(path.dirname(configPath)), ["config.json"]);
+});
+
+test("reset shares the writer lock and revalidates current bytes after waiting", async (t) => {
+  const { store, configPath } = await fixture(t);
+  await mkdir(path.dirname(configPath));
+  await writeFile(configPath, "{broken");
+  await writeFile(`${configPath}.lock`, "another writer");
+  const pending = store.resetInvalid({ confirm: true });
+  await delay(60);
+  assert.deepEqual((await readdir(path.dirname(configPath))).sort(), [
+    "config.json",
+    "config.json.lock",
+  ]);
+  // Simulate a cooperating writer that repairs the config before unlocking.
+  await writeFile(configPath, '{"font-size":20}');
+  await rm(`${configPath}.lock`);
+  await assert.rejects(pending, { code: "CONFIG_NOT_INVALID" });
+  assert.equal(await readFile(configPath, "utf8"), '{"font-size":20}');
+  assert.deepEqual(await readdir(path.dirname(configPath)), ["config.json"]);
+  await writeFile(configPath, "{broken again");
+  const other = new ConfigStore(configPath);
+  t.after(async () => {
+    other.close();
+    await other.drain();
+  });
+  const outcomes = await Promise.allSettled([
+    store.resetInvalid({ confirm: true }),
+    other.resetInvalid({ confirm: true }),
+  ]);
+  assert.equal(
+    outcomes.filter((entry) => entry.status === "fulfilled").length,
+    1,
+  );
+  const rejected = outcomes.find((entry) => entry.status === "rejected");
+  assert.equal(rejected?.reason.code, "CONFIG_NOT_INVALID");
+  const fulfilled = outcomes.find((entry) => entry.status === "fulfilled");
+  assert.ok(fulfilled);
+  fulfilled.value.config["font-size"] = 24;
+  assert.deepEqual(await store.read(), defaultConfig);
+  assert.equal((await readdir(path.dirname(configPath))).length, 2);
+  const copy = await store.read();
+  copy["font-size"] = 22;
+  assert.deepEqual(await store.read(), defaultConfig);
+});
+
 test("oversized and nonregular preferences fail safely without unbounded reads or FIFO waits", async (t) => {
   const { store, configPath } = await fixture(t);
   await mkdir(path.dirname(configPath));
@@ -286,6 +571,7 @@ test("config streams snapshot and track external writes, rename, invalid/repair,
   const failure = await events.next();
   assert.equal(failure.event, "config-error");
   assert.equal(typeof failure.data.error, "string");
+  assert.equal(failure.data.code, "CONFIG_INVALID");
   assert.ok(!failure.data.error.includes(path.dirname(configPath)));
   const invalidGet = await fetch(new URL("api/config", local.url));
   assert.equal(invalidGet.status, 409);
@@ -334,6 +620,7 @@ test("read failures use safe errors and repair without replacing the unreadable 
   await mkdir(configPath, { recursive: true });
   const failure = await events.next();
   assert.equal(failure.event, "config-error");
+  assert.equal(failure.data.code, "CONFIG_IO");
   assert.ok(!failure.data.error.includes(configPath));
   const response = await post(local.url, { "font-size": 18 });
   assert.equal(response.status, 500);
@@ -463,8 +750,14 @@ test("HTTP shutdown waits for a disconnected accepted config write", async (t) =
 });
 
 test("config routes retain loopback host, origin, fetch-site and mutation protections", async (t) => {
-  const { local } = await serverFixture(t);
-  for (const endpoint of ["api/config", "api/config/events"]) {
+  const { local, configPath } = await serverFixture(t);
+  await mkdir(path.dirname(configPath));
+  await writeFile(configPath, "{broken");
+  for (const endpoint of [
+    "api/config",
+    "api/config/events",
+    "api/config/reset-invalid",
+  ]) {
     for (const headers of [
       { Origin: "https://evil.example" },
       { Host: "evil.example" },
@@ -485,16 +778,28 @@ test("config routes retain loopback host, origin, fetch-site and mutation protec
       assert.equal(status, 403, `${endpoint}: ${JSON.stringify(headers)}`);
     }
   }
-  for (const headers of [
-    { "Content-Type": "application/json" },
-    { "Content-Type": "text/plain", "X-Fold-Request": "1" },
-  ]) {
-    const result = await fetch(new URL("api/config", local.url), {
-      method: "POST",
-      headers: headers as Record<string, string>,
-      body: '{"font-size":18}',
-    });
-    assert.equal(result.status, 403);
+  for (const endpoint of ["api/config", "api/config/reset-invalid"]) {
+    for (const headers of [
+      { "Content-Type": "application/json" },
+      { "Content-Type": "text/plain", "X-Fold-Request": "1" },
+      {
+        "Content-Type": "application/json",
+        "X-Fold-Request": "1",
+        Origin: "https://evil.example",
+      },
+      {
+        "Content-Type": "application/json",
+        "X-Fold-Request": "1",
+        "Sec-Fetch-Site": "cross-site",
+      },
+    ]) {
+      const result = await fetch(new URL(endpoint, local.url), {
+        method: "POST",
+        headers: headers as Record<string, string>,
+        body: '{"confirm":true}',
+      });
+      assert.equal(result.status, 403);
+    }
   }
   assert.equal(
     (
@@ -506,4 +811,6 @@ test("config routes retain loopback host, origin, fetch-site and mutation protec
     ).status,
     403,
   );
+  assert.equal(await readFile(configPath, "utf8"), "{broken");
+  assert.deepEqual(await readdir(path.dirname(configPath)), ["config.json"]);
 });

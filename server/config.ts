@@ -14,6 +14,7 @@ import {
 
 const MAX_CONFIG_BYTES = 64 * 1024;
 const MAX_PENDING_TASKS = 64;
+const resetInvalidSchema = z.object({ confirm: z.literal(true) }).strict();
 
 export function resolveConfigPath(
   env: NodeJS.ProcessEnv = process.env,
@@ -44,12 +45,30 @@ function ioError(error: unknown): ConfigError {
   );
 }
 
-async function load(file: string): Promise<Config> {
-  let text: string;
+function invalid(message: string): ConfigError {
+  return new ConfigError(
+    `${message} Repair config.json or explicitly reset invalid preferences to defaults with an automatic backup.`,
+    "CONFIG_INVALID",
+    409,
+  );
+}
+
+function notInvalid(): ConfigError {
+  return new ConfigError(
+    "Shared preferences are valid or missing. Only an existing invalid config.json can be reset.",
+    "CONFIG_NOT_INVALID",
+    409,
+  );
+}
+
+async function readBytes(file: string): Promise<Buffer | undefined> {
   try {
     // O_NONBLOCK prevents an accidentally configured FIFO from hanging even
-    // before fstat can reject it. Never read devices, directories or sockets.
-    const handle = await open(file, constants.O_RDONLY | constants.O_NONBLOCK);
+    // before fstat can reject it. Never read devices, directories or symlinks.
+    const handle = await open(
+      file,
+      constants.O_RDONLY | constants.O_NONBLOCK | constants.O_NOFOLLOW,
+    );
     try {
       const metadata = await handle.stat();
       if (!metadata.isFile())
@@ -81,24 +100,75 @@ async function load(file: string): Promise<Config> {
           "CONFIG_INVALID",
           409,
         );
-      text = bytes.subarray(0, length).toString("utf8");
+      return bytes.subarray(0, length);
     } finally {
       await handle.close();
     }
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT")
-      return { ...defaultConfig };
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
     throw ioError(error);
   }
+}
+
+function parseBytes(bytes: Buffer): Config {
+  let text: string;
   try {
-    const partial = configPatchSchema.parse(JSON.parse(text));
-    return { ...defaultConfig, ...partial };
-  } catch {
-    throw new ConfigError(
-      "Shared preferences contain invalid JSON or unsupported values. Repair or remove config.json before saving preferences.",
-      "CONFIG_INVALID",
-      409,
+    text = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(
+      bytes,
     );
+  } catch {
+    throw invalid("Shared preferences are not valid UTF-8.");
+  }
+  let value: unknown;
+  try {
+    value = JSON.parse(text);
+  } catch {
+    throw invalid("Shared preferences contain invalid JSON syntax.");
+  }
+  const result = configPatchSchema.safeParse(value);
+  if (result.success) return { ...defaultConfig, ...result.data };
+  // Zod diagnostics may contain arbitrary keys or values from the file.
+  // Report only known schema names, never the parser's raw message/input.
+  const fields = Object.keys(defaultConfig).filter((name) =>
+    result.error.issues.some((issue) => issue.path[0] === name),
+  );
+  const reasons: string[] = [];
+  if (fields.length)
+    reasons.push(
+      `Unsupported values for supported preference fields: ${fields.join(", ")}. Check their documented types, ranges and choices.`,
+    );
+  if (result.error.issues.some((issue) => issue.code === "unrecognized_keys"))
+    reasons.push(
+      "Shared preferences contain unknown keys. Remove unsupported preference names.",
+    );
+  if (!reasons.length)
+    reasons.push(
+      "Shared preferences must be a JSON object of supported preference fields.",
+    );
+  throw invalid(reasons.join(" "));
+}
+
+async function load(file: string): Promise<Config> {
+  const bytes = await readBytes(file);
+  return bytes === undefined ? { ...defaultConfig } : parseBytes(bytes);
+}
+
+/** Never truncate an existing file; remove only our own incomplete creation. */
+async function writePrivate(
+  file: string,
+  bytes: Buffer | string,
+): Promise<void> {
+  const handle = await open(file, "wx", 0o600);
+  try {
+    try {
+      await handle.writeFile(bytes);
+      await handle.sync();
+    } finally {
+      await handle.close();
+    }
+  } catch (error) {
+    await unlink(file).catch(() => {});
+    throw error;
   }
 }
 
@@ -126,7 +196,7 @@ export class ConfigStore {
   private polling = false;
   private heartbeat = 0;
   private snapshot: Config = { ...defaultConfig };
-  private failure?: string;
+  private failure?: ConfigError;
 
   constructor(
     readonly file = resolveConfigPath(),
@@ -171,9 +241,14 @@ export class ConfigStore {
       return { ...config };
     } catch (error) {
       const safe = ioError(error);
-      if (this.failure !== safe.message) {
-        this.failure = safe.message;
-        this.broadcast(frame("config-error", { error: safe.message }));
+      if (
+        this.failure?.message !== safe.message ||
+        this.failure?.code !== safe.code
+      ) {
+        this.failure = safe;
+        this.broadcast(
+          frame("config-error", { error: safe.message, code: safe.code }),
+        );
       }
       throw safe;
     }
@@ -187,62 +262,100 @@ export class ConfigStore {
     const patch = configPatchSchema.parse(value);
     return this.enqueue(async () => {
       if (Object.keys(patch).length === 0) return this.observe();
-      // Locking the read/merge/write (not just rename) preserves disjoint
-      // patches from separate windows, server instances and processes.
-      const lockPath = `${this.file}.lock`;
-      let lock: Awaited<ReturnType<typeof open>> | undefined;
-      let temporary: string | undefined;
-      try {
-        await mkdir(path.dirname(this.file), { recursive: true, mode: 0o700 });
-        const deadline = Date.now() + 3000;
-        while (!lock) {
-          try {
-            lock = await open(lockPath, "wx", 0o600);
-          } catch (error) {
-            if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-            if (Date.now() >= deadline)
-              throw new ConfigError(
-                "Shared preferences are locked by another writer. Retry after it finishes; if a process crashed, remove config.json.lock only after all jj-stamp processes have stopped.",
-                "CONFIG_BUSY",
-                503,
-              );
-            await delay(25);
-          }
-        }
+      return this.withLock(async () => {
         const current = await this.observe();
         const next = { ...current, ...patch };
         if (JSON.stringify(current) === JSON.stringify(next)) return current;
-        temporary = `${this.file}.${randomUUID()}.tmp`;
-        const handle = await open(temporary, "wx", 0o600);
+        return this.replace(next);
+      }, true);
+    });
+  }
+
+  resetInvalid(value: unknown): Promise<{ config: Config; backup: string }> {
+    resetInvalidSchema.parse(value);
+    return this.enqueue(() =>
+      this.withLock(async () => {
+        // Size, readability and file-type errors are deliberately outside the
+        // parse catch: even CONFIG_INVALID oversized files cannot be reset.
+        const bytes = await readBytes(this.file);
+        if (bytes === undefined) throw notInvalid();
         try {
-          await handle.writeFile(`${JSON.stringify(next, null, 2)}\n`, "utf8");
-          await handle.sync();
-        } finally {
-          await handle.close();
+          parseBytes(bytes);
+          throw notInvalid();
+        } catch (error) {
+          if (
+            !(error instanceof ConfigError) ||
+            error.code !== "CONFIG_INVALID"
+          )
+            throw error;
         }
-        await rename(temporary, this.file);
-        temporary = undefined;
-        this.snapshot = next;
-        this.failure = undefined;
-        this.broadcast(frame("config", next));
-        return { ...next };
-      } catch (error) {
-        throw ioError(error);
-      } finally {
-        if (temporary) await unlink(temporary).catch(() => {});
-        if (lock) {
-          try {
-            try {
-              await lock.close();
-            } finally {
-              await unlink(lockPath);
-            }
-          } catch (error) {
-            throw ioError(error);
-          }
+        const backup = `${this.file}.${randomUUID()}.invalid.bak`;
+        // Keep a completed backup even if replacing the config later fails.
+        // A failed/incomplete backup never permits a replacement.
+        await writePrivate(backup, bytes);
+        const config = await this.replace({ ...defaultConfig });
+        return { config, backup: path.basename(backup) };
+      }),
+    );
+  }
+
+  /** Shared by saves and recovery, covering the entire read/validate/write. */
+  private async withLock<T>(
+    work: () => Promise<T>,
+    createDirectory = false,
+  ): Promise<T> {
+    const lockPath = `${this.file}.lock`;
+    let lock: Awaited<ReturnType<typeof open>> | undefined;
+    try {
+      if (createDirectory)
+        await mkdir(path.dirname(this.file), { recursive: true, mode: 0o700 });
+      const deadline = Date.now() + 3000;
+      while (!lock) {
+        try {
+          lock = await open(lockPath, "wx", 0o600);
+        } catch (error) {
+          const code = (error as NodeJS.ErrnoException).code;
+          if (code === "ENOENT" && !createDirectory) throw notInvalid();
+          if (code !== "EEXIST") throw error;
+          if (Date.now() >= deadline)
+            throw new ConfigError(
+              "Shared preferences are locked by another writer. Retry after it finishes; if a process crashed, remove config.json.lock only after all jj-stamp processes have stopped.",
+              "CONFIG_BUSY",
+              503,
+            );
+          await delay(25);
         }
       }
-    });
+      return await work();
+    } catch (error) {
+      throw ioError(error);
+    } finally {
+      if (lock) {
+        try {
+          try {
+            await lock.close();
+          } finally {
+            await unlink(lockPath);
+          }
+        } catch (error) {
+          throw ioError(error);
+        }
+      }
+    }
+  }
+
+  private async replace(config: Config): Promise<Config> {
+    const temporary = `${this.file}.${randomUUID()}.tmp`;
+    await writePrivate(temporary, `${JSON.stringify(config, null, 2)}\n`);
+    try {
+      await rename(temporary, this.file);
+    } finally {
+      await unlink(temporary).catch(() => {});
+    }
+    this.snapshot = config;
+    this.failure = undefined;
+    this.broadcast(frame("config", config));
+    return { ...config };
   }
 
   connect(request: Request, response: Response): void {
@@ -287,7 +400,13 @@ export class ConfigStore {
       client.initialized = true;
       this.send(client, frame("config", this.snapshot));
       if (this.failure)
-        this.send(client, frame("config-error", { error: this.failure }));
+        this.send(
+          client,
+          frame("config-error", {
+            error: this.failure.message,
+            code: this.failure.code,
+          }),
+        );
     }).catch(() => {
       this.remove(client);
       response.destroy();
@@ -387,6 +506,9 @@ export function createConfigApi(options: ConfigApiOptions = {}): ConfigRouter {
   router.get("/events", (req, res) => store.connect(req, res));
   router.get("/", async (_req, res) => res.json(await store.read()));
   router.post("/", async (req, res) => res.json(await store.patch(req.body)));
+  router.post("/reset-invalid", async (req, res) =>
+    res.json(await store.resetInvalid(req.body)),
+  );
   router.use(((error: unknown, _req, res, next) => {
     if (error instanceof ConfigError) {
       res.status(error.status).json({ error: error.message, code: error.code });

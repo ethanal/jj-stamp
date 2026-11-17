@@ -1140,6 +1140,7 @@ kbd {
   color: var(--fg);
   font-size: calc(var(--font-size) + 2px);
   font-weight: 400;
+  overflow-wrap: anywhere;
 }
 .settings-checkbox input {
   width: 20px;

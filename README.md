@@ -124,6 +124,14 @@ at least 120px (Files) / 160px (Log), and a split ratio from 20–80. Unknown ke
 wrong types, invalid JSON and files larger than 64KiB are rejected. A malformed
 edit leaves each connected window on its last valid settings and shows an error;
 repair the file to resume sync. Removing the file resets preferences to defaults.
+Settings identifies invalid supported fields and distinguishes malformed JSON
+from unsupported values. If you cannot repair an invalid file, choose **Reset
+invalid settings…** in Settings, then **Back up and reset settings**. This resets
+shared preferences in every window, but first saves the original bytes to a
+private `config.json.<unique-id>.invalid.bak` file in the same directory. Canceling
+does not change the file. Valid, unreadable, nonregular, and oversized files
+cannot be reset this way. After a repair or reset, failed edits are not replayed;
+make any desired changes again.
 A manually edited log revset must be valid for the repositories using it; unlike
 the Settings dialog, a text editor cannot validate it against jj before saving.
 Unsaved log-filter drafts in open dialogs are preserved when other windows edit

@@ -5,6 +5,7 @@ import {
   mkdtemp,
   mkdir,
   readFile,
+  readdir,
   rename,
   rm,
   unlink,
@@ -182,6 +183,12 @@ for (const page of pages) {
     "dim",
   );
 }
+// An attempted save must fail without overwriting the invalid file.
+await first.page.getByLabel("Color scheme").selectOption("light");
+await expect(first.page.getByRole("dialog").getByRole("status")).toContainText(
+  "Settings save could not be confirmed",
+);
+assert.equal(await readFile(configPath, "utf8"), "{ broken JSON");
 await writeFile(
   configPath,
   JSON.stringify({ "color-scheme": "light", "font-size": 16 }),
@@ -190,6 +197,61 @@ await scheme("light");
 for (const page of pages) {
   await expect(page.getByRole("dialog").getByRole("status")).toHaveCount(0);
 }
+
+// Invalid values identify the offending supported field. Recovery is explicit,
+// preserves the original bytes, and resets every connected window.
+const invalidValues = '{ "font-size": 99, "color-scheme": "light" }\n';
+await writeFile(configPath, invalidValues);
+const recoveryButton = first.page.getByRole("button", {
+  name: "Reset invalid settings…",
+});
+await expect(recoveryButton).toBeVisible();
+await expect(first.page.getByRole("dialog").getByRole("status")).toContainText(
+  "font-size",
+);
+async function screenshot(name: string) {
+  if (!process.env.JJ_STAMP_SCREENSHOTS) return;
+  const directory = path.resolve(process.env.JJ_STAMP_SCREENSHOTS);
+  await mkdir(directory, { recursive: true });
+  await first.page.screenshot({ path: path.join(directory, name) });
+}
+await screenshot("invalid-settings-recovery.png");
+await recoveryButton.click();
+await first.page.getByRole("button", { name: "Cancel", exact: true }).click();
+assert.equal(await readFile(configPath, "utf8"), invalidValues);
+assert.deepEqual(await readdir(root), ["config.json"]);
+await recoveryButton.click();
+await expect(
+  first.page.getByText(/Reset shared settings to defaults/),
+).toBeVisible();
+await screenshot("invalid-settings-confirmation.png");
+await first.page
+  .getByRole("button", {
+    name: "Back up and reset settings",
+  })
+  .click();
+await scheme("dark");
+await expect(first.page.getByRole("dialog").getByRole("status")).toContainText(
+  "Settings reset to defaults. Original file backed up as",
+);
+await expect(recoveryButton).toHaveCount(0);
+const backups = (await readdir(root)).filter((name) =>
+  name.endsWith(".invalid.bak"),
+);
+assert.equal(backups.length, 1);
+assert.equal(
+  await readFile(path.join(root, backups[0]), "utf8"),
+  invalidValues,
+);
+for (const page of [second.page, third]) {
+  await expect(page.getByRole("dialog").getByRole("status")).toHaveCount(0);
+}
+await screenshot("invalid-settings-reset-complete.png");
+await first.page.getByLabel("Color scheme").selectOption("light");
+await scheme("light");
+await expect
+  .poll(async () => (await first.readConfig())["color-scheme"])
+  .toBe("light");
 
 // Optional evidence captures the real UI from both independently served windows.
 if (process.env.JJ_STAMP_SCREENSHOTS) {
@@ -217,5 +279,5 @@ await expect(first.page.locator("html")).toHaveAttribute(
 assert.deepEqual(first.errors, []);
 assert.deepEqual(second.errors, []);
 console.log(
-  "Config sync browser checks passed: two servers, three windows, background sync, merged edits, atomic disk saves, invalid edits, deletion/recreation, reload, ignored browser cache.",
+  "Config sync browser checks passed: two servers, three windows, background sync, merged edits, atomic disk saves, invalid edits, failed-save repair, confirmed reset with backup, subsequent save, deletion/recreation, reload, ignored browser cache.",
 );
