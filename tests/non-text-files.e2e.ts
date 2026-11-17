@@ -78,10 +78,8 @@ try {
     await expect(
       page.getByRole("button", { name: `Squash file ${name}`, exact: true }),
     ).toBeDisabled();
-    await expect(section(name).locator("details")).not.toHaveAttribute("open");
-    await section(name).getByText("View raw patch", { exact: true }).click();
-    await expect(section(name).locator("pre")).toContainText("Binary");
-    await section(name).getByText("View raw patch", { exact: true }).click();
+    await expect(section(name).locator("details, summary, pre")).toHaveCount(0);
+    await expect(section(name)).not.toContainText("diff --git");
   }
   // Git statuses still describe binary additions, deletions and modifications.
   await expect(treeRow("added.bin")).toContainText("A");
@@ -97,6 +95,8 @@ try {
     await expect(section(name).locator(".unsupported")).not.toContainText(
       "Binary file",
     );
+    await expect(section(name).locator("details, summary, pre")).toHaveCount(0);
+    await expect(section(name)).not.toContainText("diff --git");
   }
   await treeRow("notes.txt").click();
   await expect(treeRow("notes.txt")).toContainText("+1");
@@ -107,6 +107,12 @@ try {
   ).toBeEnabled();
 
   await page.getByRole("button", { name: "All files", exact: true }).click();
+  await expect(
+    page.locator(".unsupported details, .unsupported pre"),
+  ).toHaveCount(0);
+  await expect(page.getByText("View raw patch", { exact: true })).toHaveCount(
+    0,
+  );
   for (const name of ["logo.png", "added.bin", "removed.bin"]) {
     await expect(section(name).locator(".file-diff-heading")).toContainText(
       "Binary",

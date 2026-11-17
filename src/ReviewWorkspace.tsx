@@ -83,10 +83,6 @@ function UnsupportedFile({ file }: { file: DiffFile }) {
           ? "This file has no text diff. Line selection and squashing are unavailable."
           : file.unsupported}
       </p>
-      <details>
-        <summary>View raw patch</summary>
-        <pre>{file.patch}</pre>
-      </details>
     </div>
   );
 }

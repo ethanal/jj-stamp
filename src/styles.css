@@ -1482,24 +1482,9 @@ kbd {
   font-weight: 500;
 }
 .unsupported p {
-  margin: 0 0 16px;
+  margin: 0;
   color: var(--muted);
   font-size: calc(var(--font-size) - 1px);
-}
-.unsupported summary {
-  width: fit-content;
-  color: var(--muted);
-  cursor: pointer;
-  font-size: calc(var(--font-size) - 1px);
-}
-.unsupported summary:hover {
-  color: var(--fg);
-}
-.unsupported pre {
-  color: var(--muted);
-  line-height: 1.6;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
 }
 @media (max-width: 1100px) {
   .repo-path {
