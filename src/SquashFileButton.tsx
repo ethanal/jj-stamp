@@ -27,8 +27,8 @@ export function SquashFileButton({
           `the change to ${file.newMode === "100755" ? "executable" : "non-executable"} mode`,
         ]
       : []),
-    ...(file.hunks.length ? ["all text edits"] : []),
   ];
+  if (changes.length && file.hunks.length) changes.push("all text edits");
   return (
     <button
       className="squash-file"
