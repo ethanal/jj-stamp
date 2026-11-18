@@ -72,6 +72,34 @@ function deepElementAt(x: number, y: number): Element | null {
   }
   return element;
 }
+function dragPointAt(shadow: ShadowRoot, x: number, y: number): Point | null {
+  const element = deepElementAt(x, y);
+  if (element?.getRootNode() === shadow) {
+    const point = pointFromElement(element);
+    if (point) return point;
+  }
+  // Pointer events can jump straight past the last row of a short diff.
+  // Resolve misses against this file's rendered rows, not the last row the
+  // pointer happened to hit (or a different file underneath it). Vertical
+  // distance wins; horizontal distance preserves the pane in split layout.
+  let nearest: Point | null = null;
+  let nearestY = Infinity,
+    nearestX = Infinity;
+  for (const row of shadow.querySelectorAll<HTMLElement>("[data-line]")) {
+    const box = row.getBoundingClientRect();
+    if (!box.width || !box.height) continue;
+    const dy = Math.max(box.top - y, y - box.bottom, 0);
+    const dx = Math.max(box.left - x, x - box.right, 0);
+    if (dy < nearestY || (dy === nearestY && dx < nearestX)) {
+      const point = pointFromElement(row);
+      if (!point) continue;
+      nearest = point;
+      nearestY = dy;
+      nearestX = dx;
+    }
+  }
+  return nearest;
+}
 function renderedScopePosition(
   shadow: ShadowRoot,
   separator: HTMLElement,
@@ -1302,11 +1330,9 @@ export function CodeDiff({
         lastY = event.clientY,
         frame = 0;
       const updateAt = (x: number, y: number) => {
-        const element = deepElementAt(x, y);
-        const host = element?.getRootNode();
-        if (!(host instanceof ShadowRoot) || !root.current?.contains(host.host))
-          return;
-        const point = pointFromElement(element);
+        const shadow = container.current?.shadowRoot;
+        if (!shadow) return;
+        const point = dragPointAt(shadow, x, y);
         if (point) {
           vimCursor.current = point;
           select(anchor, point);
@@ -1324,6 +1350,8 @@ export function CodeDiff({
       const finish = (event: PointerEvent) => {
         if (event.pointerId !== pointerId) return;
         if (event.type === "pointerup") {
+          moved ||=
+            Math.hypot(event.clientX - startX, event.clientY - startY) > 3;
           updateAt(event.clientX, event.clientY);
           if (toggleOff && !moved) current.current.onSelection(null, {});
         }
